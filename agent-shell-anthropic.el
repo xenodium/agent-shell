@@ -66,7 +66,7 @@ For api key:
   (setq agent-shell-anthropic-authentication
         (agent-shell-make-anthropic-authentication :api-key (lambda () ... )))"
   :type 'alist
-  :group 'acp)
+  :group 'agent-shell)
 
 (defun agent-shell-anthropic-start-claude-code ()
   "Start an interactive Claude Code agent shell."
