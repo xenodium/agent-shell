@@ -288,3 +288,16 @@ All of the above settings can be applied on a per-project basis using [[https://
 
 - =C-c C-c= - Interrupt current agent operation
 - =TAB and Shift-TAB= - Navigate interactive elements
+- =@= - Pick a file and insert its absolute path at point
+  - If in a project, uses =project.el= to select from project files.
+  - If not in a project, falls back to a standard file picker rooted at =default-directory=.
+  - With prefix argument (=C-u @=), inserts a literal =@=.
+
+*** File path insertion with "@"
+
+Pressing =@= in an =agent-shell= buffer opens a file selector:
+
+- In a project: uses =project-current= and =project-files= to offer project files.
+- Outside a project: prompts with =read-file-name= starting from =default-directory=.
+
+After picking a file, =agent-shell= inserts its absolute path (via =expand-file-name=) at point. Use a prefix argument (=C-u @=) to bypass selection and insert a literal =@= instead.

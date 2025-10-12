@@ -288,6 +288,40 @@ Returns an empty string if no icon should be displayed."
 
 (shell-maker-define-major-mode (agent-shell--make-config) agent-shell-mode-map)
 
+(defun agent-shell-insert-project-file (prefix)
+  "Insert an absolute file path at point.
+
+With PREFIX argument, insert a literal \"@\" instead.
+Otherwise, select a file from the current project using project.el,
+falling back to a standard file picker if no project is detected.
+The inserted path is absolute via `expand-file-name'."
+  (interactive "P")
+  (let ((move-to-bottom
+         (lambda ()
+           (when (or buffer-read-only (get-text-property (point) 'read-only))
+             (goto-char (point-max))))))
+    (cond
+     (prefix
+      (funcall move-to-bottom)
+      (insert "@"))
+     (t
+      (let* ((proj (and (fboundp 'project-current) (project-current)))
+             (choice
+              (if proj
+                  (let* ((root (project-root proj))
+                         (files (condition-case _err
+                                    (project-files proj)
+                                  (error nil)))
+                         (rel (completing-read "Project file: " files nil t)))
+                    (and rel (expand-file-name rel root)))
+                (read-file-name "File: " default-directory nil t))))
+        (when choice
+          (funcall move-to-bottom)
+          (insert choice)))))))
+
+;; Bind "@" to selecting a project file and inserting its absolute path.
+(define-key agent-shell-mode-map (kbd "@") #'agent-shell-insert-project-file)
+
 (cl-defun agent-shell--handle (&key command shell)
   "Handle COMMAND using `shell-maker' SHELL."
   (with-current-buffer (map-elt shell :buffer)
