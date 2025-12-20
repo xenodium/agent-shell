@@ -43,8 +43,11 @@
 (declare-function agent-shell--make-header "agent-shell")
 (declare-function agent-shell--relevant-text "agent-shell")
 (declare-function agent-shell--shell-buffer "agent-shell")
+(declare-function agent-shell--current-shell "agent-shell")
 (declare-function agent-shell--start "agent-shell")
 (declare-function agent-shell--state "agent-shell")
+(declare-function agent-shell--get-region "agent-shell")
+(declare-function agent-shell--display-buffer "agent-shell")
 (declare-function agent-shell-interrupt "agent-shell")
 (declare-function agent-shell-next-permission-button "agent-shell")
 (declare-function agent-shell-previous-permission-button "agent-shell")
@@ -53,6 +56,12 @@
 (declare-function agent-shell-ui-backward-block "agent-shell")
 (declare-function agent-shell-ui-forward-block "agent-shell")
 (declare-function agent-shell-ui-mode "agent-shell")
+
+(declare-function agent-shell-buffers "agent-shell")
+(declare-function agent-shell-other-buffer "agent-shell")
+(declare-function agent-shell-cycle-session-mode "agent-shell")
+(declare-function agent-shell-set-session-mode "agent-shell")
+(declare-function agent-shell-set-session-model "agent-shell")
 
 (defvar agent-shell-header-style)
 (defvar agent-shell-prefer-viewport-interaction)
@@ -526,6 +535,10 @@ If START-AT-TOP is non-nil, position at point-min regardless of direction."
            (with-current-buffer viewport-buffer
              (agent-shell-viewport--update-header))))))))
 
+;; Continuously fetching position can get expensive. Cache it.
+(defvar-local agent-shell-viewport--position-cache nil
+  "Cached position value (CURRENT . TOTAL).")
+
 (cl-defun agent-shell-viewport--position (&key force-refresh)
   "Return the position in history of the shell buffer.
 
@@ -556,6 +569,37 @@ When FORCE-REFRESH is non-nil, recalculate and update cache."
                             :no-error t)))
     (with-current-buffer shell-buffer
       shell-maker--busy)))
+
+(defvar agent-shell-viewport-edit-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-c") #'agent-shell-viewport-compose-send)
+    (define-key map (kbd "C-c C-k") #'agent-shell-viewport-compose-cancel)
+    (define-key map (kbd "C-<tab>") #'agent-shell-viewport-cycle-session-mode)
+    (define-key map (kbd "C-c C-m") #'agent-shell-viewport-set-session-mode)
+    (define-key map (kbd "C-c C-v") #'agent-shell-viewport-set-session-model)
+    (define-key map (kbd "C-c C-o") #'agent-shell-other-buffer)
+    map)
+  "Keymap for `agent-shell-viewport-edit-mode'.")
+
+(defvar agent-shell-viewport-view-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-c") #'agent-shell-viewport-interrupt)
+    (define-key map (kbd "n") #'agent-shell-viewport-next-item)
+    (define-key map (kbd "p") #'agent-shell-viewport-previous-item)
+    (define-key map (kbd "<tab>") #'agent-shell-viewport-next-item)
+    (define-key map (kbd "<backtab>") #'agent-shell-viewport-previous-item)
+    (define-key map (kbd "f") #'agent-shell-viewport-next-page)
+    (define-key map (kbd "b") #'agent-shell-viewport-previous-page)
+    (define-key map (kbd "r") #'agent-shell-viewport-reply)
+    (define-key map (kbd "q") #'bury-buffer)
+    (define-key map (kbd "C-<tab>") #'agent-shell-viewport-cycle-session-mode)
+    (define-key map (kbd "v") #'agent-shell-viewport-set-session-model)
+    (define-key map (kbd "m") #'agent-shell-viewport-set-session-mode)
+    (define-key map (kbd "o") #'agent-shell-other-buffer)
+    (define-key map (kbd "C-c C-o") #'agent-shell-other-buffer)
+    map)
+  "Keymap for `agent-shell-viewport-view-mode'.")
+
 
 (defun agent-shell-viewport--update-header ()
   "Update header and mode line based on `agent-shell-header-style'.
@@ -647,22 +691,11 @@ For example, offer to kill associated shell session."
                                                         :shell-buffer shell-buffer
                                                         :existing-only t)
                                                        (current-buffer)))
-                                              (agent-shell-buffers)))
-                   (_ (y-or-n-p "Kill shell session too?")))
-          (mapc (lambda (shell-buffer)
-                  (kill-buffer shell-buffer))
-                shell-buffers)))))
-
-(defvar agent-shell-viewport-edit-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-c C-c") #'agent-shell-viewport-compose-send)
-    (define-key map (kbd "C-c C-k") #'agent-shell-viewport-compose-cancel)
-    (define-key map (kbd "C-<tab>") #'agent-shell-viewport-cycle-session-mode)
-    (define-key map (kbd "C-c C-m") #'agent-shell-viewport-set-session-mode)
-    (define-key map (kbd "C-c C-v") #'agent-shell-viewport-set-session-model)
-    (define-key map (kbd "C-c C-o") #'agent-shell-other-buffer)
-    map)
-  "Keymap for `agent-shell-viewport-edit-mode'.")
+                                              (agent-shell-buffers))))
+          (when (y-or-n-p "Kill shell session too?")
+            (mapc (lambda (shell-buffer)
+                    (kill-buffer shell-buffer))
+                  shell-buffers))))))
 
 (define-derived-mode agent-shell-viewport-edit-mode text-mode "Agent Shell Viewport (Edit)"
   "Major mode for composing agent shell prompts.
@@ -675,24 +708,6 @@ For example, offer to kill associated shell session."
     (erase-buffer))
   (add-hook 'kill-buffer-hook #'agent-shell-viewport--clean-up nil t))
 
-(defvar agent-shell-viewport-view-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-c C-c") #'agent-shell-viewport-interrupt)
-    (define-key map (kbd "n") #'agent-shell-viewport-next-item)
-    (define-key map (kbd "p") #'agent-shell-viewport-previous-item)
-    (define-key map (kbd "<tab>") #'agent-shell-viewport-next-item)
-    (define-key map (kbd "<backtab>") #'agent-shell-viewport-previous-item)
-    (define-key map (kbd "f") #'agent-shell-viewport-next-page)
-    (define-key map (kbd "b") #'agent-shell-viewport-previous-page)
-    (define-key map (kbd "r") #'agent-shell-viewport-reply)
-    (define-key map (kbd "q") #'bury-buffer)
-    (define-key map (kbd "C-<tab>") #'agent-shell-viewport-cycle-session-mode)
-    (define-key map (kbd "v") #'agent-shell-viewport-set-session-model)
-    (define-key map (kbd "m") #'agent-shell-viewport-set-session-mode)
-    (define-key map (kbd "o") #'agent-shell-other-buffer)
-    (define-key map (kbd "C-c C-o") #'agent-shell-other-buffer)
-    map)
-  "Keymap for `agent-shell-viewport-view-mode'.")
 
 (define-derived-mode agent-shell-viewport-view-mode text-mode "Agent Shell Viewport (View)"
   "Major mode for viewing agent shell prompts (read-only).

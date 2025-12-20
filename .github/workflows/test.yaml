@@ -1,0 +1,30 @@
+---
+name: test
+on:
+  push:
+    branches:
+  pull_request:
+    branches:
+      - "main"
+jobs:
+  build-and-test:
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        emacs_version:
+        - 29.3
+        - release-snapshot
+    env:
+      EMACS_VERSION: ${{ matrix.emacs_version }}
+    steps:
+    - name: Setup Emacs
+      uses: purcell/setup-emacs@master
+      with:
+        version: ${{ matrix.emacs_version }}
+    - uses: actions/checkout@v6
+    - name: Byte-compile + package-lint
+      id: byte-compile-lint
+      run: |
+        emacs --version
+        make compile

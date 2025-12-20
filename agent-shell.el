@@ -43,6 +43,7 @@
 (eval-when-compile
   (require 'cl-lib))
 (require 'dired)
+(require 'image)
 (require 'json)
 (require 'map)
 (unless (require 'markdown-overlays nil 'noerror)
@@ -631,10 +632,10 @@ Flow:
               ;; TODO: Make public in shell-maker.
               (shell-maker--current-request-id))
     (cond ((not (map-elt (agent-shell--state) :client))
-           (when-let ((_ (map-elt shell :buffer))
-                      (viewport-buffer (agent-shell-viewport--buffer
-                                        :shell-buffer (map-elt shell :buffer)
-                                        :existing-only t)))
+           (when-let* ((shell-buffer (map-elt shell :buffer))
+                       (viewport-buffer (agent-shell-viewport--buffer
+                                         :shell-buffer shell-buffer
+                                         :existing-only t)))
              (with-current-buffer viewport-buffer
                (agent-shell-viewport-view-mode)
                (agent-shell-viewport--initialize
@@ -925,10 +926,10 @@ Flow:
             :expanded t
             :navigation 'never)
            (agent-shell-jump-to-latest-permission-button-row)
-           (when-let ((_ (map-elt state :buffer))
-                      (viewport-buffer (agent-shell-viewport--buffer
-                                        :shell-buffer (map-elt state :buffer)
-                                        :existing-only t)))
+           (when-let* ((shell-buffer (map-elt state :buffer))
+                       (viewport-buffer (agent-shell-viewport--buffer
+                                         :shell-buffer shell-buffer
+                                         :existing-only t)))
              (with-current-buffer viewport-buffer
                (agent-shell-jump-to-latest-permission-button-row)))
            (map-put! state :last-entry-type "session/request_permission"))
@@ -1226,7 +1227,7 @@ Returns in the form:
 
 DIFF should be in the form returned by `agent-shell--make-diff-info':
   ((:old . old-text) (:new . new-text) (:file . file-path))"
-  (when-let ((_ diff)
+  (when-let (((identity diff))
              (old-file (make-temp-file "old"))
              (new-file (make-temp-file "new")))
     (unwind-protect
@@ -1342,11 +1343,11 @@ For example, shut down ACP client."
     (acp-shutdown :client (map-elt (agent-shell--state) :client)))
   (agent-shell-heartbeat-stop
    :heartbeat (map-elt (agent-shell--state) :heartbeat))
-  (when-let ((_ (map-elt (agent-shell--state) :buffer))
-             (viewport-buffer (agent-shell-viewport--buffer
-                               :shell-buffer (map-elt (agent-shell--state) :buffer)
-                               :existing-only t))
-             (buffer-live-p viewport-buffer))
+  (when-let* ((shell-buffer (map-elt (agent-shell--state) :buffer))
+              (viewport-buffer (agent-shell-viewport--buffer
+                                :shell-buffer shell-buffer
+                                :existing-only t))
+              (buffer-live-p viewport-buffer))
     (kill-buffer viewport-buffer)))
 
 (cl-defun agent-shell--capture-screenshot (&key destination-dir)
@@ -1567,7 +1568,7 @@ variable (see makunbound)."))
                                                     (when-let* ((viewport-buffer (agent-shell-viewport--buffer
                                                                                   :shell-buffer shell-buffer
                                                                                   :existing-only t))
-                                                                (_ (get-buffer-window viewport-buffer)))
+                                                                ((get-buffer-window viewport-buffer)))
                                                       (with-current-buffer viewport-buffer
                                                         (agent-shell-viewport--update-header)))))
                                       :client-maker (map-elt config :client-maker)
@@ -1600,10 +1601,10 @@ variable (see makunbound)."))
 
 (cl-defun agent-shell--delete-fragment (&key state block-id)
   "Delete fragment with STATE and BLOCK-ID."
-  (when-let ((_ (map-elt state :buffer))
-             (viewport-buffer (agent-shell-viewport--buffer
-                               :shell-buffer (map-elt state :buffer)
-                               :existing-only t)))
+  (when-let* ((shell-buffer (map-elt state :buffer))
+              (viewport-buffer (agent-shell-viewport--buffer
+                                :shell-buffer shell-buffer
+                                :existing-only t)))
     (with-current-buffer viewport-buffer
       (agent-shell-ui-delete-fragment :namespace-id (map-elt state :request-count) :block-id block-id :no-undo t)))
   (with-current-buffer (map-elt state :buffer)
@@ -1624,10 +1625,10 @@ Dialog can have LABEL-LEFT, LABEL-RIGHT, and BODY.
 Optional flags: APPEND text to existing content, CREATE-NEW block,
 NAVIGATION for navigation style, EXPANDED to show block expanded
 by default."
-  (when-let ((_ (map-elt state :buffer))
-             (viewport-buffer (agent-shell-viewport--buffer
-                               :shell-buffer (map-elt state :buffer)
-                               :existing-only t)))
+  (when-let* ((shell-buffer (map-elt state :buffer))
+              (viewport-buffer (agent-shell-viewport--buffer
+                                :shell-buffer shell-buffer
+                                :existing-only t)))
     (with-current-buffer viewport-buffer
       (let ((inhibit-read-only t))
         ;; TODO: Investigate why save-restriction isn't enough
@@ -2418,13 +2419,13 @@ normalized server configs."
            (mapcar (lambda (server)
                      (let ((normalized (copy-alist server)))
                        (when-let ((args (map-elt normalized 'args))
-                                  (_ (listp args)))
+                                  ((listp args)))
                          (map-put! normalized 'args (apply #'vector args)))
                        (when-let ((env (map-elt normalized 'env))
-                                  (_ (listp env)))
+                                  ((listp env)))
                          (map-put! normalized 'env (apply #'vector env)))
                        (when-let ((headers (map-elt normalized 'headers))
-                                  (_ (listp headers)))
+                                  ((listp headers)))
                          (map-put! normalized 'headers (apply #'vector headers)))
                        normalized))
                    agent-shell-mcp-servers))))
@@ -2575,7 +2576,7 @@ Returns an alist with:
 
 MAX-WIDTH specifies the maximum width in pixels for the image (default 200).
 If FILE-PATH is not an image, returns nil."
-  (when-let* ((_ (display-graphic-p))
+  (when-let* (((display-graphic-p))
               (metadata (agent-shell--read-file-content :file-path file-path :shallow t))
               (mime-type (map-elt metadata :mime-type))
               ;; Check if it's an image type
@@ -2626,10 +2627,10 @@ If FILE-PATH is not an image, returns nil."
                    prompt)
      :file-path agent-shell--transcript-file)
 
-    (when-let ((_ (map-elt shell :buffer))
-               (viewport-buffer (agent-shell-viewport--buffer
-                                 :shell-buffer (map-elt shell :buffer)
-                                 :existing-only t)))
+    (when-let* ((shell-buffer (map-elt shell :buffer))
+                (viewport-buffer (agent-shell-viewport--buffer
+                                  :shell-buffer shell-buffer
+                                  :existing-only t)))
       (with-current-buffer viewport-buffer
         (agent-shell-viewport-view-mode)
         (agent-shell-viewport--initialize
@@ -3966,8 +3967,7 @@ Mark model using CURRENT-MODEL-ID."
     ("C" "Interrupt" agent-shell-interrupt :transient t)]
    ["Shell"
     ("b" "Toggle" agent-shell-toggle :transient t)
-    ("N" "New shell" (lambda ()
-                       (interactive) (agent-shell t)))]])
+    ("N" "New shell" agent-shell-new-shell)]])
 
 ;;; Transcript
 
