@@ -2265,38 +2265,46 @@ Must provide ON-INITIATED (lambda ())."
      :block-id "starting"
      :body "\n\nInitializing..."
      :append t))
-  (acp-send-request
-   :client (map-elt agent-shell--state :client)
-   :request (acp-make-initialize-request
-             :protocol-version 1
-             :read-text-file-capability agent-shell-text-file-capabilities
-             :write-text-file-capability agent-shell-text-file-capabilities)
-   :on-success (lambda (response)
-                 (with-current-buffer (map-elt shell :buffer)
-                   ;; Save prompt capabilities from agent, converting to internal symbols
-                   (when-let ((prompt-capabilities
-                               (map-nested-elt response '(agentCapabilities promptCapabilities))))
-                     (map-put! agent-shell--state :prompt-capabilities
-                               (list (cons :image (map-elt prompt-capabilities 'image))
-                                     (cons :embedded-context (map-elt prompt-capabilities 'embeddedContext)))))
-                   ;; Save available modes from agent, converting to internal symbols
-                   (when-let ((modes (map-elt response 'modes)))
-                     (map-put! agent-shell--state :available-modes
-                               (list (cons :current-mode-id (map-elt modes 'currentModeId))
-                                     (cons :modes (mapcar (lambda (mode)
-                                                            `((:id . ,(map-elt mode 'id))
-                                                              (:name . ,(map-elt mode 'name))
-                                                              (:description . ,(map-elt mode 'description))))
-                                                          (map-elt modes 'availableModes))))))
-                   (when-let ((agent-capabilities (map-elt response 'agentCapabilities)))
-                     (agent-shell--update-fragment
-                      :state agent-shell--state
-                      :block-id "agent_capabilities"
-                      :label-left (propertize "Agent capabilities" 'font-lock-face 'font-lock-doc-markup-face)
-                      :body (agent-shell--format-agent-capabilities agent-capabilities))))
-                 (funcall on-initiated))
-   :on-failure (agent-shell--make-error-handler
-                :state agent-shell--state :shell shell)))
+  (let* ((request (acp-make-initialize-request
+                   :protocol-version 1
+                   :read-text-file-capability agent-shell-text-file-capabilities
+                   :write-text-file-capability agent-shell-text-file-capabilities))
+         (params (cdr (assq :params request))))
+    ;; Add clientInfo to the initialize request params
+    (setcdr (assq :params request)
+            (cons `(clientInfo . ((name . "agent-shell")
+                                  (title . "Agent Shell")
+                                  (version . ,agent-shell--version)))
+                  params))
+    (acp-send-request
+     :client (map-elt agent-shell--state :client)
+     :request request
+     :on-success (lambda (response)
+                   (with-current-buffer (map-elt shell :buffer)
+                     ;; Save prompt capabilities from agent, converting to internal symbols
+                     (when-let ((prompt-capabilities
+                                 (map-nested-elt response '(agentCapabilities promptCapabilities))))
+                       (map-put! agent-shell--state :prompt-capabilities
+                                 (list (cons :image (map-elt prompt-capabilities 'image))
+                                       (cons :embedded-context (map-elt prompt-capabilities 'embeddedContext)))))
+                     ;; Save available modes from agent, converting to internal symbols
+                     (when-let ((modes (map-elt response 'modes)))
+                       (map-put! agent-shell--state :available-modes
+                                 (list (cons :current-mode-id (map-elt modes 'currentModeId))
+                                       (cons :modes (mapcar (lambda (mode)
+                                                              `((:id . ,(map-elt mode 'id))
+                                                                (:name . ,(map-elt mode 'name))
+                                                                (:description . ,(map-elt mode 'description))))
+                                                            (map-elt modes 'availableModes))))))
+                     (when-let ((agent-capabilities (map-elt response 'agentCapabilities)))
+                       (agent-shell--update-fragment
+                        :state agent-shell--state
+                        :block-id "agent_capabilities"
+                        :label-left (propertize "Agent capabilities" 'font-lock-face 'font-lock-doc-markup-face)
+                        :body (agent-shell--format-agent-capabilities agent-capabilities))))
+                   (funcall on-initiated))
+     :on-failure (agent-shell--make-error-handler
+                  :state agent-shell--state :shell shell))))
 
 (cl-defun agent-shell--authenticate (&key shell on-authenticated)
   "Initiate ACP authentication with SHELL.
