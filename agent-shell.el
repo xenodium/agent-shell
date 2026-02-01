@@ -432,6 +432,8 @@ HEARTBEAT, and AUTHENTICATE-REQUEST-MAKER."
         (cons :available-commands nil)
         (cons :available-modes nil)
         (cons :prompt-capabilities nil)
+        (cons :session-capabilities nil)
+        (cons :resume-session-id nil)
         (cons :pending-requests nil)))
 
 (defvar-local agent-shell--state
@@ -737,10 +739,18 @@ Flow:
                                 (map-put! (agent-shell--state) :authenticated t)
                                 (agent-shell--handle :command command :shell shell))))
           ((not (map-nested-elt (agent-shell--state) '(:session :id)))
-           (agent-shell--initiate-session
-            :shell shell
-            :on-session-init (lambda ()
-                               (agent-shell--handle :command command :shell shell))))
+           (if (map-elt (agent-shell--state) :resume-session-id)
+               ;; Resume existing session
+               (agent-shell--resume-session
+                :shell shell
+                :session-id (map-elt (agent-shell--state) :resume-session-id)
+                :on-session-resumed (lambda ()
+                                      (agent-shell--handle :command command :shell shell)))
+             ;; Create new session
+             (agent-shell--initiate-session
+              :shell shell
+              :on-session-init (lambda ()
+                                 (agent-shell--handle :command command :shell shell)))))
           ((and (map-nested-elt (agent-shell--state) '(:agent-config :default-model-id))
                 (funcall (map-nested-elt (agent-shell--state)
                                          '(:agent-config :default-model-id)))
@@ -1757,13 +1767,15 @@ FUNCTION should be a function accepting keyword arguments (&key ...)."
                    (list (car pair) (cdr pair)))
                  alist)))
 
-(cl-defun agent-shell--start (&key config no-focus new-session)
+(cl-defun agent-shell--start (&key config no-focus new-session resume-session-id cwd)
   "Programmatically start shell with CONFIG.
 
 See `agent-shell-make-agent-config' for config format.
 
 Set NO-FOCUS to start in background.
-Set NEW-SESSION to start a separate new session."
+Set NEW-SESSION to start a separate new session.
+Set RESUME-SESSION-ID to resume an existing session by ID.
+Set CWD to override the working directory."
   (unless (version<= "0.84.9" shell-maker-version)
     (error "Please update shell-maker to version 0.84.9 or newer"))
   (unless (version<= "0.8.3" acp-package-version)
@@ -1777,7 +1789,7 @@ variable (see makunbound)"))
                               :prompt (map-elt config :shell-prompt)
                               :prompt-regexp (map-elt config :shell-prompt-regexp)))
          (agent-shell--shell-maker-config shell-maker-config)
-         (default-directory (agent-shell-cwd))
+         (default-directory (or cwd (agent-shell-cwd)))
          (shell-buffer
           (shell-maker-start agent-shell--shell-maker-config
                              t  ; Always use no-focus, handle display below
@@ -1824,6 +1836,9 @@ variable (see makunbound)"))
                                       :needs-authentication (map-elt config :needs-authentication)
                                       :authenticate-request-maker (map-elt config :authenticate-request-maker)
                                       :agent-config config))
+      ;; Set resume-session-id if provided
+      (when resume-session-id
+        (map-put! agent-shell--state :resume-session-id resume-session-id))
       ;; Initialize buffer-local shell-maker-config
       (setq-local agent-shell--shell-maker-config shell-maker-config)
       (agent-shell--update-header-and-mode-line)
@@ -2492,6 +2507,13 @@ Must provide ON-INITIATED (lambda ())."
                      (map-put! agent-shell--state :prompt-capabilities
                                (list (cons :image (map-elt prompt-capabilities 'image))
                                      (cons :embedded-context (map-elt prompt-capabilities 'embeddedContext)))))
+                   ;; Save session capabilities from agent (resume, fork, list)
+                   (when-let ((session-capabilities
+                               (map-nested-elt response '(agentCapabilities sessionCapabilities))))
+                     (map-put! agent-shell--state :session-capabilities
+                               (list (cons :resume (and (map-elt session-capabilities 'resume) t))
+                                     (cons :fork (and (map-elt session-capabilities 'fork) t))
+                                     (cons :list (and (map-elt session-capabilities 'list) t)))))
                    ;; Save available modes from agent, converting to internal symbols
                    (when-let ((modes (map-elt response 'modes)))
                      (map-put! agent-shell--state :available-modes
@@ -2650,9 +2672,112 @@ Must provide ON-SESSION-INIT (lambda ())."
                     :body (agent-shell--format-available-modes
                            (agent-shell--get-available-modes agent-shell--state))))
                  (agent-shell--update-header-and-mode-line)
+                 ;; Auto-save session for potential resumption
+                 (when-let ((session-id (map-nested-elt agent-shell--state '(:session :id)))
+                            (agent-id (map-nested-elt agent-shell--state '(:agent-config :identifier))))
+                   (agent-shell--save-session
+                    :session-id session-id
+                    :agent-identifier agent-id
+                    :cwd (agent-shell-cwd)))
                  (funcall on-session-init))
    :on-failure (agent-shell--make-error-handler
                 :state agent-shell--state :shell shell)))
+
+(cl-defun agent-shell--resume-session (&key shell session-id on-session-resumed)
+  "Resume an existing ACP session with SHELL.
+
+SESSION-ID is the ID of the session to resume.
+Must provide ON-SESSION-RESUMED (lambda ())."
+  (unless on-session-resumed
+    (error "Missing required argument: :on-session-resumed"))
+  (unless session-id
+    (error "Missing required argument: :session-id"))
+  (with-current-buffer (map-elt (agent-shell--state) :buffer)
+    (agent-shell--update-fragment
+     :state (agent-shell--state)
+     :block-id "starting"
+     :body "\n\nResuming session..."
+     :append t))
+  ;; Check if agent supports session resume
+  (if (map-nested-elt (agent-shell--state) '(:session-capabilities :resume))
+      (acp-send-request
+       :client (map-elt (agent-shell--state) :client)
+       :request (acp-make-session-resume-request
+                 :session-id session-id
+                 :cwd (agent-shell--resolve-path (agent-shell-cwd))
+                 :mcp-servers (agent-shell--mcp-servers))
+       :buffer (current-buffer)
+       :on-success (lambda (response)
+                     (map-put! agent-shell--state
+                               :session (list (cons :id session-id)
+                                              (cons :mode-id (map-nested-elt response '(modes currentModeId)))
+                                              (cons :modes (mapcar (lambda (mode)
+                                                                     `((:id . ,(map-elt mode 'id))
+                                                                       (:name . ,(map-elt mode 'name))
+                                                                       (:description . ,(map-elt mode 'description))))
+                                                                   (map-nested-elt response '(modes availableModes))))
+                                              (cons :model-id (map-nested-elt response '(models currentModelId)))
+                                              (cons :models (mapcar (lambda (model)
+                                                                      `((:model-id . ,(map-elt model 'modelId))
+                                                                        (:name . ,(map-elt model 'name))
+                                                                        (:description . ,(map-elt model 'description))))
+                                                                    (map-nested-elt response '(models availableModels))))))
+                     (agent-shell--update-fragment
+                      :state agent-shell--state
+                      :block-id "starting"
+                      :label-left (format "%s %s"
+                                          (agent-shell--status-label "completed")
+                                          (propertize "Resuming session" 'font-lock-face 'font-lock-doc-markup-face))
+                      :body "\n\nResumed"
+                      :append t)
+                     (agent-shell--update-header-and-mode-line)
+                     ;; Update session access time
+                     (agent-shell--update-session-access-time session-id)
+                     (when (map-nested-elt agent-shell--state '(:session :models))
+                       (agent-shell--update-fragment
+                        :state agent-shell--state
+                        :block-id "available_models"
+                        :label-left (propertize "Available models" 'font-lock-face 'font-lock-doc-markup-face)
+                        :body (agent-shell--format-available-models
+                               (map-nested-elt agent-shell--state '(:session :models)))))
+                     (when (agent-shell--get-available-modes agent-shell--state)
+                       (agent-shell--update-fragment
+                        :state agent-shell--state
+                        :block-id "available_modes"
+                        :label-left (propertize "Available modes" 'font-lock-face 'font-lock-doc-markup-face)
+                        :body (agent-shell--format-available-modes
+                               (agent-shell--get-available-modes agent-shell--state))))
+                     (agent-shell--update-header-and-mode-line)
+                     (funcall on-session-resumed))
+       :on-failure (lambda (error &optional _message)
+                     ;; On failure, fall back to creating a new session
+                     (agent-shell--update-fragment
+                      :state agent-shell--state
+                      :block-id "starting"
+                      :body (format "\n\nFailed to resume session: %s\nCreating new session..."
+                                    (or (map-elt error 'message) "Unknown error"))
+                      :append t)
+                     ;; Delete the stale saved session
+                     (agent-shell--delete-saved-session session-id)
+                     ;; Clear resume-session-id and create new session
+                     (map-put! agent-shell--state :resume-session-id nil)
+                     (agent-shell--initiate-session
+                      :shell shell
+                      :on-session-init on-session-resumed)))
+    ;; Agent doesn't support session resume - fall back to new session
+    (progn
+      (agent-shell--update-fragment
+       :state agent-shell--state
+       :block-id "starting"
+       :body "\n\nAgent does not support session resume. Creating new session..."
+       :append t)
+      ;; Delete the stale saved session
+      (agent-shell--delete-saved-session session-id)
+      ;; Clear resume-session-id and create new session
+      (map-put! agent-shell--state :resume-session-id nil)
+      (agent-shell--initiate-session
+       :shell shell
+       :on-session-init on-session-resumed))))
 
 (defun agent-shell--mcp-servers ()
   "Return normalized MCP servers configuration for JSON serialization.
@@ -4371,6 +4496,160 @@ Includes STATUS, TITLE, KIND, DESCRIPTION, COMMAND, and OUTPUT."
   (unless (file-exists-p agent-shell--transcript-file)
     (error "Transcript file does not exist: %s" agent-shell--transcript-file))
   (find-file agent-shell--transcript-file))
+
+;;; Session Persistence
+
+(defcustom agent-shell-session-persistence-enabled t
+  "Whether to persist session IDs for resumption.
+When non-nil, session IDs are saved to disk and can be resumed later
+using `agent-shell-resume-session'."
+  :type 'boolean
+  :group 'agent-shell)
+
+(defcustom agent-shell-sessions-directory-function
+  #'agent-shell--default-sessions-directory
+  "Function to determine the directory for storing session files.
+Called with no arguments, should return a directory path string."
+  :type 'function
+  :group 'agent-shell)
+
+(defun agent-shell--default-sessions-directory ()
+  "Return the default directory for storing session files.
+Uses `.agent-shell/sessions' in the project root."
+  (expand-file-name ".agent-shell/sessions" (agent-shell-cwd)))
+
+(defun agent-shell--session-file-path (session-id)
+  "Return the file path for SESSION-ID."
+  (let ((dir (funcall agent-shell-sessions-directory-function)))
+    (expand-file-name (concat session-id ".json") dir)))
+
+(cl-defun agent-shell--save-session (&key session-id agent-identifier cwd)
+  "Save session metadata to disk.
+SESSION-ID is the session identifier from the agent.
+AGENT-IDENTIFIER is the symbol identifying the agent type.
+CWD is the working directory for the session."
+  (when (and agent-shell-session-persistence-enabled session-id)
+    (let* ((dir (funcall agent-shell-sessions-directory-function))
+           (filepath (agent-shell--session-file-path session-id))
+           (metadata `((sessionId . ,session-id)
+                       (agentIdentifier . ,(symbol-name agent-identifier))
+                       (cwd . ,cwd)
+                       (createdAt . ,(format-time-string "%FT%T%z"))
+                       (lastAccessedAt . ,(format-time-string "%FT%T%z")))))
+      (condition-case err
+          (progn
+            (make-directory dir t)
+            (with-temp-file filepath
+              (insert (json-serialize metadata)))
+            (message "Session saved: %s" session-id))
+        (error
+         (message "Failed to save session: %S" err))))))
+
+(defun agent-shell--load-session-metadata (session-id)
+  "Load session metadata for SESSION-ID from disk.
+Returns an alist with session metadata or nil if not found."
+  (let ((filepath (agent-shell--session-file-path session-id)))
+    (when (file-exists-p filepath)
+      (condition-case nil
+          (with-temp-buffer
+            (insert-file-contents filepath)
+            (json-parse-buffer :object-type 'alist))
+        (error nil)))))
+
+(defun agent-shell--update-session-access-time (session-id)
+  "Update the lastAccessedAt timestamp for SESSION-ID."
+  (when-let ((metadata (agent-shell--load-session-metadata session-id)))
+    (let ((filepath (agent-shell--session-file-path session-id)))
+      (setf (alist-get 'lastAccessedAt metadata)
+            (format-time-string "%FT%T%z"))
+      (condition-case nil
+          (with-temp-file filepath
+            (insert (json-serialize metadata)))
+        (error nil)))))
+
+(defun agent-shell--list-saved-sessions ()
+  "Return a list of saved session metadata alists.
+Sessions are sorted by lastAccessedAt, most recent first."
+  (let ((dir (funcall agent-shell-sessions-directory-function)))
+    (when (file-directory-p dir)
+      (let ((sessions nil))
+        (dolist (file (directory-files dir t "\\.json$"))
+          (condition-case nil
+              (with-temp-buffer
+                (insert-file-contents file)
+                (push (json-parse-buffer :object-type 'alist) sessions))
+            (error nil)))
+        (sort sessions
+              (lambda (a b)
+                (string> (or (alist-get 'lastAccessedAt a) "")
+                         (or (alist-get 'lastAccessedAt b) ""))))))))
+
+(defun agent-shell--delete-saved-session (session-id)
+  "Delete the saved session file for SESSION-ID."
+  (let ((filepath (agent-shell--session-file-path session-id)))
+    (when (file-exists-p filepath)
+      (delete-file filepath))))
+
+(defun agent-shell--format-session-for-display (session)
+  "Format SESSION metadata for display in completion."
+  (let* ((id (alist-get 'sessionId session))
+         (agent (alist-get 'agentIdentifier session))
+         (created (alist-get 'createdAt session))
+         (accessed (alist-get 'lastAccessedAt session)))
+    (format "%s (%s) - %s"
+            (truncate-string-to-width id 20 nil nil "...")
+            agent
+            (or accessed created "unknown"))))
+
+(defun agent-shell--supports-session-resume-p ()
+  "Return non-nil if current agent supports session/resume."
+  (map-nested-elt agent-shell--state '(:session-capabilities :resume)))
+
+;;;###autoload
+(defun agent-shell-resume-session ()
+  "Resume a previously saved session.
+Prompts for a session to resume from the list of saved sessions."
+  (interactive)
+  (let ((sessions (agent-shell--list-saved-sessions)))
+    (unless sessions
+      (user-error "No saved sessions found"))
+    (let* ((choices (mapcar (lambda (s)
+                              (cons (agent-shell--format-session-for-display s) s))
+                            sessions))
+           (selection (completing-read "Resume session: " choices nil t))
+           (session (cdr (assoc selection choices))))
+      (unless session
+        (user-error "No session selected"))
+      (let* ((session-id (alist-get 'sessionId session))
+             (agent-id (intern (alist-get 'agentIdentifier session)))
+             (cwd (alist-get 'cwd session))
+             (config (seq-find (lambda (c)
+                                 (eq (map-elt c :identifier) agent-id))
+                               agent-shell-agent-configs)))
+        (unless config
+          (user-error "Agent configuration not found for: %s" agent-id))
+        (agent-shell--start :config config
+                            :resume-session-id session-id
+                            :cwd cwd)))))
+
+;;;###autoload
+(defun agent-shell-delete-saved-session ()
+  "Delete a saved session from disk."
+  (interactive)
+  (let ((sessions (agent-shell--list-saved-sessions)))
+    (unless sessions
+      (user-error "No saved sessions found"))
+    (let* ((choices (mapcar (lambda (s)
+                              (cons (agent-shell--format-session-for-display s) s))
+                            sessions))
+           (selection (completing-read "Delete session: " choices nil t))
+           (session (cdr (assoc selection choices))))
+      (unless session
+        (user-error "No session selected"))
+      (when (y-or-n-p (format "Delete session %s? "
+                              (alist-get 'sessionId session)))
+        (agent-shell--delete-saved-session (alist-get 'sessionId session))
+        (message "Session deleted")))))
 
 ;;; Queueing
 
