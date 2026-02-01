@@ -2508,12 +2508,15 @@ Must provide ON-INITIATED (lambda ())."
                                (list (cons :image (map-elt prompt-capabilities 'image))
                                      (cons :embedded-context (map-elt prompt-capabilities 'embeddedContext)))))
                    ;; Save session capabilities from agent (resume, fork, list)
+                   ;; Note: In ACP, capabilities like resume/fork/list are indicated by
+                   ;; presence of the key with an empty object {}, which json-read parses
+                   ;; as nil. So we check key existence, not value truthiness.
                    (when-let ((session-capabilities
                                (map-nested-elt response '(agentCapabilities sessionCapabilities))))
                      (map-put! agent-shell--state :session-capabilities
-                               (list (cons :resume (and (map-elt session-capabilities 'resume) t))
-                                     (cons :fork (and (map-elt session-capabilities 'fork) t))
-                                     (cons :list (and (map-elt session-capabilities 'list) t)))))
+                               (list (cons :resume (map-contains-key session-capabilities 'resume))
+                                     (cons :fork (map-contains-key session-capabilities 'fork))
+                                     (cons :list (map-contains-key session-capabilities 'list)))))
                    ;; Save available modes from agent, converting to internal symbols
                    (when-let ((modes (map-elt response 'modes)))
                      (map-put! agent-shell--state :available-modes
@@ -2687,97 +2690,119 @@ Must provide ON-SESSION-INIT (lambda ())."
   "Resume an existing ACP session with SHELL.
 
 SESSION-ID is the ID of the session to resume.
-Must provide ON-SESSION-RESUMED (lambda ())."
+Must provide ON-SESSION-RESUMED (lambda ()).
+
+This function first initializes the agent to discover its capabilities,
+then attempts session/resume if supported, falling back to session/start
+if not supported or if resume fails."
   (unless on-session-resumed
     (error "Missing required argument: :on-session-resumed"))
   (unless session-id
     (error "Missing required argument: :session-id"))
+  ;; First initialize the agent to discover capabilities
+  (agent-shell--initiate-handshake
+   :shell shell
+   :on-initiated
+   (lambda ()
+     ;; Now check if agent supports session resume
+     (if (map-nested-elt (agent-shell--state) '(:session-capabilities :resume))
+         (agent-shell--do-session-resume
+          :shell shell
+          :session-id session-id
+          :on-session-resumed on-session-resumed)
+       ;; Agent doesn't support session resume - fall back to new session
+       (agent-shell--update-fragment
+        :state agent-shell--state
+        :block-id "starting"
+        :body "\n\nAgent does not support session resume. Creating new session..."
+        :append t)
+       ;; Delete the stale saved session
+       (agent-shell--delete-saved-session session-id)
+       ;; Clear resume-session-id and create new session
+       (map-put! agent-shell--state :resume-session-id nil)
+       (agent-shell--initiate-session
+        :shell shell
+        :on-session-init on-session-resumed)))))
+
+(cl-defun agent-shell--do-session-resume (&key shell session-id on-session-resumed)
+  "Perform the actual session/resume request.
+
+SHELL is the shell instance.
+SESSION-ID is the ID of the session to resume.
+ON-SESSION-RESUMED is called on success.
+
+This is an internal function called by `agent-shell--resume-session'
+after agent initialization confirms resume capability."
   (with-current-buffer (map-elt (agent-shell--state) :buffer)
     (agent-shell--update-fragment
      :state (agent-shell--state)
      :block-id "starting"
      :body "\n\nResuming session..."
      :append t))
-  ;; Check if agent supports session resume
-  (if (map-nested-elt (agent-shell--state) '(:session-capabilities :resume))
-      (acp-send-request
-       :client (map-elt (agent-shell--state) :client)
-       :request (acp-make-session-resume-request
-                 :session-id session-id
-                 :cwd (agent-shell--resolve-path (agent-shell-cwd))
-                 :mcp-servers (agent-shell--mcp-servers))
-       :buffer (current-buffer)
-       :on-success (lambda (response)
-                     (map-put! agent-shell--state
-                               :session (list (cons :id session-id)
-                                              (cons :mode-id (map-nested-elt response '(modes currentModeId)))
-                                              (cons :modes (mapcar (lambda (mode)
-                                                                     `((:id . ,(map-elt mode 'id))
-                                                                       (:name . ,(map-elt mode 'name))
-                                                                       (:description . ,(map-elt mode 'description))))
-                                                                   (map-nested-elt response '(modes availableModes))))
-                                              (cons :model-id (map-nested-elt response '(models currentModelId)))
-                                              (cons :models (mapcar (lambda (model)
-                                                                      `((:model-id . ,(map-elt model 'modelId))
-                                                                        (:name . ,(map-elt model 'name))
-                                                                        (:description . ,(map-elt model 'description))))
-                                                                    (map-nested-elt response '(models availableModels))))))
-                     (agent-shell--update-fragment
-                      :state agent-shell--state
-                      :block-id "starting"
-                      :label-left (format "%s %s"
-                                          (agent-shell--status-label "completed")
-                                          (propertize "Resuming session" 'font-lock-face 'font-lock-doc-markup-face))
-                      :body "\n\nResumed"
-                      :append t)
-                     (agent-shell--update-header-and-mode-line)
-                     ;; Update session access time
-                     (agent-shell--update-session-access-time session-id)
-                     (when (map-nested-elt agent-shell--state '(:session :models))
-                       (agent-shell--update-fragment
-                        :state agent-shell--state
-                        :block-id "available_models"
-                        :label-left (propertize "Available models" 'font-lock-face 'font-lock-doc-markup-face)
-                        :body (agent-shell--format-available-models
-                               (map-nested-elt agent-shell--state '(:session :models)))))
-                     (when (agent-shell--get-available-modes agent-shell--state)
-                       (agent-shell--update-fragment
-                        :state agent-shell--state
-                        :block-id "available_modes"
-                        :label-left (propertize "Available modes" 'font-lock-face 'font-lock-doc-markup-face)
-                        :body (agent-shell--format-available-modes
-                               (agent-shell--get-available-modes agent-shell--state))))
-                     (agent-shell--update-header-and-mode-line)
-                     (funcall on-session-resumed))
-       :on-failure (lambda (error &optional _message)
-                     ;; On failure, fall back to creating a new session
-                     (agent-shell--update-fragment
-                      :state agent-shell--state
-                      :block-id "starting"
-                      :body (format "\n\nFailed to resume session: %s\nCreating new session..."
-                                    (or (map-elt error 'message) "Unknown error"))
-                      :append t)
-                     ;; Delete the stale saved session
-                     (agent-shell--delete-saved-session session-id)
-                     ;; Clear resume-session-id and create new session
-                     (map-put! agent-shell--state :resume-session-id nil)
-                     (agent-shell--initiate-session
-                      :shell shell
-                      :on-session-init on-session-resumed)))
-    ;; Agent doesn't support session resume - fall back to new session
-    (progn
-      (agent-shell--update-fragment
-       :state agent-shell--state
-       :block-id "starting"
-       :body "\n\nAgent does not support session resume. Creating new session..."
-       :append t)
-      ;; Delete the stale saved session
-      (agent-shell--delete-saved-session session-id)
-      ;; Clear resume-session-id and create new session
-      (map-put! agent-shell--state :resume-session-id nil)
-      (agent-shell--initiate-session
-       :shell shell
-       :on-session-init on-session-resumed))))
+  (acp-send-request
+   :client (map-elt (agent-shell--state) :client)
+   :request (acp-make-session-resume-request
+             :session-id session-id
+             :cwd (agent-shell--resolve-path (agent-shell-cwd))
+             :mcp-servers (agent-shell--mcp-servers))
+   :buffer (current-buffer)
+   :on-success (lambda (response)
+                 (map-put! agent-shell--state
+                           :session (list (cons :id session-id)
+                                          (cons :mode-id (map-nested-elt response '(modes currentModeId)))
+                                          (cons :modes (mapcar (lambda (mode)
+                                                                 `((:id . ,(map-elt mode 'id))
+                                                                   (:name . ,(map-elt mode 'name))
+                                                                   (:description . ,(map-elt mode 'description))))
+                                                               (map-nested-elt response '(modes availableModes))))
+                                          (cons :model-id (map-nested-elt response '(models currentModelId)))
+                                          (cons :models (mapcar (lambda (model)
+                                                                  `((:model-id . ,(map-elt model 'modelId))
+                                                                    (:name . ,(map-elt model 'name))
+                                                                    (:description . ,(map-elt model 'description))))
+                                                                (map-nested-elt response '(models availableModels))))))
+                 (agent-shell--update-fragment
+                  :state agent-shell--state
+                  :block-id "starting"
+                  :label-left (format "%s %s"
+                                      (agent-shell--status-label "completed")
+                                      (propertize "Resuming session" 'font-lock-face 'font-lock-doc-markup-face))
+                  :body "\n\nResumed"
+                  :append t)
+                 (agent-shell--update-header-and-mode-line)
+                 ;; Update session access time
+                 (agent-shell--update-session-access-time session-id)
+                 (when (map-nested-elt agent-shell--state '(:session :models))
+                   (agent-shell--update-fragment
+                    :state agent-shell--state
+                    :block-id "available_models"
+                    :label-left (propertize "Available models" 'font-lock-face 'font-lock-doc-markup-face)
+                    :body (agent-shell--format-available-models
+                           (map-nested-elt agent-shell--state '(:session :models)))))
+                 (when (agent-shell--get-available-modes agent-shell--state)
+                   (agent-shell--update-fragment
+                    :state agent-shell--state
+                    :block-id "available_modes"
+                    :label-left (propertize "Available modes" 'font-lock-face 'font-lock-doc-markup-face)
+                    :body (agent-shell--format-available-modes
+                           (agent-shell--get-available-modes agent-shell--state))))
+                 (agent-shell--update-header-and-mode-line)
+                 (funcall on-session-resumed))
+   :on-failure (lambda (error &optional _message)
+                 ;; On failure, fall back to creating a new session
+                 (agent-shell--update-fragment
+                  :state agent-shell--state
+                  :block-id "starting"
+                  :body (format "\n\nFailed to resume session: %s\nCreating new session..."
+                                (or (map-elt error 'message) "Unknown error"))
+                  :append t)
+                 ;; Delete the stale saved session
+                 (agent-shell--delete-saved-session session-id)
+                 ;; Clear resume-session-id and create new session
+                 (map-put! agent-shell--state :resume-session-id nil)
+                 (agent-shell--initiate-session
+                  :shell shell
+                  :on-session-init on-session-resumed))))
 
 (defun agent-shell--mcp-servers ()
   "Return normalized MCP servers configuration for JSON serialization.
