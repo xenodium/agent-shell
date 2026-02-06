@@ -2797,7 +2797,7 @@ Return selected session alist, or nil to start a new session."
            (selection (completing-read "Load session: "
                                        (mapcar #'car choices)
                                        nil t nil nil
-                                       (caar session-choices))))
+                                       agent-shell--start-new-session-choice)))
       (cdr (assoc selection choices)))))
 
 (defun agent-shell--select-session-to-load (sessions)

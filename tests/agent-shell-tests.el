@@ -999,6 +999,23 @@ code block content with spaces
                          session-a-label
                          session-b-label)))))
 
+(ert-deftest agent-shell--prompt-select-session-to-load-defaults-to-new-session-test ()
+  "Test prompt defaults to `agent-shell--start-new-session-choice'."
+  (let* ((session-a '((sessionId . "session-1")
+                      (title . "First")
+                      (updatedAt . "2026-01-19T14:00:00Z")))
+         (session-b '((sessionId . "session-2")
+                      (title . "Second")
+                      (updatedAt . "2026-01-20T16:00:00Z")))
+         (sessions (list session-a session-b))
+         (captured-default nil))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (&rest args)
+                 (setq captured-default (nth 6 args))
+                 agent-shell--start-new-session-choice)))
+      (agent-shell--prompt-select-session-to-load sessions)
+      (should (equal captured-default agent-shell--start-new-session-choice)))))
+
 (ert-deftest agent-shell--initiate-session-strategy-new-skips-list-load ()
   "Test `agent-shell--initiate-session' skips list/load when strategy is `new'."
   (with-temp-buffer
