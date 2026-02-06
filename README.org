@@ -600,6 +600,7 @@ always go to Evil modes if you need to with ~C-z~).
 | agent-shell-qwen-command                      | Command and parameters for the Qwen Code client.                                |
 | agent-shell-qwen-environment                  | Environment variables for the Qwen Code client.                                 |
 | agent-shell-screenshot-command                | The program to use for capturing screenshots.                                   |
+| agent-shell-session-load-strategy             | How to choose existing sessions when session/list and session/load are available. |
 | agent-shell-section-functions                 | Abnormal hook run after overlays are applied (experimental).                    |
 | agent-shell-show-busy-indicator               | Non-nil to show the busy indicator animation in the header and mode line.       |
 | agent-shell-show-config-icons                 | Whether to show icons in agent config selection.                                |
