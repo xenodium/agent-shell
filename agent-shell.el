@@ -394,6 +394,19 @@ configuration alist for backwards compatibility."
                         :key-type symbol :value-type sexp))
   :group 'agent-shell)
 
+(defcustom agent-shell-session-load-strategy 'latest
+  "How to choose an existing session when `session/list' and `session/load' are available.
+
+Available values:
+
+  `latest': Load the latest session returned by `session/list'.
+  `prompt': Prompt to choose which session to load (or start a new one).
+  `new': Always start a new session and skip `session/list' and `session/load'."
+  :type '(choice (const :tag "Load latest session" latest)
+                 (const :tag "Prompt for session" prompt)
+                 (const :tag "Always start new session" new))
+  :group 'agent-shell)
+
 (defun agent-shell--resolve-preferred-config ()
   "Resolve `agent-shell-preferred-agent-config' to a full configuration.
 
@@ -505,6 +518,8 @@ HEARTBEAT, and AUTHENTICATE-REQUEST-MAKER."
         (cons :tool-calls nil)
         (cons :available-commands nil)
         (cons :available-modes nil)
+        (cons :supports-session-list nil)
+        (cons :supports-session-load nil)
         (cons :prompt-capabilities nil)
         (cons :pending-requests nil)))
 
@@ -2606,6 +2621,12 @@ Must provide ON-INITIATED (lambda ())."
              :write-text-file-capability agent-shell-text-file-capabilities)
    :on-success (lambda (response)
                  (with-current-buffer (map-elt shell :buffer)
+                   (let ((session-capabilities (or (map-elt response 'sessionCapabilities)
+                                                   (map-nested-elt response '(agentCapabilities sessionCapabilities)))))
+                     (map-put! agent-shell--state :supports-session-list
+                               (and (listp session-capabilities)
+                                    (assq 'list session-capabilities)
+                                    t)))
                    ;; Save prompt capabilities from agent, converting to internal symbols
                    (when-let ((prompt-capabilities
                                (map-nested-elt response '(agentCapabilities promptCapabilities))))
@@ -2622,6 +2643,8 @@ Must provide ON-INITIATED (lambda ())."
                                                               (:description . ,(map-elt mode 'description))))
                                                           (map-elt modes 'availableModes))))))
                    (when-let ((agent-capabilities (map-elt response 'agentCapabilities)))
+                     (map-put! agent-shell--state :supports-session-load
+                               (eq (map-elt agent-capabilities 'loadSession) t))
                      (agent-shell--update-fragment
                       :state agent-shell--state
                       :block-id "agent_capabilities"
@@ -2725,6 +2748,115 @@ Must provide ON-SESSION-INIT (lambda ())."
      :block-id "starting"
      :body "\n\nCreating session..."
      :append t))
+  (if (and (map-elt (agent-shell--state) :supports-session-list)
+           (map-elt (agent-shell--state) :supports-session-load)
+           (not (eq agent-shell-session-load-strategy 'new)))
+      (agent-shell--initiate-session-list-and-load
+       :shell shell
+       :on-session-init on-session-init)
+    (agent-shell--initiate-new-session
+     :shell shell
+     :on-session-init on-session-init)))
+
+(defun agent-shell--session-choice-label (session)
+  "Return completion label for SESSION."
+  (let* ((session-id (or (map-elt session 'sessionId)
+                         "unknown-session"))
+         (title (or (map-elt session 'title)
+                    "Untitled"))
+         (updated-at (or (map-elt session 'updatedAt)
+                         (map-elt session 'createdAt)
+                         "unknown-time")))
+    (format "%s | %s | %s" title updated-at session-id)))
+
+(defconst agent-shell--start-new-session-choice "Start a new session"
+  "Label for creating a new session from the session picker.")
+
+(defun agent-shell--session-picker-sort (candidates)
+  "Return CANDIDATES with `agent-shell--start-new-session-choice' first."
+  (if (member agent-shell--start-new-session-choice candidates)
+      (cons agent-shell--start-new-session-choice
+            (delete agent-shell--start-new-session-choice
+                    (copy-sequence candidates)))
+    candidates))
+
+(defun agent-shell--prompt-select-session-to-load (sessions)
+  "Prompt to choose one from SESSIONS.
+
+Return selected session alist, or nil to start a new session."
+  (when sessions
+    (let* ((session-choices (mapcar (lambda (session)
+                                      (cons (agent-shell--session-choice-label session)
+                                            session))
+                                    sessions))
+           (choices (cons (cons agent-shell--start-new-session-choice nil)
+                          session-choices))
+           (completion-extra-properties
+            '(:display-sort-function agent-shell--session-picker-sort
+              :cycle-sort-function agent-shell--session-picker-sort))
+           (selection (completing-read "Load session: "
+                                       (mapcar #'car choices)
+                                       nil t nil nil
+                                       (caar session-choices))))
+      (cdr (assoc selection choices)))))
+
+(defun agent-shell--select-session-to-load (sessions)
+  "Select a session from SESSIONS based on `agent-shell-session-load-strategy'."
+  (pcase agent-shell-session-load-strategy
+    ('new nil)
+    ('latest (car sessions))
+    ('prompt (if noninteractive
+                 (car sessions)
+               (agent-shell--prompt-select-session-to-load sessions)))
+    (_ (car sessions))))
+
+(cl-defun agent-shell--set-session-from-response (&key response session-id)
+  "Set active session state from RESPONSE and SESSION-ID."
+  (map-put! agent-shell--state
+            :session (list (cons :id session-id)
+                           (cons :mode-id (map-nested-elt response '(modes currentModeId)))
+                           (cons :modes (mapcar (lambda (mode)
+                                                  `((:id . ,(map-elt mode 'id))
+                                                    (:name . ,(map-elt mode 'name))
+                                                    (:description . ,(map-elt mode 'description))))
+                                                (map-nested-elt response '(modes availableModes))))
+                           (cons :model-id (map-nested-elt response '(models currentModelId)))
+                           (cons :models (mapcar (lambda (model)
+                                                   `((:model-id . ,(map-elt model 'modelId))
+                                                     (:name . ,(map-elt model 'name))
+                                                     (:description . ,(map-elt model 'description))))
+                                                 (map-nested-elt response '(models availableModels)))))))
+
+(cl-defun agent-shell--finalize-session-init (&key on-session-init)
+  "Finalize session initialization and invoke ON-SESSION-INIT."
+  (agent-shell--update-fragment
+   :state agent-shell--state
+   :block-id "starting"
+   :label-left (format "%s %s"
+                       (agent-shell--status-label "completed")
+                       (propertize "Starting agent" 'font-lock-face 'font-lock-doc-markup-face))
+   :body "\n\nReady"
+   :append t)
+  (agent-shell--update-header-and-mode-line)
+  (when (map-nested-elt agent-shell--state '(:session :models))
+    (agent-shell--update-fragment
+     :state agent-shell--state
+     :block-id "available_models"
+     :label-left (propertize "Available models" 'font-lock-face 'font-lock-doc-markup-face)
+     :body (agent-shell--format-available-models
+            (map-nested-elt agent-shell--state '(:session :models)))))
+  (when (agent-shell--get-available-modes agent-shell--state)
+    (agent-shell--update-fragment
+     :state agent-shell--state
+     :block-id "available_modes"
+     :label-left (propertize "Available modes" 'font-lock-face 'font-lock-doc-markup-face)
+     :body (agent-shell--format-available-modes
+            (agent-shell--get-available-modes agent-shell--state))))
+  (agent-shell--update-header-and-mode-line)
+  (funcall on-session-init))
+
+(cl-defun agent-shell--initiate-new-session (&key shell on-session-init)
+  "Initiate ACP session/new with SHELL and ON-SESSION-INIT."
   (acp-send-request
    :client (map-elt (agent-shell--state) :client)
    :request (acp-make-session-new-request
@@ -2732,47 +2864,70 @@ Must provide ON-SESSION-INIT (lambda ())."
              :mcp-servers (agent-shell--mcp-servers))
    :buffer (current-buffer)
    :on-success (lambda (response)
-                 (map-put! agent-shell--state
-                           :session (list (cons :id (map-elt response 'sessionId))
-                                          (cons :mode-id (map-nested-elt response '(modes currentModeId)))
-                                          (cons :modes (mapcar (lambda (mode)
-                                                                 `((:id . ,(map-elt mode 'id))
-                                                                   (:name . ,(map-elt mode 'name))
-                                                                   (:description . ,(map-elt mode 'description))))
-                                                               (map-nested-elt response '(modes availableModes))))
-                                          (cons :model-id (map-nested-elt response '(models currentModelId)))
-                                          (cons :models (mapcar (lambda (model)
-                                                                  `((:model-id . ,(map-elt model 'modelId))
-                                                                    (:name . ,(map-elt model 'name))
-                                                                    (:description . ,(map-elt model 'description))))
-                                                                (map-nested-elt response '(models availableModels))))))
-                 (agent-shell--update-fragment
-                  :state agent-shell--state
-                  :block-id "starting"
-                  :label-left (format "%s %s"
-                                      (agent-shell--status-label "completed")
-                                      (propertize "Starting agent" 'font-lock-face 'font-lock-doc-markup-face))
-                  :body "\n\nReady"
-                  :append t)
-                 (agent-shell--update-header-and-mode-line)
-                 (when (map-nested-elt agent-shell--state '(:session :models))
-                   (agent-shell--update-fragment
-                    :state agent-shell--state
-                    :block-id "available_models"
-                    :label-left (propertize "Available models" 'font-lock-face 'font-lock-doc-markup-face)
-                    :body (agent-shell--format-available-models
-                           (map-nested-elt agent-shell--state '(:session :models)))))
-                 (when (agent-shell--get-available-modes agent-shell--state)
-                   (agent-shell--update-fragment
-                    :state agent-shell--state
-                    :block-id "available_modes"
-                    :label-left (propertize "Available modes" 'font-lock-face 'font-lock-doc-markup-face)
-                    :body (agent-shell--format-available-modes
-                           (agent-shell--get-available-modes agent-shell--state))))
-                 (agent-shell--update-header-and-mode-line)
-                 (funcall on-session-init))
+                 (agent-shell--set-session-from-response
+                  :response response
+                  :session-id (map-elt response 'sessionId))
+                 (agent-shell--finalize-session-init :on-session-init on-session-init))
    :on-failure (agent-shell--make-error-handler
                 :state agent-shell--state :shell shell)))
+
+(cl-defun agent-shell--initiate-session-list-and-load (&key shell on-session-init)
+  "Try loading latest existing session with SHELL and ON-SESSION-INIT."
+  (with-current-buffer (map-elt (agent-shell--state) :buffer)
+    (agent-shell--update-fragment
+     :state (agent-shell--state)
+     :block-id "starting"
+     :body "\n\nLooking for existing sessions..."
+     :append t))
+  (acp-send-request
+   :client (map-elt (agent-shell--state) :client)
+   :request `((:method . "session/list")
+              (:params . ((cwd . ,(agent-shell--resolve-path (agent-shell-cwd))))))
+   :buffer (current-buffer)
+   :on-success (lambda (response)
+                 (let* ((sessions (append (or (map-elt response 'sessions) '()) nil))
+                        (selected-session
+                         (condition-case nil
+                             (agent-shell--select-session-to-load sessions)
+                           (quit nil)))
+                        (session-id (and selected-session
+                                         (map-elt selected-session 'sessionId))))
+                   (if session-id
+                       (progn
+                         (agent-shell--update-fragment
+                          :state (agent-shell--state)
+                          :block-id "starting"
+                          :body (format "\n\nLoading session %s..."
+                                        (substring-no-properties session-id))
+                          :append t)
+                         (acp-send-request
+                          :client (map-elt (agent-shell--state) :client)
+                          :request `((:method . "session/load")
+                                     (:params . ((sessionId . ,session-id)
+                                                 (cwd . ,(agent-shell--resolve-path (agent-shell-cwd)))
+                                                 (mcpServers . ,(or (agent-shell--mcp-servers) [])))))
+                          :buffer (current-buffer)
+                          :on-success (lambda (load-response)
+                                        (agent-shell--set-session-from-response
+                                         :response load-response
+                                         :session-id session-id)
+                                        (agent-shell--finalize-session-init :on-session-init on-session-init))
+                          :on-failure (lambda (_error _raw-message)
+                                        (agent-shell--update-fragment
+                                         :state (agent-shell--state)
+                                         :block-id "starting"
+                                         :body "\n\nCould not load existing session. Creating a new one..."
+                                         :append t)
+                                        (agent-shell--initiate-new-session
+                                         :shell shell
+                                         :on-session-init on-session-init))))
+                     (agent-shell--initiate-new-session
+                      :shell shell
+                      :on-session-init on-session-init))))
+   :on-failure (lambda (_error _raw-message)
+                 (agent-shell--initiate-new-session
+                  :shell shell
+                  :on-session-init on-session-init))))
 
 (defun agent-shell--eval-dynamic-values (obj)
   "Recursively evaluate any lambda values in OBJ.
