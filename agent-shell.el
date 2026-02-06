@@ -467,7 +467,7 @@ Example configuration with multiple servers:
 Lambdas can be used anywhere in the configuration hierarchy for dynamic
 evaluation at session startup time.  This is useful for values that
 depend on runtime context like the current working directory
-(`agent-shell-cwd').  Note: only lambdas are evaluated, not named
+\(`agent-shell-cwd').  Note: only lambdas are evaluated, not named
 functions, to avoid accidentally calling external symbols.
 
 For example, using the `claude-code-ide' package (see its documentation
@@ -3970,7 +3970,9 @@ Returns an alist with insertion details or nil otherwise:
 
   ((:buffer . BUFFER)
    (:start . START)
-   (:end . END))"
+   (:end . END))
+
+Uses optional SHELL-BUFFER to make paths relative to shell project."
   (if agent-shell-prefer-viewport-interaction
       (agent-shell-viewport--show-buffer :text text :submit submit
                                          :no-focus no-focus :shell-buffer shell-buffer)
