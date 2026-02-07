@@ -1064,5 +1064,46 @@ code block content with spaces
         (should session-init-called)
         (should (equal (map-nested-elt agent-shell--state '(:session :id)) "new-session-789"))))))
 
+(ert-deftest agent-shell--delete-session-by-id-sends-session-delete ()
+  "Test `agent-shell--delete-session-by-id' sends session/delete request."
+  (with-temp-buffer
+    (let* ((requests '())
+           (success-called nil)
+           (state `((:buffer . ,(current-buffer))
+                    (:client . test-client)
+                    (:session . ((:id . "session-2")
+                                 (:mode-id . nil)
+                                 (:modes . nil)))
+                    (:supports-session-list . t)
+                    (:supports-session-delete . t))))
+      (setq-local agent-shell--state state)
+      (cl-letf (((symbol-function 'agent-shell--state)
+                 (lambda () agent-shell--state))
+                ((symbol-function 'agent-shell--update-fragment)
+                 (lambda (&rest _args) nil))
+                ((symbol-function 'agent-shell--update-header-and-mode-line)
+                 (lambda () nil))
+                ((symbol-function 'acp-send-request)
+                 (lambda (&rest args)
+                   (push args requests)
+                   (let* ((request (plist-get args :request))
+                          (method (map-elt request :method)))
+                     (pcase method
+                       ("session/delete"
+                        (let ((params (map-elt request :params)))
+                          (should (equal (map-elt params 'sessionId) "session-2")))
+                        (funcall (plist-get args :on-success) '((ok . t))))
+                       (_ (error "Unexpected method: %s" method)))))))
+        (agent-shell--delete-session-by-id
+         :shell `((:buffer . ,(current-buffer)))
+         :session-id "session-2"
+         :on-success (lambda () (setq success-called t)))
+        (should success-called)
+        (let ((ordered-requests (nreverse requests)))
+          (should (equal (mapcar (lambda (req)
+                                   (map-elt (plist-get req :request) :method))
+                                 ordered-requests)
+                         '("session/delete"))))))))
+
 (provide 'agent-shell-tests)
 ;;; agent-shell-tests.el ends here
