@@ -481,11 +481,15 @@ the session and returns the appropriate endpoint:
   :type '(repeat (choice (alist :key-type symbol :value-type sexp) function))
   :group 'agent-shell)
 
-(cl-defun agent-shell--make-state (&key agent-config buffer client-maker needs-authentication authenticate-request-maker heartbeat)
+(cl-defun agent-shell--make-state (&key agent-config buffer client-maker needs-authentication authenticate-request-maker heartbeat session-meta)
   "Construct shell agent state with AGENT-CONFIG and BUFFER.
 
 Shell state is provider-dependent and needs CLIENT-MAKER, NEEDS-AUTHENTICATION,
-HEARTBEAT, and AUTHENTICATE-REQUEST-MAKER."
+HEARTBEAT, and AUTHENTICATE-REQUEST-MAKER.
+
+SESSION-META is an optional alist of metadata to pass when creating the
+ACP session.  Supported keys include `systemPrompt' for appending to the
+default system prompt."
   (list (cons :agent-config agent-config)
         (cons :buffer buffer)
         (cons :client nil)
@@ -500,6 +504,7 @@ HEARTBEAT, and AUTHENTICATE-REQUEST-MAKER."
         (cons :session (list (cons :id nil)
                              (cons :mode-id nil)
                              (cons :modes nil)))
+        (cons :session-meta session-meta)
         (cons :last-entry-type nil)
         (cons :chunked-group-count 0)
         (cons :request-count 0)
@@ -664,13 +669,19 @@ If currently visiting an `agent-shell', transfer latest input."
         (agent-shell-viewport--show-buffer :override input))
     (agent-shell-viewport--show-buffer)))
 
-(cl-defun agent-shell-start (&key config)
+(cl-defun agent-shell-start (&key config session-meta)
   "Programmatically start shell with CONFIG.
 
-See `agent-shell-make-agent-config' for config format."
+See `agent-shell-make-agent-config' for config format.
+
+SESSION-META is an optional alist of metadata to pass when creating the
+ACP session.  Supported keys include:
+- `systemPrompt': Either a string (replaces default) or an alist with
+  key `append' containing a string to append to the default system prompt."
   (agent-shell--start :config config
                       :no-focus nil
-                      :new-session t))
+                      :new-session t
+                      :session-meta session-meta))
 
 (cl-defun agent-shell--config-icon (&key config)
   "Create icon string for CONFIG if available and icons are enabled.
@@ -1896,13 +1907,15 @@ FUNCTION should be a function accepting keyword arguments (&key ...)."
                    (list (car pair) (cdr pair)))
                  alist)))
 
-(cl-defun agent-shell--start (&key config no-focus new-session)
+(cl-defun agent-shell--start (&key config no-focus new-session session-meta)
   "Programmatically start shell with CONFIG.
 
 See `agent-shell-make-agent-config' for config format.
 
 Set NO-FOCUS to start in background.
-Set NEW-SESSION to start a separate new session."
+Set NEW-SESSION to start a separate new session.
+SESSION-META is an optional alist of metadata to pass when creating the
+ACP session.  See `acp-make-session-new-request' for supported keys."
   (unless (version<= "0.84.9" shell-maker-version)
     (error "Please update shell-maker to version 0.84.9 or newer"))
   (unless (version<= "0.9.1" acp-package-version)
@@ -1960,7 +1973,8 @@ variable (see makunbound)"))
                                       :client-maker (map-elt config :client-maker)
                                       :needs-authentication (map-elt config :needs-authentication)
                                       :authenticate-request-maker (map-elt config :authenticate-request-maker)
-                                      :agent-config config))
+                                      :agent-config config
+                                      :session-meta session-meta))
       ;; Initialize buffer-local shell-maker-config
       (setq-local agent-shell--shell-maker-config shell-maker-config)
       (agent-shell--update-header-and-mode-line)
@@ -2806,7 +2820,8 @@ Must provide ON-SESSION-INIT (lambda ())."
    :client (map-elt (agent-shell--state) :client)
    :request (acp-make-session-new-request
              :cwd (agent-shell--resolve-path (agent-shell-cwd))
-             :mcp-servers (agent-shell--mcp-servers))
+             :mcp-servers (agent-shell--mcp-servers)
+             :meta (map-elt (agent-shell--state) :session-meta))
    :buffer (current-buffer)
    :on-success (lambda (response)
                  (map-put! agent-shell--state
