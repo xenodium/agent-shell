@@ -1022,16 +1022,27 @@ Flow:
                                (agent-shell--handle :command command :shell-buffer shell-buffer))))
           ;; Send ACP request to set default model (optional)
           ((and (map-nested-elt (agent-shell--state) '(:agent-config :default-model-id))
-                (funcall (map-nested-elt (agent-shell--state)
-                                         '(:agent-config :default-model-id)))
                 (not (map-elt (agent-shell--state) :set-model)))
-           (agent-shell--set-default-model
-            :shell-buffer shell-buffer
-            :model-id (funcall (map-nested-elt (agent-shell--state)
-                                               '(:agent-config :default-model-id)))
-            :on-model-changed (lambda ()
-                                (map-put! (agent-shell--state) :set-model t)
-                                (agent-shell--handle :command command :shell-buffer shell-buffer))))
+           (let ((model-id-or-marker (funcall (map-nested-elt (agent-shell--state)
+                                                              '(:agent-config :default-model-id)))))
+             (cond
+              ;; If we get 'resolve-by-name, models aren't loaded yet - skip for now
+              ((eq model-id-or-marker 'resolve-by-name)
+               ;; Mark that we haven't set the model yet so we'll retry after models are loaded
+               (map-put! (agent-shell--state) :set-model nil)
+               (agent-shell--handle :command command :shell-buffer shell-buffer))
+              ;; If we have an actual model ID, set it
+              (model-id-or-marker
+               (agent-shell--set-default-model
+                :shell-buffer shell-buffer
+                :model-id model-id-or-marker
+                :on-model-changed (lambda ()
+                                    (map-put! (agent-shell--state) :set-model t)
+                                    (agent-shell--handle :command command :shell-buffer shell-buffer))))
+              ;; No model to set
+              (t
+               (map-put! (agent-shell--state) :set-model t)
+               (agent-shell--handle :command command :shell-buffer shell-buffer)))))
           ;; Send ACP request to set default session mode (optional)
           ((and (map-nested-elt (agent-shell--state) '(:agent-config :default-session-mode-id))
                 (funcall (map-nested-elt (agent-shell--state) '(:agent-config :default-session-mode-id)))
@@ -3966,7 +3977,7 @@ Returns a buffer object or nil."
                        ;; to get latest input.
                        (buffer-substring
                         (or (marker-position comint-accum-marker)
-	                    (process-mark (get-buffer-process (current-buffer))))
+                        (process-mark (get-buffer-process (current-buffer))))
                         (point-max)))))
     (unless (string-empty-p (string-trim input))
       input)))

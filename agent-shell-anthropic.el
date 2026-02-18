@@ -80,6 +80,18 @@ when starting a new shell."
   :type '(choice (const nil) string)
   :group 'agent-shell)
 
+(defcustom agent-shell-anthropic-default-model-name
+  nil
+  "Default Anthropic model name.
+
+Must be one of the model names displayed under \"Available models\"
+when starting a new shell. For example: \"Opus\", \"Sonnet\", \"Haiku\".
+
+Cannot be used together with `agent-shell-anthropic-default-model-id'.
+If both are set, an error will be raised."
+  :type '(choice (const nil) string)
+  :group 'agent-shell)
+
 (defcustom agent-shell-anthropic-default-session-mode-id
   nil
   "Default Anthropic session mode ID.
@@ -113,6 +125,57 @@ Example usage to set a custom Anthropic API base URL:
   :type '(repeat string)
   :group 'agent-shell)
 
+(defun agent-shell-anthropic--find-model-id-by-name (name models)
+  "Find model ID for model with NAME in MODELS list.
+
+MODELS is a list of model alists with :name and :model-id keys.
+Returns the model-id if found, nil otherwise."
+  (when (and name models)
+    (let ((model (seq-find (lambda (m)
+                            (string-equal (downcase (or (map-elt m :name) ""))
+                                         (downcase name)))
+                          models)))
+      (when model
+        (map-elt model :model-id)))))
+
+(defun agent-shell-anthropic--resolve-default-model-id ()
+  "Resolve the default model ID from name or ID configuration.
+
+Returns the model ID to use.  Only one of
+`agent-shell-anthropic-default-model-name' or
+`agent-shell-anthropic-default-model-id' should be configured.
+If both are set, an error is raised.
+
+When a model name is configured, this function will attempt
+to resolve it to a model ID once models are available in the
+session state.  If the name cannot be resolved, an error is
+raised."
+  ;; Error if both are configured to avoid confusion
+  (when (and agent-shell-anthropic-default-model-name
+             agent-shell-anthropic-default-model-id)
+    (error "Both `agent-shell-anthropic-default-model-name' and `agent-shell-anthropic-default-model-id' are configured. Please use only one"))
+  (cond
+   ;; If model name is specified and we have session models, resolve it
+   ((and agent-shell-anthropic-default-model-name
+         (boundp 'agent-shell--state)
+         (map-nested-elt agent-shell--state '(:session :models)))
+    (let ((resolved-id (agent-shell-anthropic--find-model-id-by-name
+                       agent-shell-anthropic-default-model-name
+                       (map-nested-elt agent-shell--state '(:session :models)))))
+      (unless resolved-id
+        (error "Model name '%s' not found in available models"
+               agent-shell-anthropic-default-model-name))
+      resolved-id))
+   ;; If only model name is specified but models aren't loaded yet, return marker
+   (agent-shell-anthropic-default-model-name
+    ;; This tells agent-shell to call us again after session init
+    'resolve-by-name)
+   ;; Otherwise use the model ID directly
+   (agent-shell-anthropic-default-model-id
+    agent-shell-anthropic-default-model-id)
+   ;; No default specified
+   (t nil)))
+
 (defun agent-shell-anthropic-make-claude-code-config ()
   "Create a Claude Code agent configuration.
 
@@ -127,7 +190,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :welcome-function #'agent-shell-anthropic--claude-code-welcome-message
    :client-maker (lambda (buffer)
                    (agent-shell-anthropic-make-claude-client :buffer buffer))
-   :default-model-id (lambda () agent-shell-anthropic-default-model-id)
+   :default-model-id #'agent-shell-anthropic--resolve-default-model-id
    :default-session-mode-id (lambda () agent-shell-anthropic-default-session-mode-id)
    :install-instructions "See https://github.com/zed-industries/claude-agent-acp for installation."))
 

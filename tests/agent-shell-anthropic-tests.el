@@ -4,6 +4,12 @@
 (require 'agent-shell)
 (require 'agent-shell-anthropic)
 
+(defvar agent-shell-anthropic-default-model-name)
+(defvar agent-shell-anthropic-default-model-id)
+
+(declare-function agent-shell-anthropic--find-model-id-by-name "agent-shell-anthropic")
+(declare-function agent-shell-anthropic--resolve-default-model-id "agent-shell-anthropic")
+
 (ert-deftest agent-shell-anthropic-make-claude-client-test ()
   "Test agent-shell-anthropic-make-claude-client function."
   ;; Mock executable-find to always return the command path
@@ -78,6 +84,98 @@
             (should (member "EXISTING_VAR=existing_value" env-vars)))
         (when (buffer-live-p test-buffer)
           (kill-buffer test-buffer))))))
+
+(ert-deftest agent-shell-anthropic-find-model-id-by-name-test ()
+  "Test agent-shell-anthropic--find-model-id-by-name function."
+  (let ((mock-models '(((:name . "Default (recommended)")
+                        (:model-id . "claude-3-5-sonnet-20241022")
+                        (:description . "Use the default model"))
+                       ((:name . "Sonnet")
+                        (:model-id . "claude-3-6-sonnet-20250115")
+                        (:description . "Sonnet 4.6"))
+                       ((:name . "Opus")
+                        (:model-id . "claude-3-6-opus-20250109")
+                        (:description . "Opus 4.6"))
+                       ((:name . "Opus 4.1")
+                        (:model-id . "claude-opus-4-1-legacy")
+                        (:description . "Opus 4.1 Legacy"))
+                       ((:name . "Haiku")
+                        (:model-id . "claude-3-6-haiku-20250107")
+                        (:description . "Haiku 4.5")))))
+
+    ;; Test exact match
+    (should (string= (agent-shell-anthropic--find-model-id-by-name "Opus" mock-models)
+                     "claude-3-6-opus-20250109"))
+
+    ;; Test case-insensitive match
+    (should (string= (agent-shell-anthropic--find-model-id-by-name "opus" mock-models)
+                     "claude-3-6-opus-20250109"))
+    (should (string= (agent-shell-anthropic--find-model-id-by-name "OPUS" mock-models)
+                     "claude-3-6-opus-20250109"))
+
+    ;; Test other models
+    (should (string= (agent-shell-anthropic--find-model-id-by-name "Sonnet" mock-models)
+                     "claude-3-6-sonnet-20250115"))
+    (should (string= (agent-shell-anthropic--find-model-id-by-name "Haiku" mock-models)
+                     "claude-3-6-haiku-20250107"))
+
+    ;; Test non-existent model
+    (should (null (agent-shell-anthropic--find-model-id-by-name "NonExistent" mock-models)))
+
+    ;; Test nil inputs
+    (should (null (agent-shell-anthropic--find-model-id-by-name nil mock-models)))
+    (should (null (agent-shell-anthropic--find-model-id-by-name "Opus" nil)))
+    (should (null (agent-shell-anthropic--find-model-id-by-name nil nil)))))
+
+(ert-deftest agent-shell-anthropic-resolve-default-model-id-test ()
+  "Test agent-shell-anthropic--resolve-default-model-id function."
+  ;; Test when only model ID is configured
+  (let ((agent-shell-anthropic-default-model-name nil)
+        (agent-shell-anthropic-default-model-id "test-model-id")
+        (agent-shell--state nil))
+    (should (string= (agent-shell-anthropic--resolve-default-model-id) "test-model-id")))
+
+  ;; Test when only model name is configured but no state yet
+  (let ((agent-shell-anthropic-default-model-name "Opus")
+        (agent-shell-anthropic-default-model-id nil)
+        (agent-shell--state nil))
+    (should (eq (agent-shell-anthropic--resolve-default-model-id) 'resolve-by-name)))
+
+  ;; Test when model name is configured and state has models
+  (let ((agent-shell-anthropic-default-model-name "Opus")
+        (agent-shell-anthropic-default-model-id nil)
+        (agent-shell--state '((:session . ((:models . (((:name . "Opus")
+                                                        (:model-id . "claude-opus-id")
+                                                        (:description . "Opus model"))
+                                                       ((:name . "Sonnet")
+                                                        (:model-id . "claude-sonnet-id")
+                                                        (:description . "Sonnet model")))))))))
+    (should (string= (agent-shell-anthropic--resolve-default-model-id) "claude-opus-id")))
+
+  ;; Test when model name doesn't match any model - should error
+  (let ((agent-shell-anthropic-default-model-name "NonExistent")
+        (agent-shell-anthropic-default-model-id nil)
+        (agent-shell--state '((:session . ((:models . (((:name . "Opus")
+                                                        (:model-id . "claude-opus-id")
+                                                        (:description . "Opus model")))))))))
+    (should-error (agent-shell-anthropic--resolve-default-model-id)
+                  :type 'error))
+
+  ;; Test when neither name nor ID is configured
+  (let ((agent-shell-anthropic-default-model-name nil)
+        (agent-shell-anthropic-default-model-id nil)
+        (agent-shell--state nil))
+    (should (null (agent-shell-anthropic--resolve-default-model-id))))
+
+  ;; Test error when both name and ID are configured
+  (let ((agent-shell-anthropic-default-model-name "Sonnet")
+        (agent-shell-anthropic-default-model-id "some-model-id")
+        (agent-shell--state '((:session . ((:models . (((:name . "Opus")
+                                                        (:model-id . "claude-opus-id"))
+                                                       ((:name . "Sonnet")
+                                                        (:model-id . "claude-sonnet-id")))))))))
+    (should-error (agent-shell-anthropic--resolve-default-model-id)
+                  :type 'error)))
 
 (provide 'agent-shell-anthropic-tests)
 ;;; agent-shell-anthropic-tests.el ends here
