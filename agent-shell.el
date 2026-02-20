@@ -3916,6 +3916,19 @@ If FILE-PATH is not an image, returns nil."
                            (agent-shell-cwd))))
                 (agent-shell-buffers))))
 
+(defcustom agent-shell-new-shell-strategy 'prompt
+  "How to handle starting a shell when none exist for the current project.
+
+Available values:
+
+  `new': Always start a new shell immediately.
+  `prompt': Prompt whether to start a new shell.
+  `switch': Skip creation and prompt to switch to an existing shell."
+  :type '(choice (const :tag "Always start new shell" new)
+                 (const :tag "Prompt to start new shell" prompt)
+                 (const :tag "Switch to existing shell" switch))
+  :group 'agent-shell)
+
 (cl-defun agent-shell--shell-buffer (&key viewport-buffer no-error no-create)
   "Get an `agent-shell' buffer for the current project.
 
@@ -3941,7 +3954,14 @@ Returns a buffer object or nil."
       (if no-create
           (unless no-error
             (user-error "No agent shell buffers available for current project"))
-        (if (y-or-n-p "No shells in project.  Start a new one? ")
+        (if (pcase agent-shell-new-shell-strategy
+              ('prompt (y-or-n-p "No shells in project.  Start a new one? "))
+              ('new t)
+              ('switch nil)
+              (_
+               (message "Unknown value of `agent-shell-new-shell-strategy' '%s', starting new shell."
+                        agent-shell-session-strategy)
+               t))
             (get-buffer
              (agent-shell--start :config (or (agent-shell--resolve-preferred-config)
                                              (agent-shell-select-config
