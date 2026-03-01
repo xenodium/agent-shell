@@ -77,6 +77,7 @@
 (require 'shell-maker)
 (require 'svg nil :noerror)
 (require 'transient)
+(require 'agent-shell-inline-images nil 'noerror)
 
 ;; Optional flycheck integration (used in agent-shell--get-flycheck-error-context)
 (declare-function flycheck-overlay-errors-at "flycheck" (pos))
@@ -87,6 +88,8 @@
 (declare-function flycheck-error-message "flycheck" (err))
 (declare-function flycheck-error-line "flycheck" (err))
 (declare-function flycheck-error-column "flycheck" (err))
+(declare-function agent-shell-inline-images--content-to-display "agent-shell-inline-images" (content))
+(declare-function agent-shell-inline-images--content-to-plain-text "agent-shell-inline-images" (content))
 
 ;; Declare as special so byte-compilation doesn't turn `let' bindings into
 ;; lexical bindings (which would not affect `auto-insert' behavior).
@@ -1215,29 +1218,32 @@ COMMAND, when present, may be a shell command string or an argv vector."
               :expanded agent-shell-thought-process-expand-by-default)
              (map-put! state :last-entry-type "agent_thought_chunk")))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "agent_message_chunk")
-           ;; Notification is out of context (session/prompt finished).
-           ;; Cannot derive where to display, so show in minibuffer.
-           (if (not (shell-maker-busy))
-               (message "Agent message (stale, consider reporting to ACP agent): %s"
-                        (truncate-string-to-width (map-nested-elt acp-notification '(params update content text)) 100))
-             (unless (equal (map-elt state :last-entry-type) "agent_message_chunk")
-               (map-put! state :chunked-group-count (1+ (map-elt state :chunked-group-count)))
+           (let* ((content (map-nested-elt acp-notification '(params update content)))
+                  (display (agent-shell--content-to-display content))
+                  (plain (agent-shell--content-to-plain-text content)))
+             ;; Notification is out of context (session/prompt finished).
+             ;; Cannot derive where to display, so show in minibuffer.
+             (if (not (shell-maker-busy))
+                 (message "Agent message (stale, consider reporting to ACP agent): %s"
+                          (truncate-string-to-width (or plain "") 100))
+               (unless (equal (map-elt state :last-entry-type) "agent_message_chunk")
+                 (map-put! state :chunked-group-count (1+ (map-elt state :chunked-group-count)))
+                 (agent-shell--append-transcript
+                  :text (format "\n## Agent (%s)\n\n" (format-time-string "%F %T"))
+                  :file-path agent-shell--transcript-file))
                (agent-shell--append-transcript
-                :text (format "\n## Agent (%s)\n\n" (format-time-string "%F %T"))
-                :file-path agent-shell--transcript-file))
-             (agent-shell--append-transcript
-              :text (map-nested-elt acp-notification '(params update content text))
-              :file-path agent-shell--transcript-file)
-             (agent-shell--update-fragment
-              :state state
-              :block-id (format "%s-agent_message_chunk"
-                                (map-elt state :chunked-group-count))
-              :body (map-nested-elt acp-notification '(params update content text))
-              :create-new (not (equal (map-elt state :last-entry-type)
-                                      "agent_message_chunk"))
-              :append t
-              :navigation 'never)
-             (map-put! state :last-entry-type "agent_message_chunk")))
+                :text (or plain "")
+                :file-path agent-shell--transcript-file)
+               (agent-shell--update-fragment
+                :state state
+                :block-id (format "%s-agent_message_chunk"
+                                  (map-elt state :chunked-group-count))
+                :body (or display "")
+                :create-new (not (equal (map-elt state :last-entry-type)
+                                        "agent_message_chunk"))
+                :append t
+                :navigation 'never)
+               (map-put! state :last-entry-type "agent_message_chunk"))))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "user_message_chunk")
            (let ((new-prompt-p (not (equal (map-elt state :last-entry-type)
                                            "user_message_chunk"))))
@@ -3881,6 +3887,24 @@ If FILE-PATH is not an image, returns nil."
               ;; Check if it's an image type
               (is-image (string-prefix-p "image/" mime-type)))
     (create-image file-path nil nil :max-width max-width)))
+
+(defun agent-shell--content-to-plain-text (content)
+  "Normalize CONTENT to plain text."
+  (if (fboundp 'agent-shell-inline-images--content-to-plain-text)
+      (agent-shell-inline-images--content-to-plain-text content)
+    (cond
+     ((stringp content) content)
+     ((map-elt content 'text) (map-elt content 'text))
+     (t ""))))
+
+(defun agent-shell--content-to-display (content)
+  "Normalize CONTENT to displayable text."
+  (if (fboundp 'agent-shell-inline-images--content-to-display)
+      (agent-shell-inline-images--content-to-display content)
+    (cond
+     ((stringp content) content)
+     ((map-elt content 'text) (map-elt content 'text))
+     (t ""))))
 
 (cl-defun agent-shell--collect-attached-files (content-blocks)
   "Collect attached resource uris from CONTENT-BLOCKS."
