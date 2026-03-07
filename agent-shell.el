@@ -1985,20 +1985,75 @@ For example, shut down ACP client."
   (agent-shell-heartbeat-stop
    :heartbeat (map-elt (agent-shell--state) :heartbeat)))
 
-(defun agent-shell--dot-subdir (subdir)
-  "Return path to .agent-shell/SUBDIR under project root, creating it if needed.
-When the directory is first created inside a git repo and
-.agent-shell/ is not yet ignored, automatically add it to .gitignore.
+(defcustom agent-shell-dot-subdir-function #'agent-shell--dot-subdir-in-repo
+  "Function used by `agent-shell--dot-subdir' to resolve subdirectory paths.
+Called with one argument, SUBDIR (a string such as \"screenshots\" or
+\"transcripts\"), and must return the absolute path to that subdirectory.
+Directory creation is handled by `agent-shell--dot-subdir', not by this
+function.
+
+Two built-in implementations are provided:
+
+- `agent-shell--dot-subdir-in-repo' (default)
+
+- `agent-shell--dot-subdir-user-emacs-dir'"
+  :type '(choice (const :tag "In repo (.agent-shell/)" agent-shell--dot-subdir-in-repo)
+                 (const :tag "Under user-emacs-directory" agent-shell--dot-subdir-user-emacs-dir)
+                 (function :tag "Custom function"))
+  :group 'agent-shell)
+
+(defcustom agent-shell-user-emacs-dir-subdir "agent-shell"
+  "Directory name used under `user-emacs-directory' by `agent-shell--dot-subdir-user-emacs-dir'.
+Defaults to \"agent-shell\"."
+  :type 'string
+  :group 'agent-shell)
+
+(defcustom agent-shell-dot-subdir-gitignore t
+  "When non-nil, automatically add .agent-shell/ to .gitignore when needed.
+This only takes effect when the resolved subdirectory is located under the
+project root (as returned by `agent-shell-cwd')."
+  :type 'boolean
+  :group 'agent-shell)
+
+(defun agent-shell--dot-subdir-in-repo (subdir)
+  "Return path to .agent-shell/SUBDIR under the project root.
 
 For example:
 
-  (agent-shell--dot-subdir \"screenshots\")
-  => \"/path/to/project/.agent-shell/screenshots/\""
-  (let ((dir (expand-file-name (file-name-concat ".agent-shell" subdir)
-                               (agent-shell-cwd))))
+  (agent-shell--dot-subdir-in-repo \"screenshots\")
+  => \"/path/to/project/.agent-shell/screenshots\""
+  (expand-file-name (file-name-concat ".agent-shell" subdir)
+                    (agent-shell-cwd)))
+
+(defun agent-shell--dot-subdir-user-emacs-dir (subdir)
+  "Return path to SUBDIR under `user-emacs-directory'/agent-shell/<cwd>/.
+The current working directory path is sanitized by stripping the leading slash
+and replacing remaining slashes with dashes, mirroring how tools like Claude
+Code name per-project memory directories.
+
+For example, if the CWD is /home/user/src/myproject:
+
+  (agent-shell--dot-subdir-user-emacs-dir \"screenshots\")
+  => \"~/.emacs.d/agent-shell/home-user-src-myproject/screenshots\""
+  (let* ((cwd (string-remove-suffix "/" (agent-shell-cwd)))
+         (sanitized (replace-regexp-in-string "/" "-" (string-remove-prefix "/" cwd)))
+         (base (expand-file-name (file-name-concat agent-shell-user-emacs-dir-subdir sanitized) user-emacs-directory)))
+    (expand-file-name subdir base)))
+
+(defun agent-shell--dot-subdir (subdir)
+  "Return path to SUBDIR for agent-shell data, creating it if needed.
+Calls `agent-shell-dot-subdir-function' to resolve the path.  If the directory
+does not yet exist, creates it and, when `agent-shell-dot-subdir-gitignore' is
+non-nil and the resolved path is under the project root, also ensures
+.agent-shell/ is listed in .gitignore."
+  (let ((dir (funcall agent-shell-dot-subdir-function subdir))
+        (cwd (agent-shell-cwd)))
     (unless (file-directory-p dir)
       (make-directory dir t)
-      (agent-shell--ensure-gitignore (agent-shell-cwd)))
+      (when (and agent-shell-dot-subdir-gitignore
+                 (string-prefix-p (file-name-as-directory cwd)
+                                  (expand-file-name dir)))
+        (agent-shell--ensure-gitignore cwd)))
     dir))
 
 (defun agent-shell--ensure-gitignore (project-root)

@@ -1561,5 +1561,136 @@ code block content
           (should-not (string-match-p "test-session-id"
                                       (substring-no-properties header))))))))
 
+;;; Tests for agent-shell--dot-subdir-in-repo
+
+(ert-deftest agent-shell--dot-subdir-in-repo-returns-path-test ()
+  "Test that `agent-shell--dot-subdir-in-repo' returns the correct path."
+  (cl-letf (((symbol-function 'agent-shell-cwd)
+             (lambda () "/home/user/myproject")))
+    (should (equal (agent-shell--dot-subdir-in-repo "screenshots")
+                   "/home/user/myproject/.agent-shell/screenshots"))))
+
+;;; Tests for agent-shell--dot-subdir-user-emacs-dir
+
+(ert-deftest agent-shell--dot-subdir-user-emacs-dir-sanitizes-path-test ()
+  "Test that slashes in cwd are replaced with dashes in the result path."
+  (cl-letf (((symbol-function 'agent-shell-cwd)
+             (lambda () "/home/user/src/myproject")))
+    (let ((user-emacs-directory "/home/user/.emacs.d/")
+          (agent-shell-user-emacs-dir-subdir "agent-shell"))
+      (should (equal (agent-shell--dot-subdir-user-emacs-dir "screenshots")
+                     "/home/user/.emacs.d/agent-shell/home-user-src-myproject/screenshots")))))
+
+(ert-deftest agent-shell--dot-subdir-user-emacs-dir-custom-subdir-test ()
+  "Test that `agent-shell-user-emacs-dir-subdir' controls the directory name."
+  (cl-letf (((symbol-function 'agent-shell-cwd)
+             (lambda () "/home/user/src/myproject")))
+    (let ((user-emacs-directory "/home/user/.emacs.d/")
+          (agent-shell-user-emacs-dir-subdir "my-agent"))
+      (should (equal (agent-shell--dot-subdir-user-emacs-dir "screenshots")
+                     "/home/user/.emacs.d/my-agent/home-user-src-myproject/screenshots")))))
+
+;;; Tests for agent-shell--dot-subdir
+
+(ert-deftest agent-shell--dot-subdir-creates-directory-test ()
+  "Test that `agent-shell--dot-subdir' creates the directory."
+  (let* ((temp-dir (make-temp-file "agent-shell-test" t))
+         (expected-dir (expand-file-name ".agent-shell/screenshots" temp-dir)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'agent-shell-cwd) (lambda () temp-dir))
+                  ((symbol-function 'agent-shell--ensure-gitignore) #'ignore))
+          (let ((agent-shell-dot-subdir-function #'agent-shell--dot-subdir-in-repo)
+                (agent-shell-dot-subdir-gitignore nil))
+            (agent-shell--dot-subdir "screenshots")
+            (should (file-directory-p expected-dir))))
+      (delete-directory temp-dir t))))
+
+(ert-deftest agent-shell--dot-subdir-returns-path-test ()
+  "Test that `agent-shell--dot-subdir' returns the resolved path."
+  (let* ((temp-dir (make-temp-file "agent-shell-test" t))
+         (expected-dir (expand-file-name ".agent-shell/screenshots" temp-dir)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'agent-shell-cwd) (lambda () temp-dir))
+                  ((symbol-function 'agent-shell--ensure-gitignore) #'ignore))
+          (let ((agent-shell-dot-subdir-function #'agent-shell--dot-subdir-in-repo)
+                (agent-shell-dot-subdir-gitignore nil))
+            (should (equal (agent-shell--dot-subdir "screenshots") expected-dir))))
+      (delete-directory temp-dir t))))
+
+(ert-deftest agent-shell--dot-subdir-noop-if-directory-exists-test ()
+  "Test that `agent-shell--dot-subdir' does not error if the directory already exists."
+  (let* ((temp-dir (make-temp-file "agent-shell-test" t))
+         (expected-dir (expand-file-name ".agent-shell/screenshots" temp-dir)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'agent-shell-cwd) (lambda () temp-dir))
+                  ((symbol-function 'agent-shell--ensure-gitignore) #'ignore))
+          (let ((agent-shell-dot-subdir-function #'agent-shell--dot-subdir-in-repo)
+                (agent-shell-dot-subdir-gitignore nil))
+            (make-directory expected-dir t)
+            (should (equal (agent-shell--dot-subdir "screenshots") expected-dir))
+            (should (file-directory-p expected-dir))))
+      (delete-directory temp-dir t))))
+
+(ert-deftest agent-shell--dot-subdir-uses-configured-function-test ()
+  "Test that `agent-shell--dot-subdir' delegates to `agent-shell-dot-subdir-function'."
+  (let* ((temp-dir (make-temp-file "agent-shell-test" t))
+         (custom-called-with nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'agent-shell-cwd) (lambda () temp-dir))
+                  ((symbol-function 'agent-shell--ensure-gitignore) #'ignore))
+          (let ((agent-shell-dot-subdir-function
+                 (lambda (subdir)
+                   (setq custom-called-with subdir)
+                   (expand-file-name subdir temp-dir)))
+                (agent-shell-dot-subdir-gitignore nil))
+            (agent-shell--dot-subdir "screenshots")
+            (should (equal custom-called-with "screenshots"))))
+      (delete-directory temp-dir t))))
+
+(ert-deftest agent-shell--dot-subdir-gitignore-called-when-path-under-cwd-test ()
+  "Test that `agent-shell--ensure-gitignore' is called when path is under cwd."
+  (let* ((temp-dir (make-temp-file "agent-shell-test" t))
+         (gitignore-calls nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'agent-shell-cwd) (lambda () temp-dir))
+                  ((symbol-function 'agent-shell--ensure-gitignore)
+                   (lambda (root) (push root gitignore-calls))))
+          (let ((agent-shell-dot-subdir-function #'agent-shell--dot-subdir-in-repo)
+                (agent-shell-dot-subdir-gitignore t))
+            (agent-shell--dot-subdir "screenshots")
+            (should (equal gitignore-calls (list (expand-file-name temp-dir))))))
+      (delete-directory temp-dir t))))
+
+(ert-deftest agent-shell--dot-subdir-gitignore-not-called-when-disabled-test ()
+  "Test that `agent-shell--ensure-gitignore' is not called when `agent-shell-dot-subdir-gitignore' is nil."
+  (let* ((temp-dir (make-temp-file "agent-shell-test" t))
+         (gitignore-called nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'agent-shell-cwd) (lambda () temp-dir))
+                  ((symbol-function 'agent-shell--ensure-gitignore)
+                   (lambda (_root) (setq gitignore-called t))))
+          (let ((agent-shell-dot-subdir-function #'agent-shell--dot-subdir-in-repo)
+                (agent-shell-dot-subdir-gitignore nil))
+            (agent-shell--dot-subdir "screenshots")
+            (should-not gitignore-called)))
+      (delete-directory temp-dir t))))
+
+(ert-deftest agent-shell--dot-subdir-gitignore-not-called-when-path-outside-cwd-test ()
+  "Test that `agent-shell--ensure-gitignore' is not called when path is outside cwd."
+  (let* ((cwd-dir (make-temp-file "agent-shell-cwd" t))
+         (emacs-dir (make-temp-file "agent-shell-emacs" t))
+         (gitignore-called nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'agent-shell-cwd) (lambda () cwd-dir))
+                  ((symbol-function 'agent-shell--ensure-gitignore)
+                   (lambda (_root) (setq gitignore-called t))))
+          (let ((user-emacs-directory (file-name-as-directory emacs-dir))
+                (agent-shell-dot-subdir-function #'agent-shell--dot-subdir-user-emacs-dir)
+                (agent-shell-dot-subdir-gitignore t))
+            (agent-shell--dot-subdir "screenshots")
+            (should-not gitignore-called)))
+      (delete-directory cwd-dir t)
+      (delete-directory emacs-dir t))))
+
 (provide 'agent-shell-tests)
 ;;; agent-shell-tests.el ends here
