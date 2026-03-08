@@ -576,6 +576,30 @@ the session and returns the appropriate endpoint:
   :type '(repeat (choice (alist :key-type symbol :value-type sexp) function))
   :group 'agent-shell)
 
+(defcustom agent-shell-system-prompt-append nil
+  "Additional text appended to the system prompt for every request.
+When non-nil, this string is sent via the ACP `_meta.systemPrompt.append'
+field.  Can also be a function (called with no arguments) returning a
+string or nil.
+
+Example (static string):
+
+  (setq agent-shell-system-prompt-append
+        \"Always respond in British English.\")
+
+Example (dynamic, reading from a file):
+
+  (setq agent-shell-system-prompt-append
+        (lambda ()
+          (when-let ((file (expand-file-name \"instructions.md\"
+                                             (project-root (project-current)))))
+            (when (file-exists-p file)
+              (with-temp-buffer
+                (insert-file-contents file)
+                (buffer-string))))))"
+  :type '(choice (const nil) string function)
+  :group 'agent-shell)
+
 (cl-defun agent-shell--make-state (&key agent-config buffer client-maker needs-authentication authenticate-request-maker heartbeat outgoing-request-decorator)
   "Construct shell agent state with AGENT-CONFIG and BUFFER.
 
@@ -3742,7 +3766,13 @@ Falls back to latest session in batch mode (e.g. tests)."
    :client (map-elt (agent-shell--state) :client)
    :request (acp-make-session-new-request
              :cwd (agent-shell--resolve-path (agent-shell-cwd))
-             :mcp-servers (agent-shell--mcp-servers))
+             :mcp-servers (agent-shell--mcp-servers)
+             :meta (when-let* ((append-value
+                                (if (functionp agent-shell-system-prompt-append)
+                                    (funcall agent-shell-system-prompt-append)
+                                  agent-shell-system-prompt-append))
+                               ((stringp append-value)))
+                     `((systemPrompt . ((append . ,append-value))))))
    :buffer (current-buffer)
    :on-success (lambda (acp-response)
                  (map-put! agent-shell--state
