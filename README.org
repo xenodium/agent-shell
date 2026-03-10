@@ -109,13 +109,7 @@ For Goose CLI, install [[https://block.github.io/goose/docs/getting-started/inst
 
 *** Cursor
 
-For Cursor agent, install with:
-
-#+begin_src bash
-npm install -g @blowmage/cursor-agent-acp
-#+end_src
-
-See https://github.com/blowmage/cursor-agent-acp-npm for details.
+For Cursor agent, install the official [[https://cursor.com/docs/cli/acp][Cursor CLI]] and ensure the `agent` executable is in PATH.
 
 
 *** Kimi Code CLI
@@ -521,6 +515,48 @@ and a dummy auth file ~./local/share/opencode/auth.json~
 #+end_src
 
 Huge thanks for /gdindi/ for finding and and describing this in https://github.com/xenodium/agent-shell/issues/526
+
+*** Cursor
+
+For login-based authentication (default):
+
+#+begin_src emacs-lisp
+(setq agent-shell-cursor-authentication
+      (agent-shell-cursor-make-authentication :login t))
+#+end_src
+
+For API key authentication:
+
+#+begin_src emacs-lisp
+;; With string
+(setq agent-shell-cursor-authentication
+      (agent-shell-cursor-make-authentication :api-key "your-cursor-api-key-here"))
+
+;; With function
+(setq agent-shell-cursor-authentication
+      (agent-shell-cursor-make-authentication
+       :api-key (lambda () (auth-source-pass-get "secret" "cursor-api-key"))))
+#+end_src
+
+For auth token authentication:
+
+#+begin_src emacs-lisp
+;; With string
+(setq agent-shell-cursor-authentication
+      (agent-shell-cursor-make-authentication :auth-token "your-cursor-auth-token"))
+
+;; With function
+(setq agent-shell-cursor-authentication
+      (agent-shell-cursor-make-authentication
+       :auth-token (lambda () (auth-source-pass-get "secret" "cursor-auth-token"))))
+#+end_src
+
+For no authentication (when already authenticated via =agent login=):
+
+#+begin_src emacs-lisp
+(setq agent-shell-cursor-authentication
+      (agent-shell-cursor-make-authentication :none t))
+#+end_src
 
 *** Customizing Available Agents
 
