@@ -29,6 +29,7 @@
   (require 'cl-lib))
 (require 'shell-maker)
 (require 'acp)
+(require 'json)
 
 (declare-function agent-shell--indent-string "agent-shell")
 (declare-function agent-shell-make-agent-config "agent-shell")
@@ -94,6 +95,13 @@ when starting a new shell."
 This should be a list of environment variables to be used when
 starting the Cursor agent process."
   :type '(repeat string)
+  :group 'agent-shell)
+
+(defcustom agent-shell-cursor--todos-icon "☑️"
+  "Icon displayed during the AI's thought process.
+
+You may use \"􁷘\" as an SF Symbol on macOS."
+  :type 'string
   :group 'agent-shell)
 
 (defun agent-shell-cursor-make-agent-config ()
@@ -163,21 +171,73 @@ When :api-key is set in `agent-shell-cursor-make-authentication', injects
    (t
     (error "Invalid authentication configuration.  Set `agent-shell-cursor-authentication'"))))
 
+(defun agent-shell-cursor--format-todos-as-markdown (todos)
+  "Format TODOS list (from cursor/update_todos params) as human-readable markdown.
+
+Each todo has id, content, status.  Status: pending, in_progress, completed."
+  (mapconcat
+   (lambda (todo)
+     (let* ((content (or (map-elt todo 'content) ""))
+            (status (or (map-elt todo 'status) "pending"))
+            (marker (cond
+                     ((member status '("completed" "done")) "- [x] ")
+                     ((equal status "in_progress") "- [~] ")
+                     (t "- [ ] ")))
+            (status-label (cond
+                           ((member status '("completed" "done")) "done")
+                           ((equal status "in_progress") "in progress")
+                           (t nil))))
+       (format "%s%s%s"
+               marker
+               content
+               (when status-label
+                 (format " *(%s)*" status-label)))))
+   todos
+   "\n"))
+
+(defun agent-shell-cursor--on-update-todos-display (state acp-message)
+  "Display todos from ACP-MESSAGE in agent shell as a fragment.
+STATE and ACP-MESSAGE are the handler arguments (request or notification)."
+  (let* ((params (or (map-elt acp-message 'params) (list)))
+         (todos (map-elt params 'todos))
+         (body (or (map-elt params 'body) (map-elt params 'message)))
+         (content (condition-case _err
+                      (cond
+                       ((and (seqp todos) (seq-length todos))
+                        (agent-shell-cursor--format-todos-as-markdown todos))
+                       (body (if (stringp body) body (json-encode body)))
+                       (t (json-encode params)))
+                    (error (json-encode params))))
+         (block-id (format "cursor-todos-%s"
+                           (or (map-elt params 'toolCallId)
+                               (format-time-string "%s")))))
+    (agent-shell--update-fragment
+     :state state
+     :block-id block-id
+     :label-left (concat
+                  agent-shell-cursor--todos-icon
+                  " "
+                  (propertize "Todos" 'font-lock-face 'font-lock-doc-markup-face))
+     :body content
+     :create-new t
+     :expanded t
+     :navigation 'never)))
+
+(defun agent-shell-cursor--on-update-todos (state acp-request)
+  "Handle cursor/update_todos ACP request.
+
+STATE and ACP-REQUEST are as per `agent-shell-make-agent-config' :request-handlers.
+Sends success response immediately; displays todos as a fragment in the agent shell."
+  (agent-shell--send-unhandled-request-response state acp-request)
+  (agent-shell-cursor--on-update-todos-display state acp-request)
+  t)
 
 (defun agent-shell-cursor--on-create-plan (state acp-request)
   "Handle _cursor/create_plan ACP request.
 
 Plan display is already handled via session/update notifications.
 This handler only sends a method-not-found error response."
-  (let ((request-id (or (map-elt acp-request 'id) (map-elt acp-request "id"))))
-    (when request-id
-      (acp-send-response
-       :client (map-elt state :client)
-       :response `((:request-id . ,(map-elt acp-request 'id))
-                   (:error . ,(acp-make-error
-                               :code -32601
-                               :message (format "Method not found: %s" "cursor/create_plan")
-                               ))))))
+  (agent-shell--send-unhandled-request-response state acp-request)
   t)
 
 (defun agent-shell-cursor--welcome-message (config)

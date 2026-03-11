@@ -1478,6 +1478,20 @@ COMMAND, when present, may be a shell command string or an argv vector."
           :navigation 'never)
          (map-put! state :last-entry-type nil))))
 
+(cl-defun agent-shell--send-unhandled-request-response (&key state acp-request)
+  "Send a method-not-found (-32601) response for unhandled ACP-REQUEST.
+
+STATE and ACP-REQUEST as per `agent-shell--on-request'."
+  (let ((request-id (or (map-elt acp-request 'id) (map-elt acp-request "id")))
+        (method (or (map-elt acp-request 'method) (map-elt acp-request "method") "unknown")))
+    (when request-id
+      (acp-send-response
+       :client (map-elt state :client)
+       :response `((:request-id . ,request-id)
+                   (:error . ,(acp-make-error
+                               :code -32601
+                               :message (format "Method not found: %s" method))))))))
+
 (cl-defun agent-shell--on-request (&key state acp-request)
   "Handle incoming ACP-REQUEST using STATE."
   (let ((method (map-elt acp-request 'method))
