@@ -114,7 +114,8 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :authenticate-request-maker (lambda ()
                                  (acp-make-authenticate-request :method-id "cursor_login"))
    :default-session-mode-id (lambda () agent-shell-cursor-default-session-mode-id)
-   :install-instructions "See https://cursor.com/docs/cli/acp for installation"))
+   :install-instructions "See https://cursor.com/docs/cli/acp for installation"
+   :request-handlers '(("_cursor/create_plan" . agent-shell-cursor--on-create-plan))))
 
 (defun agent-shell-cursor-start-agent ()
   "Start an interactive Cursor agent shell."
@@ -161,6 +162,23 @@ When :api-key is set in `agent-shell-cursor-make-authentication', injects
                                   :context-buffer buffer))
    (t
     (error "Invalid authentication configuration.  Set `agent-shell-cursor-authentication'"))))
+
+
+(defun agent-shell-cursor--on-create-plan (state acp-request)
+  "Handle _cursor/create_plan ACP request.
+
+Plan display is already handled via session/update notifications.
+This handler only sends a method-not-found error response."
+  (let ((request-id (or (map-elt acp-request 'id) (map-elt acp-request "id"))))
+    (when request-id
+      (acp-send-response
+       :client (map-elt state :client)
+       :response `((:request-id . ,(map-elt acp-request 'id))
+                   (:error . ,(acp-make-error
+                               :code -32601
+                               :message (format "Method not found: %s" "cursor/create_plan")
+                               ))))))
+  t)
 
 (defun agent-shell-cursor--welcome-message (config)
   "Return Cursor welcome message using `shell-maker' CONFIG."
