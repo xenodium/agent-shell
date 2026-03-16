@@ -206,7 +206,7 @@ Returns an alist with insertion details or nil otherwise:
           (viewport-buffer (current-buffer))
           (prompt (string-trim (buffer-string))))
       (when (agent-shell-viewport--busy-p)
-        (unless (y-or-n-p "Interrupt?")
+        (unless (agent-shell-interrupt-confirmed-p)
           (throw 'exit nil))
         (with-current-buffer shell-buffer
           (agent-shell-interrupt t))
@@ -247,7 +247,7 @@ Returns an alist with insertion details or nil otherwise:
     (let ((shell-buffer (agent-shell-viewport--shell-buffer)))
       (unless (agent-shell-viewport--busy-p)
         (user-error "No pending request"))
-      (unless (y-or-n-p "Interrupt?")
+      (unless (agent-shell-interrupt-confirmed-p)
         (throw 'exit nil))
       (with-current-buffer shell-buffer
         (agent-shell-interrupt t))

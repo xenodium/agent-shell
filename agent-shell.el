@@ -188,6 +188,22 @@ See https://github.com/xenodium/agent-shell/issues/119"
   :type 'boolean
   :group 'agent-shell)
 
+(defcustom agent-shell-confirm-interrupt t
+  "Whether to prompt for confirmation before interrupting.
+
+When non-nil (the default), `agent-shell-interrupt' and related
+commands ask \"Interrupt?\" via `y-or-n-p' before cancelling the
+in-progress request.  Set to nil to interrupt immediately without
+prompting."
+  :type 'boolean
+  :group 'agent-shell)
+
+(defun agent-shell-interrupt-confirmed-p ()
+  "Prompt the user to confirm an interrupt and return non-nil if confirmed.
+When `agent-shell-confirm-interrupt' is nil, skip the prompt and return t."
+  (or (not agent-shell-confirm-interrupt)
+      (y-or-n-p "Interrupt?")))
+
 (defcustom agent-shell-context-sources '(files region error line)
   "Sources to consider when determining \\<agent-shell-mode-map>\\[agent-shell] automatic context.
 
@@ -888,12 +904,13 @@ Includes shells accessed via viewport buffers, preserving visited order."
 
 (defun agent-shell-interrupt (&optional force)
   "Interrupt in-progress request and reject all pending permissions.
-When FORCE is non-nil, skip confirmation prompt."
+When FORCE is non-nil, skip confirmation prompt.
+See also `agent-shell-confirm-interrupt'."
   (interactive)
   (unless (derived-mode-p 'agent-shell-mode)
     (error "Not in a shell"))
   (cond ((map-nested-elt (agent-shell--state) '(:session :id))
-         (when (or force (y-or-n-p "Interrupt?"))
+         (when (or force (agent-shell-interrupt-confirmed-p))
            ;; First cancel all pending permission requests
            (map-do
             (lambda (tool-call-id tool-call-data)
@@ -4759,7 +4776,7 @@ ACTIONS as per `agent-shell--make-permission-action'."
                          :message-text (map-elt action :option)))))
        :on-reject (lambda ()
                     (interactive)
-                    (when (y-or-n-p "Interrupt?")
+                    (when (agent-shell-interrupt-confirmed-p)
                       (let ((agent-shell-on-exit nil))
                         ;; Disable on-exit since killing
                         ;; the buffer should not trigger
