@@ -3106,7 +3106,7 @@ The model contains all inputs needed to render the graphical header."
   (let* ((model-name (or (map-elt (seq-find (lambda (model)
                                               (string= (map-elt model :model-id)
                                                        (map-nested-elt state '(:session :model-id))))
-                                            (map-nested-elt state '(:session :models)))
+                                            (agent-shell--get-available-models state))
                                   :name)
                          (map-nested-elt state '(:session :model-id))))
          (mode-id (map-nested-elt state '(:session :mode-id)))
@@ -4123,14 +4123,14 @@ Falls back to latest session in batch mode (e.g. tests)."
    :namespace-id "bootstrapping"
    :append t)
   (agent-shell--update-header-and-mode-line)
-  (when (map-nested-elt agent-shell--state '(:session :models))
+  (when (agent-shell--get-available-models agent-shell--state)
     (agent-shell--update-fragment
      :state agent-shell--state
      :namespace-id "bootstrapping"
      :block-id "available_models"
      :label-left (propertize "Available models" 'font-lock-face 'font-lock-doc-markup-face)
      :body (agent-shell--format-available-models
-            (map-nested-elt agent-shell--state '(:session :models)))))
+            (agent-shell--get-available-models agent-shell--state))))
   (when (agent-shell--get-available-modes agent-shell--state)
     (agent-shell--update-fragment
      :state agent-shell--state
@@ -4177,14 +4177,14 @@ Falls back to latest session in batch mode (e.g. tests)."
                   :namespace-id "bootstrapping"
                   :append t)
                  (agent-shell--update-header-and-mode-line)
-                 (when (map-nested-elt agent-shell--state '(:session :models))
+                 (when (agent-shell--get-available-models agent-shell--state)
                    (agent-shell--update-fragment
                     :state agent-shell--state
                     :namespace-id "bootstrapping"
                     :block-id "available_models"
                     :label-left (propertize "Available models" 'font-lock-face 'font-lock-doc-markup-face)
                     :body (agent-shell--format-available-models
-                           (map-nested-elt agent-shell--state '(:session :models)))))
+                           (agent-shell--get-available-models agent-shell--state))))
                  (when (agent-shell--get-available-modes agent-shell--state)
                    (agent-shell--update-fragment
                     :state agent-shell--state
@@ -6082,7 +6082,7 @@ Shows \" [C]\" when a command prefix is used."
             (when-let ((model-name (or (map-elt (seq-find (lambda (model)
                                                             (string= (map-elt model :model-id)
                                                                      (map-nested-elt (agent-shell--state) '(:session :model-id))))
-                                                          (map-nested-elt (agent-shell--state) '(:session :models)))
+                                                          (agent-shell--get-available-models (agent-shell--state)))
                                                 :name)
                                        (map-nested-elt (agent-shell--state) '(:session :model-id)))))
               (propertize (format " [%s]" model-name)
@@ -6208,10 +6208,10 @@ Optionally, get notified of completion with ON-SUCCESS function."
     (user-error "Not in an agent-shell buffer"))
   (unless (map-nested-elt (agent-shell--state) '(:session :id))
     (user-error "No active session"))
-  (unless (map-nested-elt (agent-shell--state) '(:session :models))
+  (unless (agent-shell--get-available-models (agent-shell--state))
     (user-error "No session models available"))
   (let* ((current-model-id (map-nested-elt (agent-shell--state) '(:session :model-id)))
-         (available-models (map-nested-elt (agent-shell--state) '(:session :models)))
+         (available-models (agent-shell--get-available-models (agent-shell--state)))
          (default-model-name (and current-model-id
                                   (map-elt (seq-find (lambda (model)
                                                        (string= (map-elt model :model-id) current-model-id))
@@ -6257,7 +6257,7 @@ Optionally, get notified of completion with ON-SUCCESS function."
                      (message "Model: %s"
                               (map-elt (seq-find (lambda (model)
                                                    (string= (map-elt model :model-id) selected-model-id))
-                                                 (map-nested-elt (agent-shell--state) '(:session :models)))
+                                                 (agent-shell--get-available-models (agent-shell--state)))
                                        :name)))
                    (agent-shell--update-header-and-mode-line)
                    (when on-success
@@ -6283,6 +6283,10 @@ Optionally, get notified of completion with ON-SUCCESS function."
           name)))
     modes)
    "\n\n"))
+
+(defun agent-shell--get-available-models (state)
+  "Get available models list from the current session in STATE."
+  (map-nested-elt state '(:session :models)))
 
 (defun agent-shell--format-available-models (models)
   "Format MODELS for shell rendering."
