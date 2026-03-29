@@ -81,6 +81,11 @@
 (defvar agent-shell--state)
 (defvar agent-shell-file-completion-enabled)
 
+(defcustom agent-shell-viewport-pin-page-switch-buffer-function #'display-buffer
+  "Function called to display the pinned viewport buffers."
+  :type 'function
+  :group 'agent-shell)
+
 (defvar-local agent-shell-viewport--compose-snapshot nil
   "Alist with :content and :location from compose buffer before viewing history.")
 ;; The viewport buffer transitions between major modes which clears
@@ -755,6 +760,26 @@ With EXISTING-ONLY, only return existing buffers without creating."
   (insert "continue")
   (agent-shell-viewport-compose-send))
 
+(defun agent-shell-viewport-pin-page ()
+  "Pin the current viewport page to a read-only buffer in another window."
+  (declare (modes agent-shell-viewport-view-mode))
+  (interactive)
+  (unless (derived-mode-p 'agent-shell-viewport-view-mode)
+    (user-error "Not in a viewport view buffer"))
+  (let* ((content (string-trim (buffer-string)))
+         (pin-name (format "%s @%d" (buffer-name)
+                           (map-elt (agent-shell-viewport--position) :current)))
+         (pin-buf (or (get-buffer pin-name)
+                      (with-current-buffer (generate-new-buffer pin-name)
+                        (insert content)
+                        (special-mode)
+                        (font-lock-mode 1)
+                        (let ((inhibit-read-only t))
+                          (markdown-overlays-put))
+                        (goto-char (point-min))
+                        (current-buffer)))))
+    (funcall agent-shell-viewport-pin-page-switch-buffer-function pin-buf '(nil . ((inhibit-same-window . t))))))
+
 (defun agent-shell-viewport-previous-page ()
   "Show previous interaction (request / response)."
   (declare (modes agent-shell-viewport-view-mode))
@@ -1011,6 +1036,7 @@ VIEWPORT-BUFFER is the viewport buffer to check."
     (define-key map (kbd "s") #'agent-shell-viewport-set-session-mode)
     (define-key map (kbd "o") #'agent-shell-other-buffer)
     (define-key map (kbd "C-c C-o") #'agent-shell-other-buffer)
+    (define-key map (kbd "d") #'agent-shell-viewport-pin-page)
     (define-key map (kbd "?") #'agent-shell-viewport-help-menu)
     map)
   "Keymap for `agent-shell-viewport-view-mode'.")
@@ -1036,6 +1062,8 @@ VIEWPORT-BUFFER is the viewport buffer to check."
                         ((:function . agent-shell-viewport-previous-page)
                          (:description . "Previous Page")
                          (:if-not . agent-shell-viewport--busy-p))
+                        ((:function . agent-shell-viewport-pin-page)
+                         (:description . "Pin page"))
                         ((:function . agent-shell-other-buffer)
                          (:description . "Switch to shell")
                          (:transient . nil))

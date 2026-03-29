@@ -607,86 +607,115 @@ always go to Evil modes if you need to with ~C-z~).
 #+END_SRC
 
 #+RESULTS:
-| Custom variable                               | Description                                                                     |
-|-----------------------------------------------+---------------------------------------------------------------------------------|
-| agent-shell-agent-configs                     | The list of known agent configurations.                                         |
-| agent-shell-anthropic-authentication          | Configuration for Anthropic authentication.                                     |
-| agent-shell-anthropic-claude-acp-command      | Command and parameters for the Anthropic Claude client.                         |
-| agent-shell-anthropic-claude-command          | Command and parameters for the Anthropic Claude client.                         |
-| agent-shell-anthropic-claude-environment      | Environment variables for the Anthropic Claude client.                          |
-| agent-shell-anthropic-default-model-id        | Default Anthropic model ID.                                                     |
-| agent-shell-anthropic-default-session-mode-id | Default Anthropic session mode ID.                                              |
-| agent-shell-auggie-acp-command                | Command and parameters for the Auggie client.                                   |
-| agent-shell-auggie-authentication             | Configuration for Auggie authentication.                                        |
-| agent-shell-auggie-environment                | Environment variables for the Auggie client.                                    |
-| agent-shell-buffer-name-format                | Format to use when generating agent shell buffer names.                         |
-| agent-shell-busy-indicator-frames             | Frames for the busy indicator animation.                                        |
-| agent-shell-clipboard-image-handlers          | Handlers for saving clipboard images to a file.                                 |
-| agent-shell-completion-mode-hook              | Hook run after entering or leaving ‘agent-shell-completion-mode’.               |
-| agent-shell-command-prefix                    | Command prefix for executing commands in a container.                           |
-| agent-shell-context-sources                   | Sources to consider when determining M-x agent-shell automatic context.         |
-| agent-shell-cursor-acp-command                | Command and parameters for the Cursor agent client.                             |
-| agent-shell-cursor-environment                | Environment variables for the Cursor agent client.                              |
-| agent-shell-display-action                    | Display action for agent shell buffers.                                         |
-| agent-shell-droid-acp-command                 | Command and parameters for the Factory Droid ACP client.                        |
-| agent-shell-droid-authentication              | Configuration for Factory Droid authentication.                                 |
-| agent-shell-droid-environment                 | Environment variables for the Factory Droid ACP client.                         |
-| agent-shell-embed-file-size-limit             | Maximum file size in bytes for embedding with ContentBlock::Resource.           |
-| agent-shell-file-completion-enabled           | Non-nil automatically enables file completion when starting shells.             |
-| agent-shell-github-acp-command                | Command and parameters for the GitHub Copilot agent client.                     |
-| agent-shell-github-default-model-id           | Default GitHub Copilot model ID.                                                |
-| agent-shell-github-default-session-mode-id    | Default GitHub Copilot session mode ID.                                         |
-| agent-shell-github-environment                | Environment variables for the GitHub Copilot agent client.                      |
-| agent-shell-google-authentication             | Configuration for Google authentication.                                        |
-| agent-shell-google-gemini-acp-command         | Command and parameters for the Gemini client.                                   |
-| agent-shell-google-gemini-environment         | Environment variables for the Google Gemini client.                             |
-| agent-shell-goose-acp-command                 | Command and parameters for the Goose client.                                    |
-| agent-shell-goose-authentication              | Configuration for Goose authentication.                                         |
-| agent-shell-goose-environment                 | Environment variables for the Goose client.                                     |
-| agent-shell-header-style                      | Style for agent shell buffer headers.                                           |
-| agent-shell-highlight-blocks                  | Whether or not to highlight source blocks.                                      |
-| agent-shell-mcp-servers                       | List of MCP servers to initialize when creating a new session.                  |
-| agent-shell-mistral-acp-command               | Command and parameters for the Mistral Vibe client.                             |
-| agent-shell-mistral-authentication            | Configuration for Mistral AI authentication.                                    |
-| agent-shell-mistral-default-model-id          | Default Mistral AI model ID.                                                    |
-| agent-shell-mistral-default-session-mode-id   | Default Mistral AI session mode ID.                                             |
-| agent-shell-mistral-environment               | Environment variables for the Mistral Vibe client.                              |
-| agent-shell-openai-authentication             | Configuration for OpenAI authentication.                                        |
-| agent-shell-openai-codex-acp-command          | Command and parameters for the OpenAI Codex client.                             |
-| agent-shell-openai-codex-environment          | Environment variables for the OpenAI Codex client.                              |
-| agent-shell-openai-default-model-id           | Default Codex model ID.                                                         |
-| agent-shell-openai-default-session-mode-id    | Default Codex session mode ID.                                                  |
-| agent-shell-opencode-acp-command              | Command and parameters for the OpenCode client.                                 |
-| agent-shell-opencode-authentication           | Configuration for OpenCode authentication.                                      |
-| agent-shell-opencode-default-model-id         | Default OpenCode model ID.                                                      |
-| agent-shell-opencode-default-session-mode-id  | Default OpenCode session mode ID.                                               |
-| agent-shell-opencode-environment              | Environment variables for the OpenCode client.                                  |
-| agent-shell-path-resolver-function            | Function for resolving remote paths on the local file-system, and vice versa.   |
-| agent-shell-permission-icon                   | Icon displayed when shell commands require permission to execute.               |
-| agent-shell-pi-acp-command                    | Command and parameters for the Pi ACP client.                                   |
-| agent-shell-pi-environment                    | Environment variables for the Pi client.                                        |
-| agent-shell-prefer-session-resume             | Prefer ACP session resume over session load when both are available.            |
-| agent-shell-prefer-viewport-interaction       | Non-nil makes ‘agent-shell’ prefer viewport interaction over shell interaction. |
-| agent-shell-preferred-agent-config            | Default agent to use for all new shells.                                        |
-| agent-shell-qwen-acp-command                  | Command and parameters for the Qwen Code client.                                |
-| agent-shell-qwen-authentication               | Configuration for Qwen Code authentication.                                     |
-| agent-shell-qwen-environment                  | Environment variables for the Qwen Code client.                                 |
-| agent-shell-screenshot-command                | The program to use for capturing screenshots.                                   |
-| agent-shell-section-functions                 | Abnormal hook run after overlays are applied (experimental).                    |
-| agent-shell-session-strategy                  | How to handle sessions when starting a new shell.                               |
-| agent-shell-show-busy-indicator               | Non-nil to show the busy indicator animation in the header and mode line.       |
-| agent-shell-show-config-icons                 | Whether to show icons in agent config selection.                                |
-| agent-shell-show-context-usage-indicator      | Non-nil to show the context usage indicator in the header and mode line.        |
-| agent-shell-show-usage-at-turn-end            | Whether to display usage information when agent turn ends.                      |
-| agent-shell-show-welcome-message              | Non-nil to show welcome message.                                                |
-| agent-shell-text-file-capabilities            | Whether agents are initialized with read/write text file capabilities.          |
-| agent-shell-thought-process-expand-by-default | Whether thought process sections should be expanded by default.                 |
-| agent-shell-thought-process-icon              | Icon displayed during the AI’s thought process.                                 |
-| agent-shell-tool-use-expand-by-default        | Whether tool use sections should be expanded by default.                        |
-| agent-shell-transcript-file-path-function     | Function to generate the full transcript file path.                             |
-| agent-shell-ui-mode-hook                      | Hook run after entering or leaving ‘agent-shell-ui-mode’.                       |
-| agent-shell-user-message-expand-by-default    | Whether user message sections should be expanded by default.                    |
-| agent-shell-write-inhibit-minor-modes         | List of minor mode commands to inhibit during ‘fs/write_text_file’ edits.       |
+| Custom variable                                      | Description                                                                              |
+|------------------------------------------------------+------------------------------------------------------------------------------------------|
+| agent-shell-agent-configs                            | The list of known agent configurations.                                                  |
+| agent-shell-anthropic-authentication                 | Configuration for Anthropic authentication.                                              |
+| agent-shell-anthropic-claude-acp-command             | Command and parameters for the Anthropic Claude client.                                  |
+| agent-shell-anthropic-claude-environment             | Environment variables for the Anthropic Claude client.                                   |
+| agent-shell-anthropic-default-model-id               | Default Anthropic model ID.                                                              |
+| agent-shell-anthropic-default-session-mode-id        | Default Anthropic session mode ID.                                                       |
+| agent-shell-auggie-acp-command                       | Command and parameters for the Auggie client.                                            |
+| agent-shell-auggie-authentication                    | Configuration for Auggie authentication.                                                 |
+| agent-shell-auggie-environment                       | Environment variables for the Auggie client.                                             |
+| agent-shell-buffer-name-format                       | Format to use when generating agent shell buffer names.                                  |
+| agent-shell-busy-indicator-frames                    | Frames for the busy indicator animation.                                                 |
+| agent-shell-cline-acp-command                        | Command and parameters for the Cline agent client.                                       |
+| agent-shell-cline-environment                        | Environment variables for the Cline agent client.                                        |
+| agent-shell-clipboard-image-handlers                 | Handlers for saving clipboard images to a file.                                          |
+| agent-shell-command-prefix                           | Prefix to apply when executing agent commands and shell commands.                        |
+| agent-shell-completion-mode-hook                     | Hook run after entering or leaving ‘agent-shell-completion-mode’.                        |
+| agent-shell-confirm-interrupt                        | Whether to prompt for confirmation before interrupting.                                  |
+| agent-shell-container-command-runner                 | Prefix to apply when executing agent commands and shell commands.                        |
+| agent-shell-context-sources                          | Sources to consider when determining M-x agent-shell automatic context.                  |
+| agent-shell-cursor-acp-command                       | Command and parameters for the Cursor agent client.                                      |
+| agent-shell-cursor-environment                       | Environment variables for the Cursor agent client.                                       |
+| agent-shell-cwd-function                             | When non-nil, a function called to determine the shell’s CWD.                            |
+| agent-shell-display-action                           | Display action for agent shell buffers.                                                  |
+| agent-shell-dot-subdir-function                      | Function used by ‘agent-shell--dot-subdir’ to resolve subdirectory paths.                |
+| agent-shell-droid-acp-command                        | Command and parameters for the Factory Droid ACP client.                                 |
+| agent-shell-droid-authentication                     | Configuration for Factory Droid authentication.                                          |
+| agent-shell-droid-environment                        | Environment variables for the Factory Droid ACP client.                                  |
+| agent-shell-embed-file-size-limit                    | Maximum file size in bytes for embedding with ContentBlock::Resource.                    |
+| agent-shell-file-completion-enabled                  | Non-nil automatically enables file completion when starting shells.                      |
+| agent-shell-github-acp-command                       | Command and parameters for the GitHub Copilot agent client.                              |
+| agent-shell-github-default-model-id                  | Default GitHub Copilot model ID.                                                         |
+| agent-shell-github-default-session-mode-id           | Default GitHub Copilot session mode ID.                                                  |
+| agent-shell-github-environment                       | Environment variables for the GitHub Copilot agent client.                               |
+| agent-shell-google-authentication                    | Configuration for Google authentication.                                                 |
+| agent-shell-google-gemini-acp-command                | Command and parameters for the Gemini client.                                            |
+| agent-shell-google-gemini-environment                | Environment variables for the Google Gemini client.                                      |
+| agent-shell-goose-acp-command                        | Command and parameters for the Goose client.                                             |
+| agent-shell-goose-authentication                     | Configuration for Goose authentication.                                                  |
+| agent-shell-goose-environment                        | Environment variables for the Goose client.                                              |
+| agent-shell-header-style                             | Style for agent shell buffer headers.                                                    |
+| agent-shell-highlight-blocks                         | Whether or not to highlight source blocks.                                               |
+| agent-shell-kiro-acp-command                         | Command and parameters for the Kiro CLI client.                                          |
+| agent-shell-kiro-default-model-id                    | Default Kiro model ID.                                                                   |
+| agent-shell-kiro-default-session-mode-id             | Default Kiro session mode ID.                                                            |
+| agent-shell-kiro-environment                         | Environment variables for the Kiro CLI client.                                           |
+| agent-shell-mcp-servers                              | List of MCP servers to initialize when creating a new session.                           |
+| agent-shell-mistral-acp-command                      | Command and parameters for the Mistral Vibe client.                                      |
+| agent-shell-mistral-authentication                   | Configuration for Mistral AI authentication.                                             |
+| agent-shell-mistral-default-model-id                 | Default Mistral AI model ID.                                                             |
+| agent-shell-mistral-default-session-mode-id          | Default Mistral AI session mode ID.                                                      |
+| agent-shell-mistral-environment                      | Environment variables for the Mistral Vibe client.                                       |
+| agent-shell-notifications-close-function             | Function to close a notification by its ID.                                              |
+| agent-shell-notifications-format-function            | Function to build notification content for an agent-shell event.                         |
+| agent-shell-notifications-idle-notifications         | Control which event types trigger idle notifications.                                    |
+| agent-shell-notifications-idle-timeout               | Seconds to wait before notifying when shell is visible.                                  |
+| agent-shell-notifications-immediate-notifications    | Control which event types trigger immediate notifications when the shell is not visible. |
+| agent-shell-notifications-inhibit-functions          | Abnormal hook run to decide whether to suppress a notification.                          |
+| agent-shell-notifications-mode-hook                  | Hook run after entering or leaving ‘agent-shell-notifications-mode’.                     |
+| agent-shell-notifications-provider                   | Notification provider to load.                                                           |
+| agent-shell-notifications-send-function              | Function to send a notification plist.                                                   |
+| agent-shell-notifications-shell-visible-function     | Function to determine if a shell buffer is currently visible.                            |
+| agent-shell-notifications-switch-to-shell-function   | Function called to switch to a shell buffer on notification action.                      |
+| agent-shell-notifications-timeout                    | Timeout in seconds for notifications.                                                    |
+| agent-shell-notifications-transform-function         | Function to transform the notification plist before sending.                             |
+| agent-shell-notifications-transform-timeout-function | Function to transform the timeout value before placing it in the notification plist.     |
+| agent-shell-notifications-viewport-edit-mode-hook    | Hook run after entering or leaving ‘agent-shell-notifications-viewport-edit-mode’.       |
+| agent-shell-notifications-viewport-view-mode-hook    | Hook run after entering or leaving ‘agent-shell-notifications-viewport-view-mode’.       |
+| agent-shell-openai-authentication                    | Configuration for OpenAI authentication.                                                 |
+| agent-shell-openai-codex-acp-command                 | Command and parameters for the OpenAI Codex client.                                      |
+| agent-shell-openai-codex-environment                 | Environment variables for the OpenAI Codex client.                                       |
+| agent-shell-openai-default-model-id                  | Default Codex model ID.                                                                  |
+| agent-shell-openai-default-session-mode-id           | Default Codex session mode ID.                                                           |
+| agent-shell-opencode-acp-command                     | Command and parameters for the OpenCode client.                                          |
+| agent-shell-opencode-authentication                  | Configuration for OpenCode authentication.                                               |
+| agent-shell-opencode-default-model-id                | Default OpenCode model ID.                                                               |
+| agent-shell-opencode-default-session-mode-id         | Default OpenCode session mode ID.                                                        |
+| agent-shell-opencode-environment                     | Environment variables for the OpenCode client.                                           |
+| agent-shell-outgoing-request-decorator               | Function to decorate outgoing ACP requests before they are sent.                         |
+| agent-shell-path-resolver-function                   | Function for resolving remote paths on the local file-system, and vice versa.            |
+| agent-shell-permission-icon                          | Icon displayed when shell commands require permission to execute.                        |
+| agent-shell-pi-acp-command                           | Command and parameters for the Pi ACP client.                                            |
+| agent-shell-pi-environment                           | Environment variables for the Pi client.                                                 |
+| agent-shell-prefer-session-resume                    | Prefer ACP session resume over session load when both are available.                     |
+| agent-shell-prefer-viewport-interaction              | Non-nil makes ‘agent-shell’ prefer viewport interaction over shell interaction.          |
+| agent-shell-preferred-agent-config                   | Default agent to use for all new shells.                                                 |
+| agent-shell-qwen-acp-command                         | Command and parameters for the Qwen Code client.                                         |
+| agent-shell-qwen-authentication                      | Configuration for Qwen Code authentication.                                              |
+| agent-shell-qwen-environment                         | Environment variables for the Qwen Code client.                                          |
+| agent-shell-screenshot-command                       | The program to use for capturing screenshots.                                            |
+| agent-shell-section-functions                        | Abnormal hook run after overlays are applied (experimental).                             |
+| agent-shell-session-strategy                         | How to handle sessions when starting a new shell.                                        |
+| agent-shell-show-busy-indicator                      | Non-nil to show the busy indicator animation in the header and mode line.                |
+| agent-shell-show-config-icons                        | Whether to show icons in agent config selection.                                         |
+| agent-shell-show-context-usage-indicator             | Whether and how to show the context usage indicator.                                     |
+| agent-shell-show-session-id                          | Non-nil to display the session ID in the header and session selection.                   |
+| agent-shell-show-usage-at-turn-end                   | Whether to display usage information when agent turn ends.                               |
+| agent-shell-show-welcome-message                     | Non-nil to show welcome message.                                                         |
+| agent-shell-status-kind-label-function               | Function to render status and kind labels.                                               |
+| agent-shell-text-file-capabilities                   | Whether agents are initialized with read/write text file capabilities.                   |
+| agent-shell-thought-process-expand-by-default        | Whether thought process sections should be expanded by default.                          |
+| agent-shell-thought-process-icon                     | Icon displayed during the AI’s thought process.                                          |
+| agent-shell-tool-use-expand-by-default               | Whether tool use sections should be expanded by default.                                 |
+| agent-shell-transcript-file-path-function            | Function to generate the full transcript file path.                                      |
+| agent-shell-ui-mode-hook                             | Hook run after entering or leaving ‘agent-shell-ui-mode’.                                |
+| agent-shell-user-message-expand-by-default           | Whether user message sections should be expanded by default.                             |
+| agent-shell-viewport-pin-page-switch-buffer-function | Function called to display the pinned viewport buffers.                                  |
+| agent-shell-write-inhibit-minor-modes                | List of minor mode commands to inhibit during ‘fs/write_text_file’ edits.                |
 
 * Commands
 #+BEGIN_SRC emacs-lisp :results table :colnames '("Binding" "Command" "Description") :exports results
@@ -724,85 +753,139 @@ always go to Evil modes if you need to with ~C-z~).
 #+END_SRC
 
 #+RESULTS:
-| Binding         | Command                                                 | Description                                                                   |
-|-----------------+---------------------------------------------------------+-------------------------------------------------------------------------------|
-|                 | agent-shell                                             | Start or reuse an existing agent shell.                                       |
-|                 | agent-shell--display-buffer                             | Toggle agent SHELL-BUFFER display.                                            |
-|                 | agent-shell-anthropic-start-claude-code                 | Start an interactive Claude Agent shell.                                      |
-|                 | agent-shell-auggie-start-agent                          | Start an interactive Auggie agent shell.                                      |
-|                 | agent-shell-clear-buffer                                | Clear the current shell buffer.                                               |
-|                 | agent-shell-completion-mode                             | Toggle agent shell completion with @ or / prefix.                             |
-|                 | agent-shell-cursor-start-agent                          | Start an interactive Cursor agent shell.                                      |
-| C-<tab>         | agent-shell-cycle-session-mode                          | Cycle through available session modes for the current `agent-shell' session.  |
-|                 | agent-shell-delete-interaction-at-point                 | Delete interaction (request and response) at point.                           |
-|                 | agent-shell-droid-start-agent                           | Start an interactive Factory Droid agent shell.                               |
-|                 | agent-shell-fakes-load-session                          | Load and replay a traffic session from file.                                  |
-|                 | agent-shell-github-start-copilot                        | Start an interactive GitHub Copilot agent shell.                              |
-|                 | agent-shell-google-start-gemini                         | Start an interactive Gemini CLI agent shell.                                  |
-|                 | agent-shell-goose-start-agent                           | Start an interactive Goose agent shell.                                       |
-|                 | agent-shell-help-menu                                   | Transient menu for `agent-shell' commands.                                    |
-|                 | agent-shell-insert-file                                 | Insert a file into `agent-shell'.                                             |
-|                 | agent-shell-insert-shell-command-output                 | Execute a shell command and insert output as a code block.                    |
-| C-c C-c         | agent-shell-interrupt                                   | Interrupt in-progress request and reject all pending permissions.             |
-|                 | agent-shell-jump-to-latest-permission-button-row        | Jump to the latest permission button row.                                     |
-|                 | agent-shell-mistral-start-vibe                          | Start an interactive Mistral Vibe agent shell.                                |
-|                 | agent-shell-mode                                        | Major mode for agent shell.                                                   |
-|                 | agent-shell-new-shell                                   | Start a new agent shell.                                                      |
-| S-<return>      | agent-shell-newline                                     | Insert a newline, and move to left margin of the new line.                    |
-| C-<down> or M-n | agent-shell-next-input                                  | Cycle forwards through input history.                                         |
-| n or TAB        | agent-shell-next-item                                   | Go to next item.                                                              |
-|                 | agent-shell-next-permission-button                      | Jump to the next button.                                                      |
-|                 | agent-shell-open-transcript                             | Open the transcript file for the current `agent-shell' buffer.                |
-|                 | agent-shell-openai-start-codex                          | Start an interactive Codex agent shell.                                       |
-|                 | agent-shell-opencode-start-agent                        | Start an interactive OpenCode agent shell.                                    |
-| C-c C-o         | agent-shell-other-buffer                                | Switch to other associated buffer (viewport vs shell).                        |
-| C-<up> or M-p   | agent-shell-previous-input                              | Cycle backwards through input history, saving input.                          |
-| p or <backtab>  | agent-shell-previous-item                               | Go to previous item.                                                          |
-|                 | agent-shell-previous-permission-button                  | Jump to the previous button.                                                  |
-|                 | agent-shell-prompt-compose                              | Compose an `agent-shell' prompt in a dedicated buffer.                        |
-|                 | agent-shell-queue-request                               | Queue or immediately send a request depending on shell busy state.            |
-|                 | agent-shell-qwen-start                                  | Start an interactive Qwen Code CLI agent shell.                               |
-|                 | agent-shell-remove-pending-request                      | Remove all pending requests or a specific request by REMOVE-INDEX.            |
-| C-x x r         | agent-shell-rename-buffer                               | Rename current shell buffer.                                                  |
-|                 | agent-shell-reset-logs                                  | Reset all log buffers.                                                        |
-|                 | agent-shell-resume-pending-requests                     | Resume processing pending requests in the queue.                              |
-|                 | agent-shell-run-all-tests                               | Run all agent-shell tests in batch mode.                                      |
-| M-r             | agent-shell-search-history                              | Search previous input history.                                                |
-|                 | agent-shell-send-current-file                           | Insert a file into `agent-shell'.                                             |
-|                 | agent-shell-send-dwim                                   | Send region or error at point to last accessed shell buffer in project.       |
-|                 | agent-shell-send-file                                   | Insert a file into `agent-shell'.                                             |
-|                 | agent-shell-send-other-file                             | Prompt to send a file into `agent-shell'.                                     |
-|                 | agent-shell-send-region                                 | Send region to last accessed shell buffer in project.                         |
-|                 | agent-shell-send-screenshot                             | Capture a screenshot and insert it into `agent-shell'.                        |
-| C-c RET         | agent-shell-set-session-mode                            | Set session mode (if any available).                                          |
-| C-c C-v         | agent-shell-set-session-model                           | Set session model.                                                            |
-| RET             | agent-shell-submit                                      | Submit current input.                                                         |
-|                 | agent-shell-toggle                                      | Toggle agent shell display.                                                   |
-|                 | agent-shell-toggle-logging                              | Toggle logging.                                                               |
-|                 | agent-shell-ui-backward-block                           | Jump to the previous block.                                                   |
-|                 | agent-shell-ui-forward-block                            | Jump to the next block.                                                       |
-|                 | agent-shell-ui-mode                                     | Minor mode for SUI block navigation.                                          |
-|                 | agent-shell-ui-toggle-fragment-at-point                 | Toggle visibility of fragment body at point.                                  |
-|                 | agent-shell-version                                     | Show `agent-shell' mode version.                                              |
-|                 | agent-shell-view-acp-logs                               | View agent shell ACP logs buffer.                                             |
-|                 | agent-shell-view-traffic                                | View agent shell traffic buffer.                                              |
-|                 | agent-shell-viewport-compose-cancel                     | Cancel prompt composition.                                                    |
-|                 | agent-shell-viewport-compose-send                       | Send the viewport composed prompt to the agent shell.                         |
-|                 | agent-shell-viewport-compose-send-and-kill              | Send the viewport composed prompt to the agent shell and kill compose buffer. |
-|                 | agent-shell-viewport-compose-send-and-wait-for-response | Send the viewport composed prompt and display response in viewport.           |
-|                 | agent-shell-viewport-cycle-session-mode                 | Cycle through available session modes.                                        |
-|                 | agent-shell-viewport-edit-mode                          | Major mode for composing agent shell prompts.                                 |
-|                 | agent-shell-viewport-interrupt                          | Interrupt active agent shell request.                                         |
-|                 | agent-shell-viewport-next-item                          | Go to next item.                                                              |
-|                 | agent-shell-viewport-next-page                          | Show next interaction (request / response).                                   |
-|                 | agent-shell-viewport-previous-item                      | Go to previous item.                                                          |
-|                 | agent-shell-viewport-previous-page                      | Show previous interaction (request / response).                               |
-|                 | agent-shell-viewport-refresh                            | Refresh viewport buffer content with current item from shell.                 |
-|                 | agent-shell-viewport-reply                              | Reply as a follow-up and compose another prompt/query.                        |
-|                 | agent-shell-viewport-set-session-mode                   | Set session mode.                                                             |
-|                 | agent-shell-viewport-set-session-model                  | Set session model.                                                            |
-|                 | agent-shell-viewport-view-last                          | Display the last request/response interaction.                                |
-|                 | agent-shell-viewport-view-mode                          | Major mode for viewing agent shell prompts (read-only).                       |
+| Binding                                        | Command                                                 | Description                                                                   |
+|------------------------------------------------+---------------------------------------------------------+-------------------------------------------------------------------------------|
+|                                                | agent-shell                                             | Start or reuse an existing agent shell.                                       |
+|                                                | agent-shell--display-buffer                             | Toggle agent SHELL-BUFFER display.                                            |
+|                                                | agent-shell-anthropic-start-claude-code                 | Start an interactive Claude Agent shell.                                      |
+|                                                | agent-shell-auggie-start-agent                          | Start an interactive Auggie agent shell.                                      |
+|                                                | agent-shell-clear-buffer                                | Clear the current shell buffer.                                               |
+|                                                | agent-shell-cline-start-agent                           | Start an interactive Cline agent shell.                                       |
+|                                                | agent-shell-completion-mode                             | Toggle agent shell completion with @ or / prefix.                             |
+|                                                | agent-shell-copy-session-id                             | Copy the current session ID to the kill ring.                                 |
+|                                                | agent-shell-cursor-start-agent                          | Start an interactive Cursor agent shell.                                      |
+| C-<tab>                                        | agent-shell-cycle-session-mode                          | Cycle through available session modes for the current `agent-shell' session.  |
+|                                                | agent-shell-delete-interaction-at-point                 | Delete interaction (request and response) at point.                           |
+|                                                | agent-shell-diff-accept-all                             | Accept all changes in the current diff buffer.                                |
+|                                                | agent-shell-diff-mode                                   | Major mode for `agent-shell' diff buffers.                                    |
+|                                                | agent-shell-diff-open-file                              | Open the file associated with the current diff buffer.                        |
+|                                                | agent-shell-diff-reject-all                             | Reject all changes in the current diff buffer.                                |
+|                                                | agent-shell-droid-start-agent                           | Start an interactive Factory Droid agent shell.                               |
+|                                                | agent-shell-fork                                        | Fork the current session into a new shell.                                    |
+|                                                | agent-shell-github-start-copilot                        | Start an interactive GitHub Copilot agent shell.                              |
+|                                                | agent-shell-google-start-gemini                         | Start an interactive Gemini CLI agent shell.                                  |
+|                                                | agent-shell-goose-start-agent                           | Start an interactive Goose agent shell.                                       |
+|                                                | agent-shell-help-menu                                   | Transient menu for `agent-shell' commands.                                    |
+|                                                | agent-shell-insert-file                                 | Insert a file into `agent-shell'.                                             |
+|                                                | agent-shell-insert-shell-command-output                 | Execute a shell command and insert output as a code block.                    |
+| C-c C-c                                        | agent-shell-interrupt                                   | Interrupt in-progress request and reject all pending permissions.             |
+|                                                | agent-shell-jump-to-latest-permission-button-row        | Jump to the latest permission button row.                                     |
+|                                                | agent-shell-kiro-start-agent                            | Start an interactive Kiro agent shell.                                        |
+|                                                | agent-shell-mistral-start-vibe                          | Start an interactive Mistral Vibe agent shell.                                |
+|                                                | agent-shell-mode                                        | Major mode for agent shell.                                                   |
+|                                                | agent-shell-new-downloads-shell                         | Start a new agent shell in ~/Downloads.                                       |
+|                                                | agent-shell-new-shell                                   | Start a new agent shell.                                                      |
+|                                                | agent-shell-new-temp-shell                              | Start a new agent shell in a temporary directory.                             |
+|                                                | agent-shell-new-worktree-shell                          | Create a new git worktree and start an agent shell in it.                     |
+| S-<return>                                     | agent-shell-newline                                     | Insert a newline, and move to left margin of the new line.                    |
+| C-<down> or M-n                                | agent-shell-next-input                                  | Cycle forwards through input history.                                         |
+| n or TAB                                       | agent-shell-next-item                                   | Go to next item.                                                              |
+|                                                | agent-shell-next-permission-button                      | Jump to the next button.                                                      |
+| C-c n                                          | agent-shell-notifications-dismiss                       | Cancel timers and close notifications for shell buffer(s).                    |
+|                                                | agent-shell-notifications-mode                          | Toggle libnotify notifications for the current agent-shell buffer.            |
+|                                                | agent-shell-notifications-set-provider                  | Load PROVIDER and validate that it sets the required functions.               |
+|                                                | agent-shell-notifications-viewport-edit-mode            | Toggle notifications hooks for an agent-shell viewport edit buffer.           |
+|                                                | agent-shell-notifications-viewport-view-mode            | Toggle notifications hooks for an agent-shell viewport view buffer.           |
+|                                                | agent-shell-open-transcript                             | Open the transcript file for the current `agent-shell' buffer.                |
+|                                                | agent-shell-openai-start-codex                          | Start an interactive Codex agent shell.                                       |
+|                                                | agent-shell-opencode-start-agent                        | Start an interactive OpenCode agent shell.                                    |
+| C-c C-o                                        | agent-shell-other-buffer                                | Switch to other associated buffer (viewport vs shell).                        |
+|                                                | agent-shell-pi-start-agent                              | Start an interactive Pi coding agent shell.                                   |
+| C-<up> or M-p                                  | agent-shell-previous-input                              | Cycle backwards through input history, saving input.                          |
+| p or <backtab>                                 | agent-shell-previous-item                               | Go to previous item.                                                          |
+|                                                | agent-shell-previous-permission-button                  | Jump to the previous button.                                                  |
+|                                                | agent-shell-prompt-compose                              | Compose an `agent-shell' prompt in a dedicated buffer.                        |
+|                                                | agent-shell-queue-request                               | Queue or immediately send a request depending on shell busy state.            |
+|                                                | agent-shell-qwen-start                                  | Start an interactive Qwen Code CLI agent shell.                               |
+|                                                | agent-shell-reload                                      | Reload the current session by restarting with the same session ID.            |
+|                                                | agent-shell-remove-pending-request                      | Remove all pending requests or a specific request by REMOVE-INDEX.            |
+| C-x x r                                        | agent-shell-rename-buffer                               | Rename current shell buffer.                                                  |
+|                                                | agent-shell-reset-logs                                  | Reset all log buffers.                                                        |
+|                                                | agent-shell-restart                                     | Clear conversation by restarting the agent shell in the same project.         |
+|                                                | agent-shell-resume-pending-requests                     | Resume processing pending requests in the queue.                              |
+|                                                | agent-shell-resume-session                              | Resume an existing agent session by SESSION-ID.                               |
+| M-r                                            | agent-shell-search-history                              | Search previous input history.                                                |
+|                                                | agent-shell-send-clipboard-image                        | Paste clipboard image and insert it into `agent-shell'.                       |
+|                                                | agent-shell-send-clipboard-image-to                     | Like `agent-shell-send-clipboard-image' but prompt for which shell to use.    |
+|                                                | agent-shell-send-current-file                           | Insert a file into `agent-shell'.                                             |
+|                                                | agent-shell-send-dwim                                   | Send region or error at point to last accessed shell buffer in project.       |
+|                                                | agent-shell-send-file                                   | Insert a file into `agent-shell'.                                             |
+|                                                | agent-shell-send-file-to                                | Like `agent-shell-send-file' but prompt for which shell to use.               |
+|                                                | agent-shell-send-other-file                             | Prompt to send a file into `agent-shell'.                                     |
+|                                                | agent-shell-send-region                                 | Send region to last accessed shell buffer in project.                         |
+|                                                | agent-shell-send-region-to                              | Like `agent-shell-send-region' but prompt for which shell to use.             |
+|                                                | agent-shell-send-screenshot                             | Capture a screenshot and insert it into `agent-shell'.                        |
+|                                                | agent-shell-send-screenshot-to                          | Like `agent-shell-send-screenshot' but prompt for which shell to use.         |
+| C-c RET                                        | agent-shell-set-session-mode                            | Set session mode (if any available).                                          |
+| C-c C-v                                        | agent-shell-set-session-model                           | Set session model.                                                            |
+|                                                | agent-shell-show-usage                                  | Display current session usage information in the minibuffer.                  |
+| RET                                            | agent-shell-submit                                      | Submit current input.                                                         |
+|                                                | agent-shell-toggle                                      | Toggle agent shell display.                                                   |
+|                                                | agent-shell-toggle-logging                              | Toggle logging.                                                               |
+|                                                | agent-shell-ui-backward-block                           | Jump to the previous block.                                                   |
+|                                                | agent-shell-ui-forward-block                            | Jump to the next block.                                                       |
+|                                                | agent-shell-ui-mode                                     | Minor mode for SUI block navigation.                                          |
+|                                                | agent-shell-ui-toggle-fragment-at-point                 | Toggle visibility of fragment body at point.                                  |
+|                                                | agent-shell-version                                     | Show `agent-shell' mode version.                                              |
+|                                                | agent-shell-view-acp-logs                               | View agent shell ACP logs buffer.                                             |
+|                                                | agent-shell-view-traffic                                | View agent shell traffic buffer.                                              |
+|                                                | agent-shell-viewport--compose-help-menu                 | `agent-shell' viewport compose help menu                                      |
+|                                                | agent-shell-viewport--help-menu                         | `agent-shell' viewport help menu                                              |
+|                                                | agent-shell-viewport-compose-cancel                     | Cancel prompt composition.                                                    |
+|                                                | agent-shell-viewport-compose-help-menu                  | Show the transient help menu for compose (edit) mode.                         |
+|                                                | agent-shell-viewport-compose-peek-last                  | Save compose buffer snapshot and peek at the last interaction.                |
+|                                                | agent-shell-viewport-compose-send                       | Send the viewport composed prompt to the agent shell.                         |
+|                                                | agent-shell-viewport-compose-send-and-kill              | Send the viewport composed prompt to the agent shell and kill compose buffer. |
+|                                                | agent-shell-viewport-compose-send-and-wait-for-response | Send the viewport composed prompt and display response in viewport.           |
+|                                                | agent-shell-viewport-copy-session-id                    | Copy the current session ID to the kill ring.                                 |
+|                                                | agent-shell-viewport-cycle-session-mode                 | Cycle through available session modes.                                        |
+|                                                | agent-shell-viewport-edit-mode                          | Major mode for composing agent shell prompts.                                 |
+|                                                | agent-shell-viewport-help-menu                          | Show viewport and display the transient help menu (bound to ? in view mode).  |
+|                                                | agent-shell-viewport-interrupt                          | Interrupt active agent shell request.                                         |
+|                                                | agent-shell-viewport-next-history                       | Insert next prompt from history into compose buffer.                          |
+|                                                | agent-shell-viewport-next-item                          | Go to next item.                                                              |
+|                                                | agent-shell-viewport-next-page                          | Show next interaction (request / response).                                   |
+|                                                | agent-shell-viewport-open-transcript                    | Open the transcript file for the current `agent-shell' session.               |
+|                                                | agent-shell-viewport-pin-page                           | Pin the current viewport page to a read-only buffer in another window.        |
+|                                                | agent-shell-viewport-previous-history                   | Insert previous prompt from history into compose buffer.                      |
+|                                                | agent-shell-viewport-previous-item                      | Go to previous item.                                                          |
+|                                                | agent-shell-viewport-previous-page                      | Show previous interaction (request / response).                               |
+|                                                | agent-shell-viewport-queue-request                      | Queue or immediately send a request depending on shell busy state.            |
+|                                                | agent-shell-viewport-refresh                            | Refresh viewport buffer content with current item from shell.                 |
+|                                                | agent-shell-viewport-remove-pending-request             | Remove pending requests.                                                      |
+|                                                | agent-shell-viewport-reply                              | Reply as a follow-up and compose another prompt/query.                        |
+|                                                | agent-shell-viewport-reply-1                            | Reply with "1" and send immediately.                                          |
+|                                                | agent-shell-viewport-reply-2                            | Reply with "2" and send immediately.                                          |
+|                                                | agent-shell-viewport-reply-3                            | Reply with "3" and send immediately.                                          |
+|                                                | agent-shell-viewport-reply-4                            | Reply with "4" and send immediately.                                          |
+|                                                | agent-shell-viewport-reply-5                            | Reply with "5" and send immediately.                                          |
+|                                                | agent-shell-viewport-reply-6                            | Reply with "6" and send immediately.                                          |
+|                                                | agent-shell-viewport-reply-7                            | Reply with "7" and send immediately.                                          |
+|                                                | agent-shell-viewport-reply-8                            | Reply with "8" and send immediately.                                          |
+|                                                | agent-shell-viewport-reply-9                            | Reply with "9" and send immediately.                                          |
+|                                                | agent-shell-viewport-reply-again                        | Reply with "again" and send immediately.                                      |
+|                                                | agent-shell-viewport-reply-continue                     | Reply with "continue" and send immediately.                                   |
+|                                                | agent-shell-viewport-reply-more                         | Reply with "more" and send immediately.                                       |
+|                                                | agent-shell-viewport-reply-yes                          | Reply with "yes" and send immediately.                                        |
+|                                                | agent-shell-viewport-resume-pending-requests            | Resume processing pending requests in the queue.                              |
+|                                                | agent-shell-viewport-search-history                     | Search prompt history, select, and insert into compose buffer.                |
+|                                                | agent-shell-viewport-set-session-mode                   | Set session mode.                                                             |
+|                                                | agent-shell-viewport-set-session-model                  | Set session model.                                                            |
+|                                                | agent-shell-viewport-view-acp-logs                      | View agent shell ACP logs buffer.                                             |
+|                                                | agent-shell-viewport-view-last                          | Display the last request/response interaction.                                |
+|                                                | agent-shell-viewport-view-mode                          | Major mode for viewing agent shell prompts (read-only).                       |
+|                                                | agent-shell-viewport-view-traffic                       | View agent shell traffic buffer.                                              |
+| C-y or <paste> or S-<insertchar> or S-<insert> | agent-shell-yank-dwim                                   | Yank or paste clipboard image into `agent-shell'.                             |
 * Filing issues
 When filing an issue, please keep the checkboxes from the [[https://github.com/xenodium/agent-shell/blob/main/.github/ISSUE_TEMPLATE/issue.md][issue template]] and check them off as applicable. They help ensure I have enough information to help.
 
