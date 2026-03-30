@@ -2810,7 +2810,7 @@ variable (see makunbound)"))
             ;; display the buffer.
             (agent-shell-subscribe-to
              :shell-buffer shell-buffer
-             :event 'session-selected
+             :event 'prompt-ready
              :on-event (lambda (_event)
                          (agent-shell--display-buffer shell-buffer)))
           (agent-shell--display-buffer shell-buffer))))
