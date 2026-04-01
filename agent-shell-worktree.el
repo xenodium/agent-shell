@@ -107,7 +107,8 @@ Or nil if not in a repo."
         trimmed))))
 
 (defcustom agent-shell-worktree-include-filename nil
-  "When non-nil, file that contains a list of untracked files in repostitory to copy to new worktree.
+  "When non-nil, file that contains a list of untracked files in repository
+to copy to new worktree.
 
 This is formatted in \".gitignore\" style, so wildcards and similar are
 allowed. See https://git-scm.com/docs/gitignore#_pattern_format for more information."
