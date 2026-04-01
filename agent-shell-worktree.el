@@ -106,6 +106,33 @@ Or nil if not in a repo."
       (unless (string-empty-p trimmed)
         trimmed))))
 
+(defcustom agent-shell-worktree-include-filename nil
+  "When non-nil, file that contains a list of untracked files in repostitory to copy to new worktree.
+
+This is formatted in \".gitignore\" style, so wildcards and similar are
+allowed. See https://git-scm.com/docs/gitignore#_pattern_format for more information."
+  :type '(choice (const nil) (const ".worktreeinclude") string)
+  :group 'agent-shell)
+
+(defun agent-shell-worktree--copy-worktree-include-files (original-repo worktree)
+  "Copy untracked files matching patterns in
+`agent-shell-worktree-include-filename' from ORIGINAL-REPO to WORKTREE.
+
+If `agent-shell-worktree-include-filename' is unset, does nothing."
+  (when agent-shell-worktree-include-filename
+    (let ((file (file-name-concat original-repo agent-shell-worktree-include-filename)))
+      (when (file-exists-p file)
+        (let* ((default-directory original-repo)
+               (output (shell-command-to-string
+                        (format "git ls-files --others --ignored --exclude-from=%s"
+                                (shell-quote-argument file)))))
+          (dolist (relative-file (split-string output "\n" t))
+            (let ((src (file-name-concat original-repo relative-file))
+                  (dst (file-name-concat worktree relative-file)))
+              (when (file-exists-p src)
+                (make-directory (file-name-directory dst) t)
+                (copy-file src dst t t t t)))))))))
+
 ;;;###autoload
 (defun agent-shell-new-worktree-shell ()
   "Create a new git worktree and start an agent shell in it.
@@ -136,6 +163,7 @@ The user is prompted to confirm or edit the worktree path before creation."
                            (shell-quote-argument worktree-path)))))
       (unless (file-exists-p worktree-path)
         (user-error "Failed to create worktree: %s" output))
+      (agent-shell-worktree--copy-worktree-include-files repo-root worktree-path)
       (let ((default-directory worktree-path))
         (agent-shell '(4))))))
 
