@@ -125,6 +125,27 @@ when starting a new Codex shell."
   :type '(choice (const nil) string)
   :group 'agent-shell)
 
+(defun agent-shell-openai--codex-api-key-authenticate-request (api-key)
+  "Create a Codex `api-key' authentication request for API-KEY."
+  `((:method . "authenticate")
+    (:params . ((methodId . "api-key")
+                (_meta . (("api-key" . ((apiKey . ,api-key)))))))))
+
+(defun agent-shell-openai--codex-authenticate-request ()
+  "Create the authenticate request for the current Codex auth config."
+  (cond ((map-elt agent-shell-openai-authentication :api-key)
+         (let ((api-key (agent-shell-openai-key)))
+           (unless api-key
+             (user-error "Please set your `agent-shell-openai-authentication'"))
+           (agent-shell-openai--codex-api-key-authenticate-request api-key)))
+        ((map-elt agent-shell-openai-authentication :codex-api-key)
+         (let ((codex-key (agent-shell-openai-key)))
+           (unless codex-key
+             (user-error "Please set your `agent-shell-openai-authentication'"))
+           (agent-shell-openai--codex-api-key-authenticate-request codex-key)))
+        (t
+         (acp-make-authenticate-request :method-id "chat-gpt"))))
+
 (defun agent-shell-openai-make-codex-config ()
   "Create a Codex agent configuration.
 
@@ -144,16 +165,10 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
                                     (funcall agent-shell-openai-default-model-id)
                                   agent-shell-openai-default-model-id))
    :default-session-mode-id (lambda () agent-shell-openai-default-session-mode-id)
-   :authenticate-request-maker (lambda ()
-                                 (cond ((map-elt agent-shell-openai-authentication :api-key)
-                                        (acp-make-authenticate-request :method-id "openai-api-key"))
-                                       ((map-elt agent-shell-openai-authentication :codex-api-key)
-                                        (acp-make-authenticate-request :method-id "codex-api-key"))
-                                       (t
-                                        (acp-make-authenticate-request :method-id "chatgpt"))))
+   :authenticate-request-maker #'agent-shell-openai--codex-authenticate-request
    :client-maker (lambda (buffer)
                    (agent-shell-openai-make-codex-client :buffer buffer))
-   :install-instructions "See https://github.com/zed-industries/codex-acp for installation."))
+   :install-instructions "See https://github.com/agentclientprotocol/codex-acp for installation."))
 
 (defun agent-shell-openai-start-codex ()
   "Start an interactive Codex agent shell."
