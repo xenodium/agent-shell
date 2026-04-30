@@ -1376,6 +1376,48 @@ code block content
       (when (and test-buffer (buffer-live-p test-buffer))
         (kill-buffer test-buffer)))))
 
+(ert-deftest agent-shell-prompt-active-message-hidden-after-early-session-selection ()
+  "Session selection during startup should hide prompt loading message."
+  (let ((test-buffer nil)
+        (active-message-hidden nil)
+        (displayed-buffer nil)
+        (fake-process (start-process "fake-agent" nil "cat"))
+        (agent-shell-session-strategy 'prompt)
+        (agent-shell-show-welcome-message nil)
+        (agent-shell-file-completion-enabled nil)
+        (config (list (cons :buffer-name "test-agent")
+                      (cons :mode-line-name "Test Agent")
+                      (cons :client-maker
+                            (lambda (_buf)
+                              (list (cons :command "cat")))))))
+    (unwind-protect
+        (cl-letf (((symbol-function 'shell-maker-start)
+                   (lambda (_config &rest _args)
+                     (setq test-buffer (get-buffer-create "*test-agent-shell*"))
+                     (with-current-buffer test-buffer
+                       (setq major-mode 'agent-shell-mode))
+                     test-buffer))
+                  ((symbol-function 'shell-maker--process) (lambda () fake-process))
+                  ((symbol-function 'shell-maker-write-output) #'ignore)
+                  ((symbol-function 'shell-maker-finish-output) #'ignore)
+                  ((symbol-function 'agent-shell-active-message-show)
+                   (lambda (&rest _args) '((:active . t))))
+                  ((symbol-function 'agent-shell-active-message-hide)
+                   (lambda (&rest _args) (setq active-message-hidden t)))
+                  ((symbol-function 'agent-shell--display-buffer)
+                   (lambda (buffer) (setq displayed-buffer buffer)))
+                  ((symbol-function 'agent-shell--handle)
+                   (lambda (&rest _args)
+                     (with-current-buffer test-buffer
+                       (agent-shell--emit-event :event 'session-selected)))))
+          (agent-shell--start :config config)
+          (should active-message-hidden)
+          (should (eq displayed-buffer test-buffer)))
+      (when (process-live-p fake-process)
+        (delete-process fake-process))
+      (when (and test-buffer (buffer-live-p test-buffer))
+        (kill-buffer test-buffer)))))
+
 (ert-deftest agent-shell--initiate-session-prefers-list-and-load-when-supported ()
   "Test `agent-shell--initiate-session' prefers session/list + session/load."
   (with-temp-buffer

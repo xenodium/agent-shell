@@ -2792,31 +2792,6 @@ variable (see makunbound)"))
          :config shell-maker--config
          :output (funcall (map-elt config :welcome-function)
                           shell-maker--config)))
-      (if (eq agent-shell-session-strategy 'new-deferred)
-          ;; Show prompt now (unbootstrapped).
-          (shell-maker-finish-output
-           :config shell-maker--config
-           :success nil)
-        ;; Kick off ACP session bootstrapping.
-        (agent-shell--handle :shell-buffer shell-buffer))
-      ;; State should be available after kicking off
-      ;; `agent-shell--handle'.  Fire mode hook so initial
-      ;; state is available to agent-shell-mode-hook(s).
-      (run-hooks 'agent-shell-mode-hook)
-      ;; Refresh the session topic from the agent. `init-finished' fires
-      ;; once the session is established (covers resumed sessions whose
-      ;; title is already known) and `turn-complete' covers ongoing
-      ;; refinement for agents that summarize as the conversation grows.
-      ;; `session-selected' is too early -- it fires synchronously inside
-      ;; `agent-shell--handle' before this subscription can register.
-      (agent-shell-subscribe-to
-       :shell-buffer shell-buffer
-       :event 'init-finished
-       :on-event #'agent-shell--refresh-topic-from-session-list)
-      (agent-shell-subscribe-to
-       :shell-buffer shell-buffer
-       :event 'turn-complete
-       :on-event #'agent-shell--refresh-topic-from-session-list)
       ;; Subscribe to session selection events (needed regardless of focus).
       (when (eq agent-shell-session-strategy 'prompt)
         (agent-shell-subscribe-to
@@ -2844,25 +2819,62 @@ variable (see makunbound)"))
            :shell-buffer shell-buffer
            :event 'error
            :on-event (lambda (_event)
+                        (agent-shell-active-message-hide :active-message active-message)))
+          (agent-shell-subscribe-to
+           :shell-buffer shell-buffer
+           :event 'init-finished
+           :on-event (lambda (_event)
+                       (agent-shell-active-message-hide :active-message active-message)))
+          (agent-shell-subscribe-to
+           :shell-buffer shell-buffer
+           :event 'prompt-ready
+           :on-event (lambda (_event)
                        (agent-shell-active-message-hide :active-message active-message)))
           (agent-shell-subscribe-to
            :shell-buffer shell-buffer
            :event 'clean-up
            :on-event (lambda (_event)
-                       (agent-shell-active-message-hide :active-message active-message)))))
+                        (agent-shell-active-message-hide :active-message active-message))))
+        (unless no-focus
+          ;; Defer display until user selects a session.
+          ;; Why? The experience is janky to display a buffer
+          ;; and soon after that prompt the user for input.
+          ;; Better to prompt the user for input and then
+          ;; display the buffer.
+          (agent-shell-subscribe-to
+           :shell-buffer shell-buffer
+           :event 'session-selected
+           :on-event (lambda (_event)
+                       (agent-shell--display-buffer shell-buffer)))))
+      (if (eq agent-shell-session-strategy 'new-deferred)
+          ;; Show prompt now (unbootstrapped).
+          (shell-maker-finish-output
+           :config shell-maker--config
+           :success nil)
+        ;; Kick off ACP session bootstrapping.
+        (agent-shell--handle :shell-buffer shell-buffer))
+      ;; State should be available after kicking off
+      ;; `agent-shell--handle'.  Fire mode hook so initial
+      ;; state is available to agent-shell-mode-hook(s).
+      (run-hooks 'agent-shell-mode-hook)
+      ;; Refresh the session topic from the agent. `init-finished' fires
+      ;; once the session is established (covers resumed sessions whose
+      ;; title is already known) and `turn-complete' covers ongoing
+      ;; refinement for agents that summarize as the conversation grows.
+      ;; `session-selected' is too early -- it fires synchronously inside
+      ;; `agent-shell--handle' before this subscription can register.
+      (agent-shell-subscribe-to
+       :shell-buffer shell-buffer
+       :event 'init-finished
+       :on-event #'agent-shell--refresh-topic-from-session-list)
+      (agent-shell-subscribe-to
+       :shell-buffer shell-buffer
+       :event 'turn-complete
+       :on-event #'agent-shell--refresh-topic-from-session-list)
       ;; Display buffer if no-focus was nil, respecting agent-shell-display-action
       (unless no-focus
         (if (eq agent-shell-session-strategy 'prompt)
-            ;; Defer display until user selects a session.
-            ;; Why? The experience is janky to display a buffer
-            ;; and soon after that prompt the user for input.
-            ;; Better to prompt the user for input and then
-            ;; display the buffer.
-            (agent-shell-subscribe-to
-             :shell-buffer shell-buffer
-             :event 'session-selected
-             :on-event (lambda (_event)
-                         (agent-shell--display-buffer shell-buffer)))
+            nil
           (agent-shell--display-buffer shell-buffer))))
     shell-buffer))
 
