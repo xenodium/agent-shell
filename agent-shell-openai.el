@@ -27,6 +27,7 @@
 
 (eval-when-compile
   (require 'cl-lib))
+(require 'json)
 (require 'shell-maker)
 (require 'acp)
 
@@ -125,26 +126,28 @@ when starting a new Codex shell."
   :type '(choice (const nil) string)
   :group 'agent-shell)
 
-(defun agent-shell-openai--codex-api-key-authenticate-request (api-key)
-  "Create a Codex `api-key' authentication request for API-KEY."
-  `((:method . "authenticate")
-    (:params . ((methodId . "api-key")
-                (_meta . (("api-key" . ((apiKey . ,api-key)))))))))
-
-(defun agent-shell-openai--codex-authenticate-request ()
-  "Create the authenticate request for the current Codex auth config."
+(defun agent-shell-openai--codex-default-auth-request ()
+  "Create the Codex default auth request for the current auth config."
   (cond ((map-elt agent-shell-openai-authentication :api-key)
          (let ((api-key (agent-shell-openai-key)))
            (unless api-key
              (user-error "Please set your `agent-shell-openai-authentication'"))
-           (agent-shell-openai--codex-api-key-authenticate-request api-key)))
+           `((methodId . "api-key")
+             (_meta . ((api-key . ((apiKey . ,api-key))))))))
         ((map-elt agent-shell-openai-authentication :codex-api-key)
          (let ((codex-key (agent-shell-openai-key)))
            (unless codex-key
              (user-error "Please set your `agent-shell-openai-authentication'"))
-           (agent-shell-openai--codex-api-key-authenticate-request codex-key)))
+           `((methodId . "api-key")
+             (_meta . ((api-key . ((apiKey . ,codex-key))))))))
         (t
-         (acp-make-authenticate-request :method-id "chat-gpt"))))
+         '((methodId . "chat-gpt")))))
+
+(defun agent-shell-openai--codex-default-auth-environment ()
+  "Return DEFAULT_AUTH_REQUEST environment for Codex ACP."
+  (list (concat "DEFAULT_AUTH_REQUEST="
+                (json-serialize
+                 (agent-shell-openai--codex-default-auth-request)))))
 
 (defun agent-shell-openai-make-codex-config ()
   "Create a Codex agent configuration.
@@ -160,12 +163,11 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :shell-prompt-regexp "Codex> "
    :welcome-function #'agent-shell-openai--codex-welcome-message
    :icon-name "openai.png"
-   :needs-authentication t
+   :needs-authentication nil
    :default-model-id (lambda () (if (functionp agent-shell-openai-default-model-id)
                                     (funcall agent-shell-openai-default-model-id)
                                   agent-shell-openai-default-model-id))
    :default-session-mode-id (lambda () agent-shell-openai-default-session-mode-id)
-   :authenticate-request-maker #'agent-shell-openai--codex-authenticate-request
    :client-maker (lambda (buffer)
                    (agent-shell-openai-make-codex-client :buffer buffer))
    :install-instructions "See https://github.com/agentclientprotocol/codex-acp for installation."))
@@ -192,6 +194,7 @@ Uses `agent-shell-openai-authentication' for authentication configuration."
       (agent-shell--make-acp-client :command (car agent-shell-openai-codex-acp-command)
                                     :command-params (cdr agent-shell-openai-codex-acp-command)
                                     :environment-variables (append (list (format "OPENAI_API_KEY=%s" api-key))
+                                                                   (agent-shell-openai--codex-default-auth-environment)
                                                                    agent-shell-openai-codex-environment)
                                     :context-buffer buffer)))
    ((map-elt agent-shell-openai-authentication :codex-api-key)
@@ -201,14 +204,16 @@ Uses `agent-shell-openai-authentication' for authentication configuration."
       (agent-shell--make-acp-client :command (car agent-shell-openai-codex-acp-command)
                                     :command-params (cdr agent-shell-openai-codex-acp-command)
                                     :environment-variables (append (list (format "CODEX_API_KEY=%s" codex-key))
+                                                                   (agent-shell-openai--codex-default-auth-environment)
                                                                    agent-shell-openai-codex-environment)
                                     :context-buffer buffer)))
    ((map-elt agent-shell-openai-authentication :login)
-    (agent-shell--make-acp-client :command (car agent-shell-openai-codex-acp-command)
-                                  :command-params (cdr agent-shell-openai-codex-acp-command)
-                                  :environment-variables (append '("OPENAI_API_KEY=")
-                                                                 agent-shell-openai-codex-environment)
-                                  :context-buffer buffer))
+     (agent-shell--make-acp-client :command (car agent-shell-openai-codex-acp-command)
+                                   :command-params (cdr agent-shell-openai-codex-acp-command)
+                                   :environment-variables (append '("OPENAI_API_KEY=")
+                                                                  (agent-shell-openai--codex-default-auth-environment)
+                                                                  agent-shell-openai-codex-environment)
+                                   :context-buffer buffer))
    (t
     (error "Invalid authentication configuration"))))
 

@@ -31,35 +31,41 @@
     (let ((agent-shell-openai-default-session-mode-id "full-access"))
       (should (string= (funcall default-session-mode-id-fn) "full-access")))))
 
-(ert-deftest agent-shell-openai-codex-login-auth-request-test ()
+(ert-deftest agent-shell-openai-codex-does-not-eagerly-authenticate-test ()
+  "Test that Codex lets codex-acp decide when auth is needed."
+  (let ((config (agent-shell-openai-make-codex-config)))
+    (should-not (map-elt config :needs-authentication))
+    (should-not (map-elt config :authenticate-request-maker))))
+
+(ert-deftest agent-shell-openai-codex-login-default-auth-request-test ()
   "Test that Codex login auth uses the current chat-gpt method id."
   (let* ((agent-shell-openai-authentication
           (agent-shell-openai-make-authentication :login t))
-         (request (funcall (map-elt (agent-shell-openai-make-codex-config)
-                                    :authenticate-request-maker))))
-    (should (string= (map-nested-elt request '(:params methodId))
-                     "chat-gpt"))))
+         (env (car (agent-shell-openai--codex-default-auth-environment)))
+         (request (json-parse-string (string-remove-prefix "DEFAULT_AUTH_REQUEST=" env)
+                                     :object-type 'alist)))
+    (should (string= (map-elt request 'methodId) "chat-gpt"))))
 
-(ert-deftest agent-shell-openai-codex-api-key-auth-request-test ()
+(ert-deftest agent-shell-openai-codex-api-key-default-auth-request-test ()
   "Test that Codex API key auth sends key metadata."
   (let* ((agent-shell-openai-authentication
           (agent-shell-openai-make-authentication :api-key "openai-secret"))
-         (request (funcall (map-elt (agent-shell-openai-make-codex-config)
-                                    :authenticate-request-maker))))
-    (should (string= (map-nested-elt request '(:params methodId))
-                     "api-key"))
-    (should (string= (map-nested-elt request '(:params _meta "api-key" apiKey))
+         (env (car (agent-shell-openai--codex-default-auth-environment)))
+         (request (json-parse-string (string-remove-prefix "DEFAULT_AUTH_REQUEST=" env)
+                                     :object-type 'alist)))
+    (should (string= (map-elt request 'methodId) "api-key"))
+    (should (string= (map-nested-elt request '(_meta api-key apiKey))
                      "openai-secret"))))
 
-(ert-deftest agent-shell-openai-codex-key-auth-request-test ()
+(ert-deftest agent-shell-openai-codex-key-default-auth-request-test ()
   "Test that Codex-specific API key auth sends key metadata."
   (let* ((agent-shell-openai-authentication
           (agent-shell-openai-make-authentication :codex-api-key "codex-secret"))
-         (request (funcall (map-elt (agent-shell-openai-make-codex-config)
-                                    :authenticate-request-maker))))
-    (should (string= (map-nested-elt request '(:params methodId))
-                     "api-key"))
-    (should (string= (map-nested-elt request '(:params _meta "api-key" apiKey))
+         (env (car (agent-shell-openai--codex-default-auth-environment)))
+         (request (json-parse-string (string-remove-prefix "DEFAULT_AUTH_REQUEST=" env)
+                                     :object-type 'alist)))
+    (should (string= (map-elt request 'methodId) "api-key"))
+    (should (string= (map-nested-elt request '(_meta api-key apiKey))
                      "codex-secret"))))
 
 (provide 'agent-shell-openai-tests)
