@@ -3942,7 +3942,7 @@ Must provide ON-INITIATED (lambda ())."
                                                             `((:id . ,(map-elt mode 'id))
                                                               (:name . ,(map-elt mode 'name))
                                                               (:description . ,(map-elt mode 'description))))
-                                                          (map-elt modes 'availableModes))))))
+                                                          (map-elt modes 'availableModes)))))))
                    (when-let ((agent-capabilities (map-elt acp-response 'agentCapabilities)))
                      (map-put! agent-shell--state :supports-session-load
                                (eq (map-elt agent-capabilities 'loadSession) t))
@@ -3951,7 +3951,7 @@ Must provide ON-INITIATED (lambda ())."
                       :namespace-id "bootstrapping"
                       :block-id "agent_capabilities"
                       :label-left (propertize "Agent capabilities" 'font-lock-face 'font-lock-doc-markup-face)
-                      :body (agent-shell--format-agent-capabilities agent-capabilities)))
+                      :body (agent-shell--format-agent-capabilities agent-capabilities))
                    (agent-shell--emit-event :event 'init-handshake))
                  (funcall on-initiated))
    :on-failure (agent-shell--make-error-handler
@@ -4362,7 +4362,8 @@ Falls back to latest session in batch mode (e.g. tests)."
                                                                   `((:model-id . ,(map-elt model 'modelId))
                                                                     (:name . ,(map-elt model 'name))
                                                                     (:description . ,(map-elt model 'description))))
-                                                                (map-nested-elt acp-response '(models availableModels))))))
+                                                                 (map-nested-elt acp-response '(models availableModels))))
+                                          (cons :title (map-nested-elt agent-shell--state '(:session :title)))))
                  (agent-shell--update-fragment
                   :state agent-shell--state
                   :block-id "starting"
