@@ -4362,7 +4362,8 @@ Falls back to latest session in batch mode (e.g. tests)."
                                                                   `((:model-id . ,(map-elt model 'modelId))
                                                                     (:name . ,(map-elt model 'name))
                                                                     (:description . ,(map-elt model 'description))))
-                                                                (map-nested-elt acp-response '(models availableModels))))))
+                                                                (map-nested-elt acp-response '(models availableModels))))
+                                          (cons :title (map-nested-elt agent-shell--state '(:session :title)))))
                  (agent-shell--update-fragment
                   :state agent-shell--state
                   :block-id "starting"
