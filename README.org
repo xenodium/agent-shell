@@ -176,6 +176,15 @@ npm install -g pi-acp
 
 See https://github.com/svkozak/pi-acp for details.
 
+
+*** For the Fabrica coding agent, install fabrica-cli
+
+#+begin_src bash
+cargo install fabrica-cli
+#+end_src
+
+See https://github.com/Endi1/fabrica for details.
+
 ** Installation
 
 =agent-shell= is powered by built-in =comint-shell=, via [[https://github.com/xenodium/shell-maker][shell-maker]], available on [[https://melpa.org/#/shell-maker][MELPA]].
@@ -443,6 +452,7 @@ Start a specific agent shell session directly:
 - =M-x agent-shell-qwen-start= - Start a Qwen Code agent session
 - =M-x agent-shell-droid-start-agent= - Start a Factory Droid agent session
 - =M-x agent-shell-pi-start-agent= - Start a Pi coding agent session
+- =M-x agent-shell-fabrica-start-agent= - Start a Fabrica coding agent session
 
 *** Setting a default agent for all new shells
 
