@@ -1389,6 +1389,7 @@ code block content
                                  (:modes . nil)))
                     (:supports-session-list . t)
                     (:supports-session-load . t)
+                    (:supports-session-resume . t)
                     (:active-requests)
                     (:event-subscriptions . nil))))
       (setq-local agent-shell--state state)

@@ -549,10 +549,12 @@ configuration alist for backwards compatibility."
                         :key-type symbol :value-type sexp))
   :group 'agent-shell)
 
-(defcustom agent-shell-prefer-session-resume t
+(defcustom agent-shell-prefer-session-resume nil
   "Prefer ACP session resume over session load when both are available.
 
-When non-nil (and supported by agent), prefer ACP session resumes over loading."
+When nil, prefer session/load when available so reopened sessions replay
+history, and fall back to session/resume only when loading is unsupported.
+When non-nil (and supported by agent), prefer ACP session/resume over loading."
   :type 'boolean
   :group 'agent-shell)
 
