@@ -42,22 +42,30 @@ See https://containers.dev for more information on devcontainers."
 (defun agent-shell-devcontainer-resolve-path (path)
   "Resolve PATH from a devcontainer in the local filesystem, and vice versa.
 
+When the current working directory has no .devcontainer/devcontainer.json,
+PATH is returned unchanged.  This makes it safe to set this function as
+`agent-shell-path-resolver-function' globally, even when mixing
+devcontainer- and non-devcontainer projects in the same Emacs session.
+
 For example:
 
 - /workspace/README.md => /home/xenodium/projects/kitchen-sink/README.md
-- /home/xenodium/projects/kitchen-sink/README.md => /workspace/README.md"
-  (let* ((cwd (agent-shell-cwd))
-         (devcontainer-path (agent-shell-devcontainer--get-workspace-path cwd)))
-    (if (string-prefix-p cwd path)
-        (string-replace cwd devcontainer-path path)
-      (if agent-shell-text-file-capabilities
-          (if-let* ((is-dev-container (string-prefix-p devcontainer-path path))
-                    (local-path (expand-file-name (string-replace devcontainer-path cwd path))))
-              (or
-               (and (file-in-directory-p local-path cwd) local-path)
-               (error "Resolves to path outside of working directory: %s" path))
-            (error "Unexpected path outside of workspace folder: %s" path))
-        (error "Refuse to resolve to local filesystem with text file capabilities disabled: %s" path)))))
+- /home/xenodium/projects/kitchen-sink/README.md => /workspace/README.md
+- /any/path => /any/path  (when CWD is not a devcontainer project)"
+  (let ((cwd (agent-shell-cwd)))
+    (if (not (file-exists-p (expand-file-name ".devcontainer/devcontainer.json" cwd)))
+        path
+      (let ((devcontainer-path (agent-shell-devcontainer--get-workspace-path cwd)))
+        (if (string-prefix-p cwd path)
+            (string-replace cwd devcontainer-path path)
+          (if agent-shell-text-file-capabilities
+              (if-let* ((is-dev-container (string-prefix-p devcontainer-path path))
+                        (local-path (expand-file-name (string-replace devcontainer-path cwd path))))
+                  (or
+                   (and (file-in-directory-p local-path cwd) local-path)
+                   (error "Resolves to path outside of working directory: %s" path))
+                (error "Unexpected path outside of workspace folder: %s" path))
+            (error "Refuse to resolve to local filesystem with text file capabilities disabled: %s" path)))))))
 
 (defalias
   'agent-shell--resolve-devcontainer-path

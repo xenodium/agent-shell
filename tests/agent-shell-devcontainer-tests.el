@@ -7,9 +7,11 @@
 
 (ert-deftest agent-shell-devcontainer-resolve-path-test ()
   "Test `agent-shell-devcontainer-resolve-path' function."
-  ;; Mock agent-shell-devcontainer--get-workspace-path
+  ;; Mock agent-shell-devcontainer--get-workspace-path and pretend
+  ;; .devcontainer/devcontainer.json exists so the no-op gate passes.
   (cl-letf (((symbol-function 'agent-shell-devcontainer--get-workspace-path)
-             (lambda (_) "/workspace")))
+             (lambda (_) "/workspace"))
+            ((symbol-function 'file-exists-p) (lambda (_) t)))
 
     ;; Need to run in an existing directory (requirement of `file-in-directory-p')
     (let ((default-directory "/tmp"))
@@ -48,6 +50,24 @@
 
         ;; Does not resolve unexpected paths
         (should-error (agent-shell-devcontainer-resolve-path "/unexpected") :type 'error)))))
+
+(ert-deftest agent-shell-devcontainer-resolve-path-no-op-without-devcontainer-test ()
+  "Resolver returns PATH unchanged when CWD has no .devcontainer/devcontainer.json."
+  (let ((tmp (file-name-as-directory (make-temp-file "agent-shell-test-" t))))
+    (unwind-protect
+        (cl-letf (((symbol-function 'agent-shell-cwd) (lambda () tmp))
+                  ;; Would error if called; verifies no-op short-circuits before this.
+                  ((symbol-function 'agent-shell-devcontainer--get-workspace-path)
+                   (lambda (_) (error "Should not be called when no devcontainer.json"))))
+          (let ((agent-shell-text-file-capabilities t))
+            (should (equal (agent-shell-devcontainer-resolve-path "/workspace/d/f.el")
+                           "/workspace/d/f.el"))
+            (should (equal (agent-shell-devcontainer-resolve-path (concat tmp "f.el"))
+                           (concat tmp "f.el"))))
+          (let ((agent-shell-text-file-capabilities nil))
+            (should (equal (agent-shell-devcontainer-resolve-path "/workspace/d/f.el")
+                           "/workspace/d/f.el"))))
+      (delete-directory tmp t))))
 
 (provide 'agent-shell-devcontainer-tests)
 ;;; agent-shell-devcontainer-tests.el ends here
