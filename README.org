@@ -78,6 +78,7 @@ We now have a handful of additional packages to extend the =agent-shell= experie
 - [[https://github.com/lllShamanlll/agent-shell-org-transcript][agent-shell-org-transcript]]: Org-mode transcripts for =agent-shell= sessions, with org-roam integration.
 - [[https://github.com/eddof13/ob-agent-shell][ob-agent-shell]]: Org Babel backend for executing =agent-shell= source blocks.
 - [[https://github.com/Marx-A00/agent-recall][agent-recall]]: Search, browse, and resume =agent-shell= conversation transcripts.
+- [[https://github.com/lgmoneda/agent-shell-pet][agent-shell-pet]]: Codex-like pets that broadcast agent-shell session states.
 
 * Icons
 
@@ -560,6 +561,7 @@ You can send a screenshot from your clipboard to your shell with =agent-shell-se
 - =wl-paste= for Wayland desktops,
 - =xclip= for Xorg,
 - =pngpaste= for MacOS.
+- =powershell= for Windows.
 
 *** Inhibiting minor modes during file writes
 

@@ -423,7 +423,15 @@ Assume screenshot file path will be appended to this list."
                                                         "-t" "image/png" "-o")))
                            (unless (zerop exit-code)
                              (error "Command xclip failed with exit code %d" exit-code))
-                           (write-region (point-min) (point-max) file-path nil 'silent)))))))
+                           (write-region (point-min) (point-max) file-path nil 'silent))))))
+   (list (cons :command "powershell")
+         (cons :save (lambda (file-path)
+                       (let ((exit-code (call-process "powershell" nil nil nil
+                                                      "-Command"
+                                                      (format "& {(Get-Clipboard -Format image).Save(%s)}"
+                                                              (shell-quote-argument file-path)))))
+                         (unless (zerop exit-code)
+                           (error "Command powershell failed with exit code %d" exit-code)))))))
   "Handlers for saving clipboard images to a file.
 
 Each handler is an alist with the following keys:
@@ -2474,22 +2482,21 @@ DIFF should be in the form returned by `agent-shell--make-diff-info':
   "Clean up resources.
 
 For example, shut down ACP client."
-  (unless (derived-mode-p 'agent-shell-mode)
-    (error "Not in a shell"))
-  (agent-shell--cancel-idle-timer)
-  (agent-shell--emit-event :event 'clean-up)
-  (agent-shell--shutdown)
-  ;; Kill any open diff buffers associated with tool calls.
-  (map-do (lambda (_tool-call-id tool-call-data)
-            (when-let ((diff-buf (map-elt tool-call-data :diff-buffer)))
-              (agent-shell-diff-kill-buffer diff-buf)))
-          (map-elt (agent-shell--state) :tool-calls))
-  (when-let (((map-elt (agent-shell--state) :buffer))
-             (viewport-buffer (agent-shell-viewport--buffer
-                               :shell-buffer (map-elt (agent-shell--state) :buffer)
-                               :existing-only t))
-             (buffer-live-p viewport-buffer))
-    (kill-buffer viewport-buffer)))
+  (when (derived-mode-p 'agent-shell-mode)
+    (agent-shell--cancel-idle-timer)
+    (agent-shell--emit-event :event 'clean-up)
+    (agent-shell--shutdown)
+    ;; Kill any open diff buffers associated with tool calls.
+    (map-do (lambda (_tool-call-id tool-call-data)
+              (when-let ((diff-buf (map-elt tool-call-data :diff-buffer)))
+                (agent-shell-diff-kill-buffer diff-buf)))
+            (map-elt (agent-shell--state) :tool-calls))
+    (when-let (((map-elt (agent-shell--state) :buffer))
+               (viewport-buffer (agent-shell-viewport--buffer
+                                 :shell-buffer (map-elt (agent-shell--state) :buffer)
+                                 :existing-only t))
+               (buffer-live-p viewport-buffer))
+      (kill-buffer viewport-buffer))))
 
 (defun agent-shell--shutdown ()
   "Shut down shell activity."
@@ -2882,6 +2889,7 @@ variable (see makunbound)"))
       (setq-local filter-buffer-substring-function #'agent-shell--filter-buffer-substring)
       (agent-shell--update-header-and-mode-line)
       (add-hook 'kill-buffer-hook #'agent-shell--clean-up nil t)
+      (add-hook 'change-major-mode-hook #'agent-shell--clean-up nil t)
       (agent-shell-ui-mode +1)
       (when agent-shell-file-completion-enabled
         (agent-shell-completion-mode +1))

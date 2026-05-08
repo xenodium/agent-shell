@@ -2681,5 +2681,27 @@ that fallback buffer, potentially starting the new shell in the wrong project."
   ;; Empty input returns empty output.
   (should (equal (agent-shell--sort-sessions-by-recency '()) '())))
 
+(ert-deftest agent-shell--clean-up-tolerates-mode-change-test ()
+  "Test `kill-buffer' succeeds after the major mode is manually changed.
+
+`kill-buffer-hook' is permanent-local, so the buffer-local
+`agent-shell--clean-up' entry survives a mode change,
+and it must handle that cleanly."
+  (let ((shell-buf (generate-new-buffer " *test-shell*")))
+    (unwind-protect
+        (progn
+          (with-current-buffer shell-buf
+            (setq major-mode 'agent-shell-mode)
+            (setq-local agent-shell--state
+                        (agent-shell--make-state :buffer shell-buf))
+            (add-hook 'kill-buffer-hook #'agent-shell--clean-up nil t)
+            (text-mode))
+          (kill-buffer shell-buf)
+          (should-not (buffer-live-p shell-buf)))
+      (when (buffer-live-p shell-buf)
+        (with-current-buffer shell-buf
+          (remove-hook 'kill-buffer-hook #'agent-shell--clean-up t))
+        (kill-buffer shell-buf)))))
+
 (provide 'agent-shell-tests)
 ;;; agent-shell-tests.el ends here
