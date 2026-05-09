@@ -78,13 +78,12 @@ See https://github.com/Endi1/fabrica for details."))
 (cl-defun agent-shell-fabrica-make-client (&key buffer)
   "Create a Fabrica client using BUFFER as context.
 
-Fabrica uses environment variables for provider authentication.
-Set GEMINI_KEY, ANTHROPIC_KEY, or OPENAI_KEY as needed."
+Fabrica loads API keys from its own config file and/or
+environment variables."
   (unless buffer
     (error "Missing required argument: :buffer"))
   (agent-shell--make-acp-client :command (car agent-shell-fabrica-acp-command)
                                 :command-params (cdr agent-shell-fabrica-acp-command)
-                                :environment-variables agent-shell-fabrica-environment
                                 :context-buffer buffer))
 
 (defun agent-shell-fabrica--welcome-message (config)
