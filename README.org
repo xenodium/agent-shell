@@ -79,6 +79,12 @@ We now have a handful of additional packages to extend the =agent-shell= experie
 - [[https://github.com/eddof13/ob-agent-shell][ob-agent-shell]]: Org Babel backend for executing =agent-shell= source blocks.
 - [[https://github.com/Marx-A00/agent-recall][agent-recall]]: Search, browse, and resume =agent-shell= conversation transcripts.
 - [[https://github.com/lgmoneda/agent-shell-pet][agent-shell-pet]]: Codex-like pets that broadcast agent-shell session states.
+* Articles
+- 20Y: [[https://20y.hu/~slink/journal/agent-shell/index.html][Agentic development workflow in Emacs]]
+- Skye: [[https://skyefreeman.com/blog/2026/04/15/how-im-using-llms-with-emacs][How I'm using LLM's via Emacs]].
+- sincebyte: [[https://neoemacs.com/posts/agent-shell-cursor-agent-cli/][Agent Shell Cursor Agent Cli]].
+- Naputo: [[https://blog.n-daisuke897.com/posts/2026-03-01-agent-shell-session-selection/][How to Select Sessions When Starting the agent-shell ACP Client Running on Emacs]]
+- vandee: [[https://www.vandee.art/blog/2026-01-23-my-agent-practice-with-opencode-in-emacs.html][My Agent Practice with OpenCode in Emacs]].
 
 * Icons
 
@@ -855,6 +861,8 @@ Please read through this section before filing issues or feature requests. I won
 - *Your agent-shell config*: Share any relevant =agent-shell= variable settings from your Emacs config.
 - *Profiling data* (for performance issues): Use =M-x profiler-start=, reproduce the issue, then =M-x profiler-report= (and =M-x profiler-stop=). Share the report.
 
+* FAQ
+
 ** Why doesn't =agent-shell= offer all slash commands/skills available in CLI agent?
 
 =agent-shell= can only offer the slash commands/skills advertised by the agent via [[https://agentclientprotocol.com][Agent Client Protocol]]. To view what's exposed by your agent, expand the "Available /commands" section. Is the command you're after missing? Please consider filing a feature-request with the respective agent (ie. Gemini CLI) or their ACP layer (claude-code-acp).
@@ -872,6 +880,8 @@ Agents without ACP support are out of scope for integrating with =agent-shell=. 
 
 Could be the agent itself missing an [[https://agentclientprotocol.com][Agent Client Protocol]] feature, =agent-shell= missing the feature, or both :) So which one is it? It's hard to tell unless we look at [[https://agentclientprotocol.com][Agent Client Protocol]] traffic between the two.
 
+** Is shx supported?
+No. There are reports that [[https://github.com/xenodium/agent-shell/issues/543][it does not work]] with agent-shell.
 ** How do I view/get [[https://agentclientprotocol.com][Agent Client Protocol]] traffic?
 
 1. =M-x agent-shell-toggle-logging= (make sure logging is ON).
