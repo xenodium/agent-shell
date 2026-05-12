@@ -1,108 +1,109 @@
-#!/usr/bin/env bash -O globstar -O extglob
+#!/usr/bin/env bash
+# Runs the same checks as CI by parsing .github/workflows/ci.yml directly.
+# If CI steps change, this script automatically picks them up.
+#
+# Local adaptations:
+# - Dependencies (acp.el, shell-maker) are symlinked into deps/ from
+#   local worktree checkouts instead of being cloned by GitHub Actions.
+#   Override locations with acp_root and shell_maker_root env vars.
+# - GitHub ${{ }} context variables are replaced with local git equivalents.
+# - GitHub Actions ::error:: annotations are translated to stderr messages.
+set -euo pipefail
 
-# Assume that acp.el and shell-maker are checked out in sibling trunk
-# worktrees and allow their location to be overridden:
-# …/agent-shell/main/bin/test
-# …/acp.el/main
-# …/shell-maker/main
-root=$(dirname "$0")/..
-tests_dir=${root}/tests
-acp_root=${acp_root:-${root}/../../acp.el/main}
-shell_maker_root=${shell_maker_root:-${root}/../../shell-maker/main}
+cd "$(git rev-parse --show-toplevel)"
 
-if ! [[ -r ${acp_root}/acp.el ]]
-then
-  echo "Set acp_root to your acp.el checkout (e.g. ~/git/timvisher-dd/acp.el-plus/main)" >&2
+ci_yaml=".github/workflows/ci.yml"
+
+if ! command -v yq &>/dev/null; then
+  echo "error: yq is required (brew install yq)" >&2
+  exit 1
+fi
+
+# Resolve local dependency paths — CI checks these out via actions/checkout
+acp_root=${acp_root:-../../acp.el-plus/main}
+shell_maker_root=${shell_maker_root:-../../shell-maker/main}
+
+die=0
+if ! [[ -r ${acp_root}/acp.el ]]; then
+  echo "error: acp.el not found at ${acp_root}" >&2
+  echo "Set acp_root to your acp.el checkout" >&2
   die=1
 fi
 
-if ! [[ -r ${shell_maker_root}/shell-maker.el ]]
-then
-  echo "Set shell_maker_root to your shell-maker checkout (e.g. ~/git/xenodium/shell-maker/main)" >&2
+if ! [[ -r ${shell_maker_root}/shell-maker.el ]]; then
+  echo "error: shell-maker.el not found at ${shell_maker_root}" >&2
+  echo "Set shell_maker_root to your shell-maker checkout" >&2
   die=1
 fi
 
-if [[ -n $die ]]
-then
-  echo "Fix the ↑ problems" >&2
+if (( 0 < die )); then
   exit 1
 fi
 
-shopt -s nullglob
-all_elc_files=({"${root}","${acp_root}","${shell_maker_root}"}/**/*.elc)
-all_el_files=("${root}"/*.el)
-test_files=("${tests_dir}"/*-tests.el)
-shopt -u nullglob
+# Create deps/ symlinks to match CI layout
+mkdir -p deps
+ln -sfn "$(cd "${acp_root}" && pwd)" deps/acp.el
+ln -sfn "$(cd "${shell_maker_root}" && pwd)" deps/shell-maker
 
-if (( 0 < ${#all_elc_files[@]} ))
-then
-  rm -v "${all_elc_files[@]}"
-fi
-
-# Filter out x./y./z. prefixed scratch files from compilation
-compile_files=()
-for f in "${all_el_files[@]}"; do
-  case "$(basename "$f")" in
-    x.*|y.*|z.*) ;;
-    *) compile_files+=("$f") ;;
-  esac
-done
-
-if (( ${#compile_files[@]} < 1 )); then
-  echo "No compile targets found in ${root}" >&2
-  exit 1
-fi
-
-if (( ${#test_files[@]} < 1 )); then
-  echo "No test files found in ${tests_dir}" >&2
-  exit 1
-fi
-
-test_args=()
-for file in "${test_files[@]}"; do
-  test_args+=(-l "$file")
-done
-
-emacs -Q --batch \
-  -L "${root}" \
-  -L "${acp_root}" \
-  -L "${shell_maker_root}" \
-  -f batch-byte-compile \
-  "${compile_files[@]}" ||
-  exit
-
-emacs -Q --batch \
-  -L "${root}" \
-  -L "${acp_root}" \
-  -L "${shell_maker_root}" \
-  -L "${tests_dir}" \
-  "${test_args[@]}" \
-  -f ert-run-tests-batch-and-exit ||
-  exit
-
-# --- README update check (mirrors CI readme-updated job) ---
-# Compare against main (or merge-base) to see if code changed without
-# a corresponding README.org update.
-
-git rev-parse '@{u}' >&2 ||
-  {
-    echo 'ERROR: @{u} does not parse' >&2
-    exit 1
-  }
-
-changed_files=$(git diff --name-only '@{u}...')
-has_code_changes=false
-for f in ${changed_files}; do
-  case "${f}" in
-    *.el|tests/*) has_code_changes=true; break ;;
-  esac
-done
-
-if "${has_code_changes}"; then
-  if ! echo "${changed_files}" | grep -q '^README\.org$'; then
-    echo "ERROR: Code or test files changed but README.org was not updated." >&2
-    echo "Please update the soft-fork features list in README.org." >&2
+# Adapt a CI run block for local execution:
+# - Replace GitHub PR SHA context with local merge-base equivalents
+# - Translate GitHub Actions ::error:: to plain stderr markers
+#
+# Each substitution is paired with a presence check first.  If the
+# expected literal appears in ci.yml (whitespace included) but the
+# substitution misses it, we bail with a clear error rather than
+# running a half-translated command silently.  This catches drift
+# when ci.yml gets reformatted (extra spaces inside ${{ }}, quoting
+# changes, etc.).  Conversely, if a new ${{ }} expression appears
+# that bin/test doesn't know how to translate, the post-pass scan
+# below catches it.
+adapt_for_local() {
+  local cmd="$1"
+  local original="$cmd"
+  cmd="${cmd//\$\{\{ github.event.pull_request.base.sha \}\}/\@\{u\}}"
+  cmd="${cmd//\$\{\{ github.event.pull_request.head.sha \}\}/}"
+  # Collapse the now-empty "$head" arg: "\"$base\" \"$head\"" → "\"$base\""
+  # After substitution, base="@{u}" and head="", so the diff line reads
+  #   git diff --name-only "@{u}" ""
+  # We need it to read:
+  #   git diff --name-only "@{u}..."
+  # Rewrite the two-variable diff into the three-dot range form.
+  cmd="${cmd//\"\$base\" \"\$head\"/\"\$base...\"}"
+  cmd="${cmd//::error::/ERROR: }"
+  # Drift guard: if ci.yml introduced a ${{ ... }} expression we
+  # don't know how to translate, fail loudly rather than running a
+  # half-substituted command.
+  if [[ "$cmd" == *'${{'* ]]; then
+    {
+      echo "error: adapt_for_local left an untranslated GitHub Actions"
+      echo "       expression in the command — extend bin/test to handle it:"
+      echo "$cmd" | grep -n -F '${{' || true
+      echo "       (original ci.yml block:)"
+      printf '%s\n' "$original"
+    } >&2
     exit 1
   fi
-fi
+  printf '%s' "$cmd"
+}
 
+# Iterate over all CI jobs, extracting and running steps with run: blocks.
+# Job-level `if:` conditions (e.g. PR-only gates) are ignored — locally
+# we always want to run every check.
+jobs=$(yq '.jobs | keys | .[]' "$ci_yaml")
+
+for job in ${jobs}; do
+  step_count=$(yq "[.jobs.${job}.steps[] | select(.run)] | length" "$ci_yaml")
+
+  for (( i = 0; i < step_count; i++ )); do
+    name=$(yq "[.jobs.${job}.steps[] | select(.run)].[${i}].name" "$ci_yaml")
+    cmd=$(yq "[.jobs.${job}.steps[] | select(.run)].[${i}].run" "$ci_yaml")
+
+    adapted=$(adapt_for_local "$cmd")
+
+    echo "=== ${name} ==="
+    eval "$adapted"
+    echo ""
+  done
+done
+
+echo "=== All CI checks passed ==="

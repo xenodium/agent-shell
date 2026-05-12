@@ -36,6 +36,105 @@ jobs:
             fi
           fi
 
+  agent-symlinks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify agent config symlinks
+        run: |
+          ok=true
+          for dir in .claude .codex .gemini; do
+            target=$(readlink "${dir}" 2>/dev/null)
+            if [[ "${target}" != ".agents" ]]; then
+              echo "::error::${dir} should symlink to .agents but points to '${target:-<missing>}'"
+              ok=false
+            fi
+          done
+          for md in CLAUDE.md CODEX.md GEMINI.md; do
+            target=$(readlink "${md}" 2>/dev/null)
+            if [[ "${target}" != "AGENTS.md" ]]; then
+              echo "::error::${md} should symlink to AGENTS.md but points to '${target:-<missing>}'"
+              ok=false
+            fi
+          done
+          if ! [[ -d .agents/commands ]]; then
+            echo "::error::.agents/commands/ directory missing"
+            ok=false
+          fi
+          if [[ "${ok}" != "true" ]]; then
+            exit 1
+          fi
+          echo "All agent config symlinks verified."
+
+  dependency-dag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify require graph is a DAG (no cycles)
+        run: |
+          # Build the set of project-internal modules from *.el filenames.
+          declare -A project_modules
+          for f in *.el; do
+            mod="${f%.el}"
+            project_modules["${mod}"]=1
+          done
+
+          # Parse (require 'foo) from each file and build an adjacency list.
+          # Only track edges where both ends are project-internal.
+          # The regex anchors the (require to whitespace-only line prefix
+          # so semicolon comments and strings can't fake an edge.  It
+          # captures only the first require per line; multi-require lines
+          # are not used in this codebase.
+          declare -A edges  # edges["a"]="b c" means a requires b and c
+          for f in *.el; do
+            mod="${f%.el}"
+            deps=""
+            while IFS= read -r dep; do
+              if [[ -n "${project_modules[$dep]+x}" ]]; then
+                deps="${deps} ${dep}"
+              fi
+            done < <(sed -nE "s/^[[:space:]]*\\(require '([a-zA-Z0-9_-]+)\\).*/\\1/p" "$f")
+            edges["${mod}"]="${deps}"
+          done
+
+          # DFS cycle detection.
+          declare -A color  # white=unvisited, gray=in-stack, black=done
+          found_cycle=""
+          cycle_path=""
+
+          dfs() {
+            local node="$1"
+            local path="$2"
+            color["${node}"]="gray"
+            for neighbor in ${edges["${node}"]}; do
+              if [[ "${color[$neighbor]:-white}" == "gray" ]]; then
+                found_cycle=1
+                cycle_path="${path} -> ${neighbor}"
+                return
+              fi
+              if [[ "${color[$neighbor]:-white}" == "white" ]]; then
+                dfs "${neighbor}" "${path} -> ${neighbor}"
+                if [[ -n "${found_cycle}" ]]; then
+                  return
+                fi
+              fi
+            done
+            color["${node}"]="black"
+          }
+
+          for mod in "${!project_modules[@]}"; do
+            if [[ "${color[$mod]:-white}" == "white" ]]; then
+              dfs "${mod}" "${mod}"
+              if [[ -n "${found_cycle}" ]]; then
+                echo "::error::Dependency cycle detected: ${cycle_path}"
+                exit 1
+              fi
+            fi
+          done
+          echo "Dependency graph is a DAG — no cycles found."
+
   test:
     runs-on: ubuntu-latest
     steps:

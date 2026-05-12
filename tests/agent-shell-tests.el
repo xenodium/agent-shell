@@ -443,10 +443,12 @@
   (let ((sent-request nil)
         (agent-shell--state (list
                              (cons :client 'test-client)
-                             (cons :session (list (cons :id "test-session")))
+                             (cons :session (list (cons :id "test-session")
+                                                  (cons :title nil)))
                              (cons :prompt-capabilities '((:embedded-context . t)))
                              (cons :buffer (current-buffer))
                              (cons :last-entry-type nil)
+                             (cons :last-activity-time nil)
                              (cons :active-requests nil))))
 
     ;; Mock acp-send-request to capture what gets sent;
@@ -479,10 +481,12 @@
   (let ((sent-request nil)
         (agent-shell--state (list
                              (cons :client 'test-client)
-                             (cons :session (list (cons :id "test-session")))
+                             (cons :session (list (cons :id "test-session")
+                                                  (cons :title nil)))
                              (cons :prompt-capabilities '((:embedded-context . t)))
                              (cons :buffer (current-buffer))
                              (cons :last-entry-type nil)
+                             (cons :last-activity-time nil)
                              (cons :active-requests nil))))
 
     ;; Mock build-content-blocks to throw an error;
@@ -526,8 +530,10 @@
         (agent-shell--state (list (cons :buffer (current-buffer))
                                   (cons :event-subscriptions nil)
                                   (cons :client 'test-client)
-                                  (cons :session (list (cons :id "test-session")))
+                                  (cons :session (list (cons :id "test-session")
+                                                  (cons :title nil)))
                                   (cons :last-entry-type nil)
+                                  (cons :last-activity-time nil)
                                   (cons :tool-calls nil)
                                   (cons :idle-notification-timer nil)
                                   (cons :usage (list (cons :total-tokens 0)))))

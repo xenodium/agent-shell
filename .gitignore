@@ -1,4 +1,5 @@
 /.agent-shell/
+/.agents/*.lock
 /deps/
 
 *.elc

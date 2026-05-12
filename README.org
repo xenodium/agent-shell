@@ -6,12 +6,25 @@ A soft fork of [[https://github.com/xenodium/agent-shell][agent-shell]] with ext
 * Features on top of agent-shell
 
 - CI workflow and local test runner ([[https://github.com/timvisher-dd/agent-shell-plus/pull/1][#1]], [[https://github.com/timvisher-dd/agent-shell-plus/pull/6][#6]], [[https://github.com/timvisher-dd/agent-shell-plus/pull/8][#8]])
+  - Byte-compilation of all =.el= files ([[https://github.com/timvisher-dd/agent-shell-plus/pull/1][#1]])
+  - ERT test suite ([[https://github.com/timvisher-dd/agent-shell-plus/pull/1][#1]])
+  - README update check when code changes ([[https://github.com/timvisher-dd/agent-shell-plus/pull/4][#4]])
+  - Dependency DAG check (=require= graph must be acyclic) ([[https://github.com/timvisher-dd/agent-shell-plus/pull/7][#7]])
 - Desktop notifications when the prompt is idle and waiting for input ([[https://github.com/timvisher-dd/agent-shell-plus/pull/2][#2]], [[https://github.com/timvisher-dd/agent-shell-plus/pull/8][#8]])
 - Per-shell debug logging infrastructure ([[https://github.com/timvisher-dd/agent-shell-plus/pull/2][#2]])
 - Regression tests for shell buffer selection ordering ([[https://github.com/timvisher-dd/agent-shell-plus/pull/3][#3]])
 - CI check that README.org is updated when code changes ([[https://github.com/timvisher-dd/agent-shell-plus/pull/4][#4]])
 - Usage tests and defense against ACP =used > size= bug ([[https://github.com/timvisher-dd/agent-shell-plus/pull/5][#5]])
 - Defensive guards in idle-timer functions so they no-op when shell state is missing instead of erroring ([[https://github.com/timvisher-dd/agent-shell-plus/pull/10][#10]])
+- Streaming tool output with dedup: advertise =_meta.terminal_output= capability, handle incremental chunks from codex-acp and batch results from claude-agent-acp, strip =<persisted-output>= tags, fix O(n²) rendering, and partial-overlap thought dedup ([[https://github.com/timvisher-dd/agent-shell-plus/pull/7][#7]])
+- Append-in-place rendering for streamed fragments: tokens append to existing fragment bodies without rebuilding, with boundary-newline normalization so paragraph-break chunks don't compound newlines and an empty =agent_message_chunk= mid-stream is rewritten to a paragraph break so two content blocks in the same turn don't run together ([[https://github.com/timvisher-dd/agent-shell-plus/pull/7][#7]])
+- DWIM context insertion: inserted context lands at the prompt and fragment updates no longer drag process-mark past it ([[https://github.com/timvisher-dd/agent-shell-plus/pull/7][#7]])
+- Runtime buffer invariant checking with event tracing and violation debug bundles, including head + tail snapshots for long buffers ([[https://github.com/timvisher-dd/agent-shell-plus/pull/7][#7]])
+- Render =session/update= chunks streamed after =session/prompt= resolves so a Claude Code Stop-hook bounce-and-regen turn no longer freezes the buffer mid-conversation
+- Surface raw claude-agent-acp SDK messages (including hook lifecycle events) in the debug log when =agent-shell-logging-enabled= is set, so Stop-hook =decision:block= cycles and other hook-driven turn behavior are visible
+- Tunable markdown-overlay debounce via =agent-shell-markdown-overlay-debounce-delay= (default 0.15s) for slow terminals or streaming-debug sessions
+- Bug fix for upstream =shell-maker-define-major-mode= mode-map quoting — without it, every =agent-shell-mode= invocation emits =void-function keymap= because the bare keymap value gets spliced into a backquote that re-evaluates =(keymap ...)= as a function call (worth upstreaming separately)
+- Live-validate workflow doc (=.agents/commands/live-validate.md=) describing the batch-mode rendering verification used for rendering-pipeline changes
 
 -----
 

@@ -27,6 +27,8 @@
 
 (declare-function agent-shell-cwd "agent-shell")
 
+(defvar agent-shell-text-file-capabilities)
+
 (defun agent-shell-devcontainer--get-workspace-path (cwd)
   "Return devcontainer workspaceFolder for CWD, or default value if none found.
 

@@ -245,3 +245,24 @@ Tests live under the tests directory:
 Opening any file under the =tests= directory will load the =agent-shell-run-all-tests= command.
 
 Run tests with =M-x agent-shell-run-all-tests=.
+
+*** From the command line
+
+=bin/test= runs the full ERT suite in batch mode.  By default it
+expects =acp.el= and =shell-maker= to be checked out as sibling
+worktrees (e.g. =…/acp.el/main= and =…/shell-maker/main= next to
+=…/agent-shell/main=).  Override the paths with environment variables
+if your layout differs:
+
+#+begin_src bash
+  acp_root=~/path/to/acp.el \
+  shell_maker_root=~/path/to/shell-maker \
+    bin/test
+#+end_src
+
+The script validates that both dependencies are readable and exits
+with a descriptive error if either is missing.
+
+The script also requires =yq= (for parsing the GitHub Actions workflow
+to derive the byte-compile and ERT invocations).  Install with
+=brew install yq= on macOS.
