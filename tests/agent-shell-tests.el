@@ -1614,17 +1614,16 @@ code block content
 (ert-deftest agent-shell--outgoing-request-decorator-reaches-client ()
   "Test that :outgoing-request-decorator from state reaches the ACP client."
   (with-temp-buffer
-    (let* ((my-decorator (lambda (request) request))
-           (agent-shell--state (agent-shell--make-state
-                                :agent-config nil
-                                :buffer (current-buffer)
-                                :client-maker (lambda (_buffer)
-                                                (agent-shell--make-acp-client
-                                                 :command "cat"
-                                                 :context-buffer (current-buffer)))
-                                :outgoing-request-decorator my-decorator)))
-      ;; setq-local needed for buffer-local-value in agent-shell--make-acp-client
-      (setq-local agent-shell--state agent-shell--state)
+    (let ((my-decorator (lambda (request) request)))
+      (setq-local agent-shell--state
+                  (agent-shell--make-state
+                   :agent-config nil
+                   :buffer (current-buffer)
+                   :client-maker (lambda (_buffer)
+                                   (agent-shell--make-acp-client
+                                    :command "cat"
+                                    :context-buffer (current-buffer)))
+                   :outgoing-request-decorator my-decorator))
       (let ((client (funcall (map-elt agent-shell--state :client-maker)
                              (current-buffer))))
         (should (eq (map-elt client :outgoing-request-decorator) my-decorator))))))
@@ -1638,16 +1637,16 @@ code block content
                           (map-put! request :params
                                     (cons '(_meta . ((systemPrompt . ((append . "extra instructions")))))
                                           (map-elt request :params))))
-                        request))
-           (agent-shell--state (agent-shell--make-state
-                                :agent-config nil
-                                :buffer (current-buffer)
-                                :client-maker (lambda (_buffer)
-                                                (agent-shell--make-acp-client
-                                                 :command "cat"
-                                                 :context-buffer (current-buffer)))
-                                :outgoing-request-decorator decorator)))
-      (setq-local agent-shell--state agent-shell--state)
+                        request)))
+      (setq-local agent-shell--state
+                  (agent-shell--make-state
+                   :agent-config nil
+                   :buffer (current-buffer)
+                   :client-maker (lambda (_buffer)
+                                   (agent-shell--make-acp-client
+                                    :command "cat"
+                                    :context-buffer (current-buffer)))
+                   :outgoing-request-decorator decorator))
       (let ((client (funcall (map-elt agent-shell--state :client-maker)
                              (current-buffer))))
         ;; Give client a fake process so acp--request-sender proceeds
@@ -1862,7 +1861,9 @@ code block content
     (cl-letf (((symbol-function 'agent-shell--state)
                (lambda () agent-shell--state))
               ((symbol-function 'derived-mode-p)
-               (lambda (&rest _) t)))
+               (lambda (&rest _) t))
+              ((symbol-function 'message)
+               (lambda (&rest _) nil)))
       (agent-shell-copy-session-id)
       (should (equal (current-kill 0) "test-session-id")))))
 
@@ -2463,6 +2464,114 @@ code block content
           (should (equal (buffer-string) "")))
         (kill-buffer log-buf)))))
 
+(ert-deftest agent-shell--session-new-meta-opts-in-when-logging-and-claude-code-test ()
+  "When logging is on and identifier is claude-code, request raw SDK messages."
+  (let ((agent-shell-logging-enabled t)
+        (state '((:agent-config . ((:identifier . claude-code))))))
+    (cl-letf (((symbol-function 'agent-shell--state)
+               (lambda () state)))
+      (should (equal (agent-shell--session-new-meta)
+                     '((claudeCode . ((emitRawSDKMessages . t)))))))))
+
+(ert-deftest agent-shell--session-new-meta-nil-when-logging-disabled-test ()
+  "Without logging enabled, no _meta is requested even for claude-code."
+  (let ((agent-shell-logging-enabled nil)
+        (state '((:agent-config . ((:identifier . claude-code))))))
+    (cl-letf (((symbol-function 'agent-shell--state)
+               (lambda () state)))
+      (should-not (agent-shell--session-new-meta)))))
+
+(ert-deftest agent-shell--session-new-meta-nil-for-non-claude-agents-test ()
+  "Other agent identifiers don't receive the claude-specific opt-in."
+  (let ((agent-shell-logging-enabled t)
+        (state '((:agent-config . ((:identifier . gemini))))))
+    (cl-letf (((symbol-function 'agent-shell--state)
+               (lambda () state)))
+      (should-not (agent-shell--session-new-meta)))))
+
+(ert-deftest agent-shell--on-notification-logs-claude-sdk-message-test ()
+  "`_claude/sdkMessage' notifications are pretty-printed into the log buffer."
+  (with-temp-buffer
+    (rename-buffer "*agent-shell sdkmsg test*" t)
+    (let* ((log-buf (agent-shell--make-log-buffer (current-buffer)))
+           (agent-shell-logging-enabled t)
+           (state (list (cons :buffer (current-buffer))
+                        (cons :log-buffer log-buf)
+                        (cons :last-activity-time nil))))
+      (cl-letf (((symbol-function 'agent-shell--state)
+                 (lambda () state)))
+        (agent-shell--on-notification
+         :state state
+         :acp-notification
+         '((method . "_claude/sdkMessage")
+           (params . ((sessionId . "sess-1")
+                      (message . ((type . "system")
+                                  (subtype . "hook_response")
+                                  (hook_name . "Stop")
+                                  (output . "{\"decision\":\"block\"}")))))))
+        (with-current-buffer log-buf
+          (should (string-match-p "_claude/sdkMessage >" (buffer-string)))
+          (should (string-match-p "hook_response" (buffer-string)))
+          (should (string-match-p "decision.*block" (buffer-string))))
+        (kill-buffer log-buf)))))
+
+(ert-deftest agent-shell--on-notification-skips-claude-sdk-message-when-logging-disabled-test ()
+  "With logging off, `_claude/sdkMessage' is silently dropped."
+  (with-temp-buffer
+    (rename-buffer "*agent-shell sdkmsg disabled test*" t)
+    (let* ((log-buf (agent-shell--make-log-buffer (current-buffer)))
+           (agent-shell-logging-enabled nil)
+           (state (list (cons :buffer (current-buffer))
+                        (cons :log-buffer log-buf)
+                        (cons :last-activity-time nil))))
+      (cl-letf (((symbol-function 'agent-shell--state)
+                 (lambda () state)))
+        (agent-shell--on-notification
+         :state state
+         :acp-notification
+         '((method . "_claude/sdkMessage")
+           (params . ((sessionId . "sess-1")
+                      (message . ((type . "system")
+                                  (subtype . "hook_started")))))))
+        (with-current-buffer log-buf
+          (should (equal (buffer-string) "")))
+        (kill-buffer log-buf)))))
+
+(ert-deftest agent-shell--on-notification-killed-buffer-test ()
+  "Notifications addressed to a killed shell buffer are dropped silently.
+Handlers downstream call `with-current-buffer' on the same buffer
+and would error if the cond ran outside the live-buffer guard."
+  (let* ((shell-buf (generate-new-buffer "*agent-shell killed-buffer test*"))
+         (state (list (cons :buffer shell-buf)
+                      (cons :last-activity-time nil))))
+    (kill-buffer shell-buf)
+    (should-not (buffer-live-p shell-buf))
+    ;; Must return nil rather than signalling.
+    (should-not (agent-shell--on-notification
+                 :state state
+                 :acp-notification
+                 '((method . "session/update")
+                   (params . ((update . ((sessionUpdate . "agent_message_chunk")
+                                         (content . ((text . "hi")))))))))) ))
+
+(ert-deftest agent-shell--schedule-markdown-overlays-survives-buffer-kill-test ()
+  "Idle timer fired after buffer kill must not signal.
+The timer captures the buffer in its closure; the buffer-live-p
+guard inside the timer body short-circuits when the user kills
+the shell before the debounce fires."
+  (let* ((buffer (generate-new-buffer "*agent-shell overlay-kill test*"))
+         (range (with-current-buffer buffer
+                  (insert "hello")
+                  `((:body . ((:start . ,(point-min))
+                              (:end . ,(point-max))))))))
+    (agent-shell--schedule-markdown-overlays buffer range)
+    (let ((timer (with-current-buffer buffer agent-shell--markdown-overlay-timer)))
+      (should (timerp timer))
+      (kill-buffer buffer)
+      (should-not (buffer-live-p buffer))
+      ;; Firing the timer with a dead buffer must not signal.
+      (timer-event-handler timer))))
+
 (ert-deftest agent-shell--on-request-sends-error-for-unhandled-method-test ()
   "Test `agent-shell--on-request' responds with an error for unknown methods."
   (with-temp-buffer
@@ -2708,6 +2817,128 @@ and it must handle that cleanly."
         (with-current-buffer shell-buf
           (remove-hook 'kill-buffer-hook #'agent-shell--clean-up t))
         (kill-buffer shell-buf)))))
+
+(defvar agent-shell-tests--bootstrap-messages
+  '(((:direction . outgoing) (:kind . request)
+     (:object (jsonrpc . "2.0") (method . "initialize") (id . 1)
+              (params (protocolVersion . 1)
+                      (clientCapabilities
+                       (fs (readTextFile . :false)
+                           (writeTextFile . :false))))))
+    ((:direction . incoming) (:kind . response)
+     (:object (jsonrpc . "2.0") (id . 1)
+              (result (protocolVersion . 1)
+                      (authMethods
+                       . [((id . "gemini-api-key")
+                           (name . "Use Gemini API key")
+                           (description . :null))])
+                      (agentCapabilities
+                       (loadSession . :false)
+                       (promptCapabilities (image . t))))))
+    ((:direction . outgoing) (:kind . request)
+     (:object (jsonrpc . "2.0") (method . "authenticate") (id . 2)
+              (params (methodId . "gemini-api-key"))))
+    ((:direction . incoming) (:kind . response)
+     (:object (jsonrpc . "2.0") (id . 2) (result . :null)))
+    ((:direction . outgoing) (:kind . request)
+     (:object (jsonrpc . "2.0") (method . "session/new") (id . 3)
+              (params (cwd . "/tmp") (mcpServers . []))))
+    ((:direction . incoming) (:kind . response)
+     (:object (jsonrpc . "2.0") (id . 3)
+              (result (sessionId . "fake-session-for-test")))))
+  "Minimal ACP bootstrap traffic for insertion tests.")
+
+(defun agent-shell-tests--assert-context-insertion (context-text)
+  "Insert CONTEXT-TEXT into a fake shell and verify buffer invariants.
+
+Asserts:
+ - Point lands at the prompt, not after the context.
+ - Context sits between process-mark and point-max.
+ - A subsequent fragment update does not drag process-mark
+   past the context."
+  (require 'agent-shell-fakes)
+  (let* ((agent-shell-session-strategy 'new)
+         (shell-buffer (agent-shell-fakes-start-agent
+                        agent-shell-tests--bootstrap-messages)))
+    (unwind-protect
+        (with-current-buffer shell-buffer
+          (let ((prompt-end (point-max))
+                (proc (get-buffer-process (current-buffer))))
+            (agent-shell--insert-to-shell-buffer :text context-text
+                                                 :no-focus t
+                                                 :shell-buffer shell-buffer)
+            ;; Point must be at the prompt so the user types before context.
+            (should (= prompt-end (point)))
+            ;; Context text sits between process-mark and point-max.
+            (let ((pmark (marker-position (process-mark proc))))
+              (should (string-match-p
+                       (regexp-quote context-text)
+                       (buffer-substring-no-properties pmark (point-max)))))
+            ;; Fragment update must not drag process-mark past context.
+            (let ((pmark-before (marker-position (process-mark proc))))
+              (agent-shell--update-fragment
+               :state agent-shell--state
+               :namespace-id "bootstrapping"
+               :block-id "test-fragment"
+               :label-left "Test"
+               :body "fragment body")
+              (should (= pmark-before
+                         (marker-position (process-mark proc))))
+              (should (string-match-p
+                       (regexp-quote context-text)
+                       (buffer-substring-no-properties
+                        (marker-position (process-mark proc))
+                        (point-max)))))))
+      (when (buffer-live-p shell-buffer)
+        (kill-buffer shell-buffer)))))
+
+(ert-deftest agent-shell--insert-context-line-source-test ()
+  "Context from `line' source (e.g. magit status line)."
+  (agent-shell-tests--assert-context-insertion
+   "Unstaged changes (2)"))
+
+(ert-deftest agent-shell--insert-context-region-source-test ()
+  "Context from `region' source with file path and code."
+  (agent-shell-tests--assert-context-insertion
+   "agent-shell.el:42-50
+
+(defun my-function ()
+  (let ((x 1))
+    (message \"hello %d\" x)))"))
+
+(ert-deftest agent-shell--insert-context-files-source-test ()
+  "Context from `files' source (file path)."
+  (agent-shell-tests--assert-context-insertion
+   "/home/user/project/src/main.el"))
+
+(ert-deftest agent-shell--insert-context-error-source-test ()
+  "Context from `error' source (flymake/flycheck diagnostic)."
+  (agent-shell-tests--assert-context-insertion
+   "main.el:17:5: error: void-function `foobar'"))
+
+(ert-deftest agent-shell--insert-context-multiline-markdown-test ()
+  "Context containing markdown fences and backticks."
+  (agent-shell-tests--assert-context-insertion
+   "```elisp
+(defun hello ()
+  (message \"world\"))
+```"))
+
+(ert-deftest agent-shell-filter-buffer-substring-strips-hidden-markup ()
+  "Copying text should exclude markdown syntax hidden by overlays."
+  (with-temp-buffer
+    (insert "```emacs-lisp\n(defun foo (x)\n  x)\n```\n")
+    (markdown-overlays-put)
+    (let ((result (agent-shell--filter-buffer-substring (point-min) (point-max))))
+      (should (equal result "(defun foo (x)\n  x)\n\n")))))
+
+(ert-deftest agent-shell-filter-buffer-substring-strips-inline-code-backticks ()
+  "Copying inline code should exclude the surrounding backticks."
+  (with-temp-buffer
+    (insert "Use `foo-bar` for that.")
+    (markdown-overlays-put)
+    (let ((result (agent-shell--filter-buffer-substring (point-min) (point-max))))
+      (should (equal result "Use foo-bar for that.")))))
 
 (provide 'agent-shell-tests)
 ;;; agent-shell-tests.el ends here
