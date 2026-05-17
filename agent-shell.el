@@ -48,6 +48,7 @@
 (require 'map)
 (unless (require 'markdown-overlays nil 'noerror)
   (error "Please update 'shell-maker' to v0.91.2 or newer"))
+(require 'markdown-text nil :noerror)
 (require 'agent-shell-anthropic)
 (require 'agent-shell-auggie)
 (require 'agent-shell-cline)
@@ -96,6 +97,33 @@
 ;; Declare as special so byte-compilation doesn't turn `let' bindings into
 ;; lexical bindings (which would not affect `auto-insert' behavior).
 (defvar auto-insert)
+
+(defvar agent-shell--experimental-renderer nil
+  "When non-nil, render markdown via `markdown-text'.
+
+Internal/experimental.  `markdown-text' replaces markup
+characters with propertized text in place (no overlays), which
+avoids the redisplay overhead of large overlay counts but
+destroys the source markdown.  Defaults to nil (keep current
+`markdown-overlays' behaviour).
+
+Has no effect when `markdown-text' isn't installed.")
+
+(defun agent-shell--render-markdown ()
+  "Render markdown in current (narrowed) buffer.
+
+Dispatches to `markdown-text-replace-markup' when
+`agent-shell--experimental-renderer' is non-nil and the package
+is loadable; otherwise falls back to `markdown-overlays-put'.
+
+`markdown-overlays-*' config bindings around the call still apply
+in the overlay branch; they're intentionally ignored by
+`markdown-text', which always highlights blocks and renders
+resolvable images."
+  (if (and agent-shell--experimental-renderer
+           (fboundp 'markdown-text-replace-markup))
+      (markdown-text-replace-markup)
+    (markdown-overlays-put)))
 
 (defcustom agent-shell-permission-icon "⚠"
   "Icon displayed when shell commands require permission to execute.
@@ -3029,7 +3057,7 @@ by default, RENDER-BODY-IMAGES to enable inline image rendering in body."
               (narrow-to-region body-start body-end)
               (let ((markdown-overlays-highlight-blocks agent-shell-highlight-blocks)
                     (markdown-overlays-render-images render-body-images))
-                (markdown-overlays-put))))
+                (agent-shell--render-markdown))))
           ;; Note: For now, we're skipping applying markdown overlays
           ;; on left labels as they currently carry propertized text
           ;; for statuses (ie. boxed).
@@ -3041,7 +3069,7 @@ by default, RENDER-BODY-IMAGES to enable inline image rendering in body."
               (narrow-to-region label-right-start label-right-end)
               (let ((markdown-overlays-highlight-blocks agent-shell-highlight-blocks)
                     (markdown-overlays-render-images nil))
-                (markdown-overlays-put))))
+                (agent-shell--render-markdown))))
           (when auto-scroll
             (goto-char (point-max)))))))
   (with-current-buffer (map-elt state :buffer)
@@ -3087,7 +3115,7 @@ by default, RENDER-BODY-IMAGES to enable inline image rendering in body."
                       (body-end (map-nested-elt range '(:body :end))))
              (narrow-to-region body-start body-end)
              (let ((markdown-overlays-highlight-blocks agent-shell-highlight-blocks))
-               (markdown-overlays-put))
+               (agent-shell--render-markdown))
              (widen))
            ;;
            ;; Note: For now, we're skipping applying markdown overlays
@@ -3099,7 +3127,7 @@ by default, RENDER-BODY-IMAGES to enable inline image rendering in body."
                       (label-right-end (map-nested-elt range '(:label-right :end))))
              (narrow-to-region label-right-start label-right-end)
              (let ((markdown-overlays-highlight-blocks agent-shell-highlight-blocks))
-               (markdown-overlays-put))
+               (agent-shell--render-markdown))
              (widen)))
          (run-hook-with-args 'agent-shell-section-functions range)))
       (unless auto-scroll
@@ -5309,7 +5337,7 @@ inserted into the shell buffer prompt."
 ```" (with-current-buffer output-buffer
        (buffer-string))))))
                     (let ((markdown-overlays-highlight-blocks agent-shell-highlight-blocks))
-                      (markdown-overlays-put))
+                      (agent-shell--render-markdown))
                     (when (buffer-live-p output-buffer)
                       (kill-buffer output-buffer)))))))
     (set-process-query-on-exit-flag proc nil)
@@ -6047,7 +6075,7 @@ Returns an alist with insertion details or nil otherwise:
                 (narrow-to-region insert-start insert-end)
                 (let ((markdown-overlays-highlight-blocks agent-shell-highlight-blocks)
                       (markdown-overlays-render-images nil))
-                  (markdown-overlays-put))))
+                  (agent-shell--render-markdown))))
             (when submit
               (shell-maker-submit)))
           `((:buffer . ,shell-buffer)
