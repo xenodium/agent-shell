@@ -100,12 +100,11 @@ O(accumulated-body).  Label-only updates leave the body untouched."
                 (let* ((state (get-text-property (prop-match-beginning match)
                                                  'agent-shell-ui-state))
                        (collapsed (map-elt state :collapsed))
-                       (block-end (prop-match-end match))
                        (existing-body-range
                         (agent-shell-ui--nearest-range-matching-property
                          :property 'agent-shell-ui-section :value 'body
                          :from (prop-match-beginning match)
-                         :to block-end)))
+                         :to (prop-match-end match))))
                   (setq block-start (prop-match-beginning match))
                   (save-excursion
                     (goto-char block-start)
@@ -131,11 +130,19 @@ O(accumulated-body).  Label-only updates leave the body untouched."
                      ;; block — fall back to delete-and-regenerate so the
                      ;; indicator transitions from placeholder to triangle
                      ;; and the labels↔body separator is inserted.  Labels
-                     ;; are recovered from the buffer (no cache).
+                     ;; are recovered from the buffer (no cache).  The block
+                     ;; extent is re-derived from the buffer here because
+                     ;; `surgical-replace-label' may have changed label
+                     ;; length, leaving the original `prop-match-end' stale.
                      (t
-                      (let* ((existing-labels
+                      (let* ((current-block-range
+                              (agent-shell-ui--block-range :position block-start))
+                             (current-block-end
+                              (or (map-elt current-block-range :end)
+                                  (prop-match-end match)))
+                             (existing-labels
                               (agent-shell-ui--read-fragment-labels
-                               (prop-match-beginning match) block-end))
+                               block-start current-block-end))
                              (final-model
                               (list (cons :namespace-id namespace-id)
                                     (cons :block-id (map-elt model :block-id))
@@ -146,7 +153,7 @@ O(accumulated-body).  Label-only updates leave the body untouched."
                                           (or new-label-right
                                               (map-elt existing-labels :label-right)))
                                     (cons :body new-body))))
-                        (delete-region block-start block-end)
+                        (delete-region block-start current-block-end)
                         (goto-char block-start)
                         (agent-shell-ui--insert-fragment
                          final-model qualified-id (not collapsed) navigation)))))
