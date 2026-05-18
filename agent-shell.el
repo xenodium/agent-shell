@@ -3003,9 +3003,11 @@ by default, RENDER-BODY-IMAGES to enable inline image rendering in body."
             (when-let ((body-start (map-nested-elt range '(:body :start)))
                        (body-end (map-nested-elt range '(:body :end))))
               (narrow-to-region body-start body-end)
-              (let ((markdown-overlays-highlight-blocks agent-shell-highlight-blocks)
-                    (markdown-overlays-render-images render-body-images))
-                (markdown-overlays-put))))
+              ;; Skip overlays when body is collapsed.
+              (unless (text-property-any (point-min) (point-max) 'invisible t)
+                (let ((markdown-overlays-highlight-blocks agent-shell-highlight-blocks)
+                      (markdown-overlays-render-images render-body-images))
+                  (markdown-overlays-put)))))
           ;; Note: For now, we're skipping applying markdown overlays
           ;; on left labels as they currently carry propertized text
           ;; for statuses (ie. boxed).
@@ -3053,13 +3055,15 @@ by default, RENDER-BODY-IMAGES to enable inline image rendering in body."
            ;; `agent-shell-next-item' and `agent-shell-previous-item'.
            (add-text-properties (or padding-start block-start)
                                 (or padding-end block-end) '(field output)))
-         ;; Apply markdown overlay to body.
-         (when-let ((body-start (map-nested-elt range '(:body :start)))
-                    (body-end (map-nested-elt range '(:body :end))))
-           (narrow-to-region body-start body-end)
-           (let ((markdown-overlays-highlight-blocks agent-shell-highlight-blocks))
-             (markdown-overlays-put))
-           (widen))
+          ;; Apply markdown overlay to body.
+          (when-let ((body-start (map-nested-elt range '(:body :start)))
+                     (body-end (map-nested-elt range '(:body :end))))
+            (narrow-to-region body-start body-end)
+            ;; Skip overlays when body is collapsed.
+            (unless (text-property-any (point-min) (point-max) 'invisible t)
+              (let ((markdown-overlays-highlight-blocks agent-shell-highlight-blocks))
+                (markdown-overlays-put)))
+            (widen))
          ;;
          ;; Note: For now, we're skipping applying markdown overlays
          ;; on left labels as they currently carry propertized text

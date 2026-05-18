@@ -529,7 +529,13 @@ When NO-UNDO is non-nil, disable undo recording."
                              (point) indicator-properties)
         (map-put! state :collapsed new-collapsed-state)
         (put-text-property (map-elt block :start)
-                           (map-elt block :end) 'agent-shell-ui-state state)))))
+                           (map-elt block :end) 'agent-shell-ui-state state)
+        ;; We skip markdown overlays on incoming msg when collapsed, so do it here.
+        (unless new-collapsed-state
+          (save-restriction
+            (narrow-to-region (map-elt body :start) (map-elt body :end))
+            (let ((markdown-overlays-highlight-blocks agent-shell-highlight-blocks))
+              (markdown-overlays-put))))))))
 
 (defun agent-shell-ui-collapse-fragment-by-id (namespace-id block-id)
   "Collapse fragment with NAMESPACE-ID and BLOCK-ID."
