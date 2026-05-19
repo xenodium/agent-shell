@@ -1354,13 +1354,21 @@ Inverse of `agent-shell-markdown-table-next-cell'."
 DIRECTION is `:forward' or `:backward'.  Signals `user-error' when
 there's no cell in that direction."
   (let* ((cells (agent-shell-markdown-table--cell-starts))
-         (idx (or (cl-position-if (lambda (c) (<= c (point))) cells
-                                  :from-end t)
-                  -1))
-         (target (if (eq direction :forward) (1+ idx) (1- idx))))
-    (if (and cells (<= 0 target) (< target (length cells)))
-        (goto-char (nth target cells))
-      (user-error "No more cells left"))))
+         ;; Largest cell-start index whose position is <= point — the
+         ;; cell currently containing point.  -1 means point is before
+         ;; the first cell.  CELLS is sorted ascending so we just walk
+         ;; it tracking the last index that still satisfies the bound.
+         (point-pos (point))
+         (current -1)
+         (i 0))
+    (dolist (c cells)
+      (when (<= c point-pos)
+        (setq current i))
+      (setq i (1+ i)))
+    (let ((target (if (eq direction :forward) (1+ current) (1- current))))
+      (if (and cells (<= 0 target) (< target (length cells)))
+          (goto-char (nth target cells))
+        (user-error "No more cells left")))))
 
 (defun agent-shell-markdown-table--cell-starts ()
   "Return a sorted list of cell-start positions in the table at point.
