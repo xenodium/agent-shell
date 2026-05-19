@@ -41,6 +41,13 @@
   "A hash table used to save sui content like body.
 This avoids duplicating body content in text properties which is more costly.")
 
+(defvar agent-shell-ui-post-toggle-fragment-at-point-functions nil
+  "Hook called after toggling a fragment at point.
+Each function is called with three arguments:
+  BLOCK - the block range alist with :start and :end
+  BODY - the body range alist with :start and :end
+  COLLAPSED - non-nil if the fragment is now collapsed")
+
 (cl-defun agent-shell-ui-make-fragment-model (&key (namespace-id "global") (block-id "1") label-left label-right body)
   "Create a fragment model alist.
 NAMESPACE-ID, BLOCK-ID, LABEL-LEFT, LABEL-RIGHT, and BODY are the keys."
@@ -530,12 +537,8 @@ When NO-UNDO is non-nil, disable undo recording."
         (map-put! state :collapsed new-collapsed-state)
         (put-text-property (map-elt block :start)
                            (map-elt block :end) 'agent-shell-ui-state state)
-        ;; We skip markdown overlays on incoming msg when collapsed, so do it here.
-        (unless new-collapsed-state
-          (save-restriction
-            (narrow-to-region (map-elt body :start) (map-elt body :end))
-            (let ((markdown-overlays-highlight-blocks agent-shell-highlight-blocks))
-              (markdown-overlays-put))))))))
+        (run-hook-with-args 'agent-shell-ui-post-toggle-fragment-at-point-functions
+                            block body new-collapsed-state)))))
 
 (defun agent-shell-ui-collapse-fragment-by-id (namespace-id block-id)
   "Collapse fragment with NAMESPACE-ID and BLOCK-ID."

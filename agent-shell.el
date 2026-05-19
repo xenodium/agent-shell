@@ -244,6 +244,15 @@ See https://github.com/xenodium/agent-shell/issues/119"
   :type 'boolean
   :group 'agent-shell)
 
+(defun agent-shell--apply-markdown-overlays-on-body-expand (_block body collapsed)
+  "Apply markdown overlays when BODY is expanded (COLLAPSED is nil).
+Intended for use with `agent-shell-ui-post-toggle-fragment-at-point-functions'."
+  (unless collapsed
+    (save-restriction
+      (narrow-to-region (map-elt body :start) (map-elt body :end))
+      (let ((markdown-overlays-highlight-blocks agent-shell-highlight-blocks))
+        (markdown-overlays-put)))))
+
 (defcustom agent-shell-confirm-interrupt t
   "Whether to prompt for confirmation before interrupting.
 
@@ -2816,6 +2825,8 @@ variable (see makunbound)"))
       (add-hook 'kill-buffer-hook #'agent-shell--clean-up nil t)
       (add-hook 'change-major-mode-hook #'agent-shell--clean-up nil t)
       (agent-shell-ui-mode +1)
+      (add-hook 'agent-shell-ui-post-toggle-fragment-at-point-functions
+                #'agent-shell--apply-markdown-overlays-on-body-expand nil t)
       (when agent-shell-file-completion-enabled
         (agent-shell-completion-mode +1))
       (agent-shell--setup-modeline)
