@@ -49,7 +49,7 @@
 (require 'map)
 (unless (require 'markdown-overlays nil 'noerror)
   (error "Please update 'shell-maker' to v0.91.2 or newer"))
-(require 'markdown-text nil :noerror)
+(require 'agent-shell-markdown)
 (require 'agent-shell-anthropic)
 (require 'agent-shell-auggie)
 (require 'agent-shell-cline)
@@ -100,30 +100,27 @@
 (defvar auto-insert)
 
 (defvar agent-shell--experimental-renderer nil
-  "When non-nil, render markdown via `markdown-text'.
+  "When non-nil, render markdown via `agent-shell-markdown'.
 
-Internal/experimental.  `markdown-text' replaces markup
+Internal/experimental.  `agent-shell-markdown' replaces markup
 characters with propertized text in place (no overlays), which
 avoids the redisplay overhead of large overlay counts but
 destroys the source markdown.  Defaults to nil (keep current
-`markdown-overlays' behaviour).
-
-Has no effect when `markdown-text' isn't installed.")
+`markdown-overlays' behaviour).")
 
 (defun agent-shell--render-markdown ()
   "Render markdown in current (narrowed) buffer.
 
-Dispatches to `markdown-text-replace-markup' when
-`agent-shell--experimental-renderer' is non-nil and the package
-is loadable; otherwise falls back to `markdown-overlays-put'.
+Dispatches to `agent-shell-markdown-replace-markup' when
+`agent-shell--experimental-renderer' is non-nil; otherwise falls
+back to `markdown-overlays-put'.
 
 `markdown-overlays-*' config bindings around the call still apply
 in the overlay branch; they're intentionally ignored by
-`markdown-text', which always highlights blocks and renders
+`agent-shell-markdown', which always highlights blocks and renders
 resolvable images."
-  (if (and agent-shell--experimental-renderer
-           (fboundp 'markdown-text-replace-markup))
-      (markdown-text-replace-markup)
+  (if agent-shell--experimental-renderer
+      (agent-shell-markdown-replace-markup)
     (markdown-overlays-put)))
 
 (defcustom agent-shell-permission-icon "⚠"
@@ -3115,7 +3112,7 @@ by default, RENDER-BODY-IMAGES to enable inline image rendering in body."
              ;; Apply markdown overlay to body.  `inhibit-read-only'
              ;; must wrap the render call too — chars in the body
              ;; carry `read-only t' from `agent-shell-ui--insert-fragment',
-             ;; and `markdown-text' modifies buffer chars (unlike the
+             ;; and `agent-shell-markdown' modifies buffer chars (unlike the
              ;; overlay renderer which only adds overlays).
              (when-let ((body-start (map-nested-elt range '(:body :start)))
                         (body-end (map-nested-elt range '(:body :end))))

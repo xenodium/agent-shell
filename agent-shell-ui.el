@@ -69,7 +69,7 @@ For existing blocks, the current expansion state is preserved unless overridden.
 
 Updates to existing blocks are applied surgically per section: a body
 append inserts the new chunk at the end of the body region without
-disturbing already-rendered content, so `markdown-text' frozen ranges
+disturbing already-rendered content, so `agent-shell-markdown' frozen ranges
 stay intact and streaming append is O(new-chunk) rather than
 O(accumulated-body).  Label-only updates leave the body untouched."
   (let* ((window (get-buffer-window (current-buffer)))
@@ -259,7 +259,7 @@ trailing-whitespace tail."
 
 (defun agent-shell-ui--surgical-append-body (body-range chunk qualified-id _collapsed)
   "Insert CHUNK at the end of BODY-RANGE.
-Existing body chars stay in place — `markdown-text' frozen tags
+Existing body chars stay in place — `agent-shell-markdown' frozen tags
 and per-char faces are preserved across streaming chunks.
 Visibility for new chars is derived from the current visibility of
 the existing body, not from caller-supplied state, because
