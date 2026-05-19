@@ -3111,26 +3111,30 @@ by default, RENDER-BODY-IMAGES to enable inline image rendering in body."
              ;; Marking as field to avoid false positives in
              ;; `agent-shell-next-item' and `agent-shell-previous-item'.
              (add-text-properties (or padding-start block-start)
-                                  (or padding-end block-end) '(field output)))
-           ;; Apply markdown overlay to body.
-           (when-let ((body-start (map-nested-elt range '(:body :start)))
-                      (body-end (map-nested-elt range '(:body :end))))
-             (narrow-to-region body-start body-end)
-             (let ((markdown-overlays-highlight-blocks agent-shell-highlight-blocks))
-               (agent-shell--render-markdown))
-             (widen))
-           ;;
-           ;; Note: For now, we're skipping applying markdown overlays
-           ;; on left labels as they currently carry propertized text
-           ;; for statuses (ie. boxed).
-           ;;
-           ;; Apply markdown overlay to right label.
-           (when-let ((label-right-start (map-nested-elt range '(:label-right :start)))
-                      (label-right-end (map-nested-elt range '(:label-right :end))))
-             (narrow-to-region label-right-start label-right-end)
-             (let ((markdown-overlays-highlight-blocks agent-shell-highlight-blocks))
-               (agent-shell--render-markdown))
-             (widen)))
+                                  (or padding-end block-end) '(field output))
+             ;; Apply markdown overlay to body.  `inhibit-read-only'
+             ;; must wrap the render call too — chars in the body
+             ;; carry `read-only t' from `agent-shell-ui--insert-fragment',
+             ;; and `markdown-text' modifies buffer chars (unlike the
+             ;; overlay renderer which only adds overlays).
+             (when-let ((body-start (map-nested-elt range '(:body :start)))
+                        (body-end (map-nested-elt range '(:body :end))))
+               (narrow-to-region body-start body-end)
+               (let ((markdown-overlays-highlight-blocks agent-shell-highlight-blocks))
+                 (agent-shell--render-markdown))
+               (widen))
+             ;;
+             ;; Note: For now, we're skipping applying markdown overlays
+             ;; on left labels as they currently carry propertized text
+             ;; for statuses (ie. boxed).
+             ;;
+             ;; Apply markdown overlay to right label.
+             (when-let ((label-right-start (map-nested-elt range '(:label-right :start)))
+                        (label-right-end (map-nested-elt range '(:label-right :end))))
+               (narrow-to-region label-right-start label-right-end)
+               (let ((markdown-overlays-highlight-blocks agent-shell-highlight-blocks))
+                 (agent-shell--render-markdown))
+               (widen))))
          (run-hook-with-args 'agent-shell-section-functions range)))
       (unless auto-scroll
         (goto-char saved-point)
