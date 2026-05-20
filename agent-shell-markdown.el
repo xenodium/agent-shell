@@ -1464,7 +1464,8 @@ LANG is case-folded and trimmed; `agent-shell-markdown-language-mapping'
 is consulted for aliases before the `-mode' suffix is appended."
   (when (and lang (not (string-empty-p (string-trim lang))))
     (let* ((normalized (downcase (string-trim lang)))
-           (resolved (or (cdr (assoc normalized agent-shell-markdown-language-mapping))
+           (resolved (or (map-elt agent-shell-markdown-language-mapping
+                                  normalized nil #'equal)
                          normalized))
            (mode (intern (concat resolved "-mode"))))
       (when (fboundp mode)
