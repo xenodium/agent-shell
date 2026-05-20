@@ -138,6 +138,14 @@
   "Face for alternating (zebra) data rows in tables."
   :group 'agent-shell-markdown)
 
+(defface agent-shell-markdown-source-block
+  '((t :inherit lazy-highlight :extend t))
+  "Background face applied to rendered fenced source-block bodies.
+`:extend t' makes the background color reach the right edge of
+the window, so the block reads as a contiguous panel rather than
+a per-char highlight."
+  :group 'agent-shell-markdown)
+
 (defvar agent-shell-markdown-image-max-width 0.4
   "Maximum width for inline images rendered from `![alt](url)'.
 An integer is taken as pixels.  A float between 0 and 1 is a
@@ -625,11 +633,64 @@ with `emacs-lisp-mode' face properties on the body and a
         ;; valid; body markers adjust automatically.
         (delete-region close-start close-end)
         (delete-region open-start open-end)
+        ;; Seed the background face on every body char first, then
+        ;; layer the language's font-lock faces on top — the
+        ;; foreground colors take priority for each glyph while the
+        ;; `:extend t' background fills the gaps and reaches the
+        ;; right edge of the window.  Include the trailing `\n' (the
+        ;; one between body and close fence, preserved by our two
+        ;; `delete-region's above): `:extend t' only extends the
+        ;; background when the face is in effect at end-of-line, so
+        ;; without the `\n' carrying the face the last body line's
+        ;; bg would stop at the last content char instead of running
+        ;; to the window edge.
+        (put-text-property body-start (1+ (marker-position body-end))
+                           'face 'agent-shell-markdown-source-block)
         (agent-shell-markdown--apply-faces-from highlighted
-                                         (marker-position body-start))
-        (add-text-properties body-start body-end
-                             '(agent-shell-markdown-frozen t
-                               rear-nonsticky (agent-shell-markdown-frozen)))))))
+                                                (marker-position body-start))
+        ;; `line-prefix' / `wrap-prefix' indent each rendered code-block
+        ;; line visually without inserting literal spaces.  Copying chars
+        ;; out of the block yanks the raw source with no leading
+        ;; indentation.  `wrap-prefix' handles long lines that wrap.
+        ;; The last 2 chars of the prefix carry the block's background
+        ;; face so the bg panel reaches 2 chars into the indent —
+        ;; visually the code block sits inside a slightly inset tinted
+        ;; panel rather than starting hard at column 4.
+        (let ((prefix (concat "  "
+                              (propertize
+                               "  " 'face
+                               'agent-shell-markdown-source-block))))
+          (add-text-properties body-start body-end
+                               `(agent-shell-markdown-frozen t
+                                 rear-nonsticky (agent-shell-markdown-frozen)
+                                 line-prefix ,prefix
+                                 wrap-prefix ,prefix)))
+        ;; Vertical padding via `display' property.  The first body
+        ;; char renders as "<blank-line><original-char>" and the
+        ;; trailing \n renders as "<original-\n><blank-line>",
+        ;; visually inserting a blank bg-tinted line above and below
+        ;; the block without modifying buffer text — copying the body
+        ;; still yanks the raw source.  vpad is a single bg-faced \n:
+        ;; the `line-prefix' applied to body chars also paints these
+        ;; padding visual lines (cols 0-1 plain, cols 2-3 bg), and
+        ;; `:extend t' on the face fills cols 4+ to the right window
+        ;; edge.  Adding a literal "  " in vpad would put a plain
+        ;; stripe on top of the prefix, which then flashes the region
+        ;; face when the underlying char is selected.
+        (let ((vpad (propertize "\n" 'face
+                                'agent-shell-markdown-source-block))
+              (first-pos (marker-position body-start))
+              (last-pos (marker-position body-end)))
+          (put-text-property first-pos (1+ first-pos)
+                             'display
+                             (concat vpad
+                                     (buffer-substring first-pos
+                                                       (1+ first-pos))))
+          (put-text-property last-pos (1+ last-pos)
+                             'display
+                             (concat (buffer-substring last-pos
+                                                       (1+ last-pos))
+                                     vpad)))))))
 
 (defconst agent-shell-markdown--table-line-regexp
   (rx line-start
@@ -1400,18 +1461,21 @@ and continuation lines of wrapped rows are skipped automatically."
               (point-max)))))
 
 (defun agent-shell-markdown--apply-faces-from (propertized buffer-start)
-  "Copy `face' properties from PROPERTIZED string to chars at BUFFER-START..
+  "Layer `face' properties from PROPERTIZED on chars at BUFFER-START..
 
-Chars in PROPERTIZED without a `face' property cause the
-corresponding buffer chars' `face' to be cleared, so re-running
-on an already-highlighted body is idempotent."
+Uses `add-face-text-property' with PREPEND so the language's
+font-lock faces take priority in the cascade over whatever face
+the caller seeded the region with (e.g. a background panel face).
+Chars in PROPERTIZED without a `face' are left untouched, so the
+caller's seeded face shows through."
   (let ((pos 0)
         (len (length propertized)))
     (while (< pos len)
       (let ((face (get-text-property pos 'face propertized))
             (next (or (next-single-property-change pos 'face propertized) len)))
-        (put-text-property (+ buffer-start pos) (+ buffer-start next)
-                           'face face)
+        (when face
+          (add-face-text-property (+ buffer-start pos) (+ buffer-start next)
+                                  face))
         (setq pos next)))))
 
 (defun agent-shell-markdown--mirror-face-to-font-lock-face (start end)

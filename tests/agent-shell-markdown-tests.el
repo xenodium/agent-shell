@@ -138,9 +138,11 @@ after **b2**"))
                  '(("before " nil)
                    ("b" (agent-shell-markdown-bold))
                    ("
-**not bold**
+" nil)
+                   ("**not bold**
 _not italic_
-after " nil)
+" (agent-shell-markdown-source-block))
+                   ("after " nil)
                    ("b2" (agent-shell-markdown-bold))))))
 
 (ert-deftest agent-shell-markdown-convert-open-fence-protects-rest ()
@@ -197,6 +199,9 @@ streaming **not bold**" nil)))))
                  '(("see ![alt](/no/such/file.png) end" nil)))))
 
 (ert-deftest agent-shell-markdown-convert-link-in-fenced-block-untouched ()
+  ;; The `[b](v)' inside fences stays literal (it isn't re-processed
+  ;; as a link), but rendered source-block bodies now carry the
+  ;; `agent-shell-markdown-source-block' background face.
   (should (equal (agent-shell-markdown--deconstruct
                   (agent-shell-markdown-convert
                    "before [a](u)
@@ -207,37 +212,45 @@ after [c](w)"))
                  '(("before " nil)
                    ("a" (agent-shell-markdown-link))
                    ("
-[b](v)
-after " nil)
+" nil)
+                   ("[b](v)
+" (agent-shell-markdown-source-block))
+                   ("after " nil)
                    ("c" (agent-shell-markdown-link))))))
 
 (ert-deftest agent-shell-markdown-convert-source-block-no-language ()
-  ;; Plain fenced block (no language): fences deleted, body remains
-  ;; (with `agent-shell-markdown-frozen t' tagged on body chars, which
-  ;; `--deconstruct' doesn't surface — it tracks face only).
+  ;; Plain fenced block (no language): fences deleted, body remains.
+  ;; Body chars carry the `agent-shell-markdown-source-block' bg face
+  ;; (and the `agent-shell-markdown-frozen' tag, which `--deconstruct'
+  ;; doesn't surface).  The body region includes the trailing `\\n'
+  ;; so `:extend t' on the bg face reaches the right edge of the
+  ;; window on the last line too.
   (should (equal (agent-shell-markdown--deconstruct
                   (agent-shell-markdown-convert
                    "```
 body
 ```"))
                  '(("body
-" nil)))))
+" (agent-shell-markdown-source-block))))))
 
 (ert-deftest agent-shell-markdown-convert-source-block-with-language ()
   ;; `emacs-lisp' source block: fences deleted, body chars get
-  ;; `emacs-lisp-mode' font-lock faces.  In batch the keyword `if'
-  ;; is faced.  (Note: the faces here come directly from the
-  ;; language major mode and are intentionally not wrapped in our
-  ;; own `agent-shell-markdown-*' faces.)
+  ;; `emacs-lisp-mode' font-lock faces *plus* the
+  ;; `agent-shell-markdown-source-block' background face (layered
+  ;; with `add-face-text-property' APPEND so it ends up at the tail
+  ;; of the cascade, behind the language's font-lock).  In batch the
+  ;; keyword `if' is faced.  The trailing `\\n' isn't part of the
+  ;; body region and stays unfaced.
   (should (equal (agent-shell-markdown--deconstruct
                   (agent-shell-markdown-convert
                    "```emacs-lisp
 (if t nil)
 ```"))
-                 '(("(" nil)
-                   ("if" (font-lock-keyword-face))
+                 '(("(" (agent-shell-markdown-source-block))
+                   ("if" (font-lock-keyword-face
+                          agent-shell-markdown-source-block))
                    (" t nil)
-" nil)))))
+" (agent-shell-markdown-source-block))))))
 
 (ert-deftest agent-shell-markdown-convert-source-block-body-tagged ()
   ;; Body chars carry `agent-shell-markdown-frozen t' so subsequent calls
@@ -276,7 +289,8 @@ body
     (agent-shell-markdown-replace-markup)
     (should (equal (agent-shell-markdown--deconstruct (buffer-string))
                    '(("**not bold**
-
+" (agent-shell-markdown-source-block))
+                     ("
 " nil)
                      ("real bold" (agent-shell-markdown-bold)))))))
 
@@ -749,8 +763,10 @@ A " nil)
              ("code" (agent-shell-markdown-inline-code))
              (".
 
-**not bold**
-
+" nil)
+             ("**not bold**
+" (agent-shell-markdown-source-block))
+             ("
 ![alt](/missing).
 
 " nil)
