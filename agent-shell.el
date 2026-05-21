@@ -50,6 +50,7 @@
 (unless (require 'markdown-overlays nil 'noerror)
   (error "Please update 'shell-maker' to v0.91.2 or newer"))
 (require 'agent-shell-markdown)
+(require 'agent-shell-markdown-c)
 (require 'agent-shell-anthropic)
 (require 'agent-shell-auggie)
 (require 'agent-shell-cline)
@@ -119,9 +120,7 @@ back to `markdown-overlays-put'.
 in the overlay branch; they're intentionally ignored by
 `agent-shell-markdown', which always highlights blocks and renders
 resolvable images."
-  (if agent-shell--experimental-renderer
-      (agent-shell-markdown-replace-markup)
-    (markdown-overlays-put)))
+  (agent-shell-markdown-c-replace-markup))
 
 (defcustom agent-shell-permission-icon "⚠"
   "Icon displayed when shell commands require permission to execute.

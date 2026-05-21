@@ -1,0 +1,11 @@
+[package]
+name = "pulldown-cmark-emacs"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+emacs = "0.21" # Compatible with standard Emacs module environments
+pulldown-cmark = "0.13.4"
