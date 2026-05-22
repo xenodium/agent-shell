@@ -3366,44 +3366,58 @@ When provided, included in help-echo tooltips."
   (unless state
     (error "STATE is required"))
   (let* ((header-model (agent-shell--make-header-model state :qualifier qualifier :bindings bindings))
-         (text-header (format " %s%s%s @ %s%s%s%s"
-                              (propertize (map-elt header-model :buffer-name)
-                                          'font-lock-face 'font-lock-variable-name-face)
-                              (if (map-elt header-model :model-name)
-                                  (concat " ➤ " (propertize (map-elt header-model :model-name)
-                                                            'font-lock-face 'font-lock-negation-char-face
-                                                            'help-echo (concat "Click to open LLM model menu "
-                                                                               (when model-binding
-                                                                                 (propertize model-binding 'face 'help-key-binding)))
-                                                            'mouse-face 'mode-line-highlight
-                                                            'local-map (let ((map (make-sparse-keymap)))
-                                                                         (define-key map [header-line mouse-1]
-                                                                                     (agent-shell--mode-line-model-menu))
-                                                                         map)))
-                                "")
-                              (if (map-elt header-model :mode-name)
-                                  (concat " ➤ " (propertize (map-elt header-model :mode-name)
-                                                            'font-lock-face 'font-lock-type-face
-                                                            'help-echo (concat "Click to open session mode menu "
-                                                                               (when mode-binding
-                                                                                 (propertize mode-binding 'face 'help-key-binding)))
-                                                            'mouse-face 'mode-line-highlight
-                                                            'local-map (let ((map (make-sparse-keymap)))
-                                                                         (define-key map [header-line mouse-1]
-                                                                                     (agent-shell--mode-line-mode-menu))
-                                                                         map)))
-                                "")
-                              (propertize (map-elt header-model :project-name) 'font-lock-face 'font-lock-string-face)
-                              (if (map-elt header-model :session-id)
-                                  (concat " ➤ " (map-elt header-model :session-id))
-                                "")
-                              (if (map-elt header-model :context-indicator)
-                                  (concat (if (> (length (map-elt header-model :context-indicator)) 1) " ➤ " " ")
-                                          (map-elt header-model :context-indicator))
-                                "")
-                              (if (map-elt header-model :busy-indicator-frame)
-                                  (map-elt header-model :busy-indicator-frame)
-                                ""))))
+         (text-header (concat
+                       (format " %s%s%s @ %s%s%s%s"
+                               (propertize (map-elt header-model :buffer-name)
+                                           'font-lock-face 'font-lock-variable-name-face)
+                               (if (map-elt header-model :model-name)
+                                   (concat " ➤ " (propertize (map-elt header-model :model-name)
+                                                             'font-lock-face 'font-lock-negation-char-face
+                                                             'help-echo (concat "Click to open LLM model menu "
+                                                                                (when model-binding
+                                                                                  (propertize model-binding 'face 'help-key-binding)))
+                                                             'mouse-face 'mode-line-highlight
+                                                             'local-map (let ((map (make-sparse-keymap)))
+                                                                          (define-key map [header-line mouse-1]
+                                                                                      (agent-shell--mode-line-model-menu))
+                                                                          map)))
+                                 "")
+                               (if (map-elt header-model :mode-name)
+                                   (concat " ➤ " (propertize (map-elt header-model :mode-name)
+                                                             'font-lock-face 'font-lock-type-face
+                                                             'help-echo (concat "Click to open session mode menu "
+                                                                                (when mode-binding
+                                                                                  (propertize mode-binding 'face 'help-key-binding)))
+                                                             'mouse-face 'mode-line-highlight
+                                                             'local-map (let ((map (make-sparse-keymap)))
+                                                                          (define-key map [header-line mouse-1]
+                                                                                      (agent-shell--mode-line-mode-menu))
+                                                                          map)))
+                                 "")
+                               (propertize (map-elt header-model :project-name) 'font-lock-face 'font-lock-string-face)
+                               (if (map-elt header-model :session-id)
+                                   (concat " ➤ " (map-elt header-model :session-id))
+                                 "")
+                               (if (map-elt header-model :context-indicator)
+                                   (concat (if (> (length (map-elt header-model :context-indicator)) 1) " ➤ " " ")
+                                           (map-elt header-model :context-indicator))
+                                 "")
+                               (if (map-elt header-model :busy-indicator-frame)
+                                   (map-elt header-model :busy-indicator-frame)
+                                 ""))
+                       (when (or bindings qualifier)
+                         (concat
+                          "  "
+                          (when qualifier
+                            (concat qualifier " "))
+                          (mapconcat
+                           (lambda (binding)
+                             (format "%s %s"
+                                     (propertize (map-elt binding :key)
+                                                 'font-lock-face 'help-key-binding)
+                                     (map-elt binding :description)))
+                           bindings
+                           "  "))))))
     (pcase agent-shell-header-style
       ((or 'none (pred null)) nil)
       ('text text-header)
