@@ -759,6 +759,7 @@ always go to Evil modes if you need to with ~C-z~).
 | agent-shell-context-sources                   | Sources to consider when determining M-x agent-shell automatic context.         |
 | agent-shell-cursor-acp-command                | Command and parameters for the Cursor agent client.                             |
 | agent-shell-cursor-environment                | Environment variables for the Cursor agent client.                              |
+| agent-shell-desktop-save-buffers              | Whether Desktop should save and restore active agent shell sessions.            |
 | agent-shell-display-action                    | Display action for agent shell buffers.                                         |
 | agent-shell-droid-acp-command                 | Command and parameters for the Factory Droid ACP client.                        |
 | agent-shell-droid-authentication              | Configuration for Factory Droid authentication.                                 |

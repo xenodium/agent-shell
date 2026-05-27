@@ -99,6 +99,10 @@
 ;; Declare as special so byte-compilation doesn't turn `let' bindings into
 ;; lexical bindings (which would not affect `auto-insert' behavior).
 (defvar auto-insert)
+(defvar desktop-buffer-mode-handlers)
+(defvar desktop-dirname)
+(defvar desktop-save-buffer)
+(declare-function desktop-file-name "desktop")
 
 (defcustom agent-shell-permission-icon "⚠"
   "Icon displayed when shell commands require permission to execute.
@@ -587,6 +591,16 @@ Available values:
                  (const :tag "Always start new session" new)
                  (const :tag "Load latest session" latest)
                  (const :tag "Prompt for session" prompt))
+  :group 'agent-shell)
+
+(defcustom agent-shell-desktop-save-buffers nil
+  "Whether Desktop should save and restore active agent shell sessions.
+
+When non-nil, `agent-shell-mode' buffers with an active session ID
+are saved by `desktop-save' and restored by `desktop-read' using
+that exact session ID.  Sessions that do not have an ID yet, such
+as uninitialized `new-deferred' shells, are not saved."
+  :type 'boolean
   :group 'agent-shell)
 
 (defvar agent-shell-idle-timeout 30
@@ -1182,6 +1196,111 @@ Includes shells accessed via viewport buffers, preserving visited order."
             (push shell-buffer seen)
             (push shell-buffer shell-buffers)))))
     (nreverse shell-buffers)))
+
+(defun agent-shell--desktop-save-buffer (desktop-directory)
+  "Return Desktop restore data for the current `agent-shell-mode' buffer.
+DESKTOP-DIRECTORY is the directory where Desktop writes its state."
+  (let ((state (agent-shell--state)))
+    (when-let ((session-id (and agent-shell-desktop-save-buffers
+                                (map-nested-elt state '(:session :id))))
+               (config-id (map-nested-elt state '(:agent-config :identifier))))
+      `((:version . 1)
+        (:directory . ,(desktop-file-name
+                        (file-name-as-directory
+                         (expand-file-name default-directory))
+                        desktop-directory))
+        (:session-id . ,session-id)
+        (:config-id . ,config-id)
+        (:buffer-name . ,(buffer-name))))))
+
+(defun agent-shell--desktop-existing-buffer (session-id config-id)
+  "Return an existing shell buffer for SESSION-ID and CONFIG-ID, or nil."
+  (seq-find
+   (lambda (buffer)
+     (with-current-buffer buffer
+       (and (derived-mode-p 'agent-shell-mode)
+            (equal (map-nested-elt (agent-shell--state) '(:session :id))
+                   session-id)
+            (eq (map-nested-elt (agent-shell--state)
+                                '(:agent-config :identifier))
+                config-id))))
+   (agent-shell-buffers)))
+
+(defun agent-shell--desktop-restore-message-buffer (buffer-name message)
+  "Return a scratch BUFFER-NAME containing Desktop restore MESSAGE."
+  (let ((buffer (generate-new-buffer
+                 (or buffer-name "*agent-shell desktop restore*"))))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert "Could not restore agent-shell buffer.\n\n" message "\n"))
+      (setq buffer-read-only t)
+      (setq-local desktop-save-buffer nil))
+    buffer))
+
+(defun agent-shell--desktop-restore-buffer (_buffer-filename
+                                            buffer-name
+                                            buffer-misc)
+  "Restore `agent-shell' BUFFER-NAME from Desktop BUFFER-MISC."
+  (let* ((session-id (map-elt buffer-misc :session-id))
+         (config-id (map-elt buffer-misc :config-id))
+         (saved-directory (map-elt buffer-misc :directory))
+         (directory (and saved-directory
+                         (file-name-as-directory
+                          (expand-file-name saved-directory desktop-dirname))))
+         (config (and config-id
+                      (seq-find (lambda (candidate)
+                                  (eq (map-elt candidate :identifier)
+                                      config-id))
+                                agent-shell-agent-configs)))
+         (restore-buffer-name (or (map-elt buffer-misc :buffer-name)
+                                  buffer-name)))
+    (cond
+     ((not agent-shell-desktop-save-buffers)
+      (agent-shell--desktop-restore-message-buffer
+       restore-buffer-name
+       "Agent-shell Desktop restore is disabled."))
+     ((not session-id)
+      (agent-shell--desktop-restore-message-buffer
+       restore-buffer-name
+       "Desktop entry is missing an agent-shell session ID."))
+     ((not directory)
+      (agent-shell--desktop-restore-message-buffer
+       restore-buffer-name
+       "Desktop entry is missing an agent-shell directory."))
+     ((not (file-directory-p directory))
+      (agent-shell--desktop-restore-message-buffer
+       restore-buffer-name
+       (format "Agent-shell Desktop directory is not available: %s"
+               directory)))
+     ((not config-id)
+      (agent-shell--desktop-restore-message-buffer
+       restore-buffer-name
+       "Desktop entry is missing an agent-shell config ID."))
+     ((not config)
+      (agent-shell--desktop-restore-message-buffer
+       restore-buffer-name
+       (format "No agent-shell config found for %S." config-id)))
+     (t
+      (let ((shell-buffer (or (agent-shell--desktop-existing-buffer
+                               session-id config-id)
+                              (let ((default-directory directory))
+                                (agent-shell--start :config config
+                                                    :no-focus t
+                                                    :new-session t
+                                                    :session-id session-id)))))
+        (when restore-buffer-name
+          (shell-maker-set-buffer-name shell-buffer restore-buffer-name))
+        shell-buffer)))))
+
+(add-hook 'agent-shell-mode-hook
+          (lambda ()
+            (setq-local desktop-save-buffer
+                        #'agent-shell--desktop-save-buffer)))
+
+(with-eval-after-load 'desktop
+  (add-to-list 'desktop-buffer-mode-handlers
+               '(agent-shell-mode . agent-shell--desktop-restore-buffer)))
 
 (defun agent-shell-other-buffer ()
   "Switch to other associated buffer (viewport vs shell)."
