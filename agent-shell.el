@@ -1808,34 +1808,54 @@ COMMAND, when present, may be a shell command string or an argv vector."
                            :kind (map-nested-elt acp-notification '(params update kind)))
                           (propertize (or (map-nested-elt acp-notification '(params update title)) "")
                                       'face font-lock-doc-markup-face)))
-             ;; Update stored tool call data with new status and content
-             (agent-shell--save-tool-call
-              state
-              (map-nested-elt acp-notification '(params update toolCallId))
-              (append (list (cons :status (map-nested-elt acp-notification '(params update status)))
-                            (cons :content (map-nested-elt acp-notification '(params update content))))
-                      ;; The initial tool_call notification often has a
-                      ;; generic title (eg. "grep", "bash", "Read").
-                      ;; The tool_call_update may have a more descriptive
-                      ;; title (eg. 'grep -i -n "tool" /path/to/file').
-                      ;; Upgrade to the more descriptive title when available.
-                      ;; See https://github.com/xenodium/agent-shell/issues/182
-                      ;; See https://github.com/xenodium/agent-shell/issues/309
-                      (when-let* ((new-title (map-nested-elt acp-notification '(params update title)))
-                                  ((not (string-empty-p new-title))))
-                        (list (cons :title new-title)))
-                      (when-let* ((description (agent-shell--tool-call-command-to-string
-                                                (map-nested-elt acp-notification '(params update rawInput description)))))
-                        (list (cons :description description)))
-                      (when-let* ((command (agent-shell--tool-call-command-to-string
-                                            (map-nested-elt acp-notification '(params update rawInput command)))))
-                        (list (cons :command command)))
-                      (when-let* ((raw-input (map-nested-elt acp-notification '(params update rawInput))))
-                        (list (cons :raw-input raw-input)))
-                      (when-let* ((diff (agent-shell--make-diff-info
-                                         :acp-tool-call (map-nested-elt acp-notification '(params update)))))
-                        (list (cons :diff diff)))))
-             (agent-shell--cancel-idle-timer)
+              ;; Update stored tool call data with new status and content
+              (let* ((tool-call-id (map-nested-elt acp-notification '(params update toolCallId)))
+                     (raw-input (map-nested-elt acp-notification '(params update rawInput)))
+                     (tool-call (map-nested-elt state (list :tool-calls tool-call-id))))
+                (agent-shell--save-tool-call
+                 state
+                 tool-call-id
+                 (append (list (cons :status (map-nested-elt acp-notification '(params update status)))
+                               (cons :content (map-nested-elt acp-notification '(params update content))))
+                         ;; The initial tool_call notification often has a
+                         ;; generic title (eg. "grep", "bash", "Read").
+                         ;; The tool_call_update may have a more descriptive
+                         ;; title (eg. 'grep -i -n "tool" /path/to/file').
+                         ;; Upgrade to the more descriptive title when available.
+                         ;; See https://github.com/xenodium/agent-shell/issues/182
+                         ;; See https://github.com/xenodium/agent-shell/issues/309
+                         (when-let* ((new-title (map-nested-elt acp-notification '(params update title)))
+                                     ((not (string-empty-p new-title))))
+                           (list (cons :title new-title)))
+                         (when-let* ((description (agent-shell--tool-call-command-to-string
+                                                   (map-nested-elt raw-input '(description)))))
+                           (list (cons :description description)))
+                         (when-let* ((command (agent-shell--tool-call-command-to-string
+                                               (map-nested-elt raw-input '(command)))))
+                           (list (cons :command command)))
+                         (when-let ((raw-input raw-input))
+                           (list (cons :raw-input raw-input)))
+                         (when-let ((diff (agent-shell--make-diff-info
+                                           :acp-tool-call (map-nested-elt acp-notification '(params update)))))
+                           (list (cons :diff diff)))))
+                ;; Update permission dialog if rawInput arrived late
+                ;; (e.g. OpenCode sends tool_call_update after session/request_permission)
+                (when (and raw-input
+                           tool-call
+                           (map-elt tool-call :permission-request-id))
+                  (let ((permission-request (map-elt tool-call :permission-request)))
+                    (agent-shell--update-fragment
+                     :state state
+                     :block-id (format "permission-%s" tool-call-id)
+                     :body (with-current-buffer (map-elt state :buffer)
+                             (agent-shell--make-tool-call-permission-text
+                              :acp-request permission-request
+                              :client (map-elt state :client)
+                              :state state
+                              :raw-input raw-input))
+                     :expanded t
+                     :navigation 'never))))
+              (agent-shell--cancel-idle-timer)
              (agent-shell--emit-event
               :event 'tool-call-update
               :data (list (cons :tool-call-id (map-nested-elt acp-notification '(params update toolCallId)))
@@ -1984,9 +2004,10 @@ COMMAND, when present, may be a shell command string or an argv vector."
           (append (list (cons :title (map-nested-elt acp-request '(params toolCall title)))
                         (cons :status (map-nested-elt acp-request '(params toolCall status)))
                         (cons :kind (map-nested-elt acp-request '(params toolCall kind)))
-                        (cons :permission-request-id (map-elt acp-request 'id)))
-                  (when-let* ((diff (agent-shell--make-diff-info
-                                     :acp-tool-call (map-nested-elt acp-request '(params toolCall)))))
+                        (cons :permission-request-id (map-elt acp-request 'id))
+                        (cons :permission-request acp-request))
+                  (when-let ((diff (agent-shell--make-diff-info
+                                    :acp-tool-call (map-nested-elt acp-request '(params toolCall)))))
                     (list (cons :diff diff)))))
          (let* ((tool-call-id (map-nested-elt acp-request '(params toolCall toolCallId)))
                 (permission-handled
@@ -2013,16 +2034,18 @@ COMMAND, when present, may be a shell command string or an argv vector."
                 :expanded t))
              ;; block-id must be the same as the one used
              ;; in agent-shell--delete-fragment param.
-             (agent-shell--update-fragment
-              :state state
-              :block-id (format "permission-%s" tool-call-id)
-              :body (with-current-buffer (map-elt state :buffer)
-                      (agent-shell--make-tool-call-permission-text
-                       :acp-request acp-request
-                       :client (map-elt state :client)
-                       :state state))
-              :expanded t
-              :navigation 'never)
+              (agent-shell--update-fragment
+               :state state
+               :block-id (format "permission-%s" tool-call-id)
+               :body (with-current-buffer (map-elt state :buffer)
+                       (agent-shell--make-tool-call-permission-text
+                        :acp-request acp-request
+                        :client (map-elt state :client)
+                        :state state
+                        :raw-input (or (map-nested-elt acp-request '(params toolCall rawInput))
+                                       (map-nested-elt state (list :tool-calls tool-call-id :raw-input)))))
+               :expanded t
+               :navigation 'never)
              (agent-shell-jump-to-latest-permission-button-row)
              (when-let* (((map-elt state :buffer))
                          (viewport-buffer (agent-shell-viewport--buffer
@@ -2038,7 +2061,7 @@ COMMAND, when present, may be a shell command string or an argv vector."
                 :data data)
                (agent-shell--start-idle-timer :event 'permission-request :data data))
              (map-put! state :last-entry-type "session/request_permission"))))
-        ((equal (map-elt acp-request 'method) "fs/read_text_file")
+         ((equal (map-elt acp-request 'method) "fs/read_text_file")
          (agent-shell--on-fs-read-text-file-request
           :state state
           :acp-request acp-request))
@@ -5950,8 +5973,11 @@ for details."
 
 ;;; Permissions
 
-(cl-defun agent-shell--permission-title (&key acp-request)
+(cl-defun agent-shell--permission-title (&key acp-request raw-input)
   "Build a display title for a permission request from ACP-REQUEST.
+
+Optional RAW-INPUT is the raw input data from the tool call, which may
+come from the ACP request or from the session state.
 
 Extracts the tool call title, command, and filepath from ACP-REQUEST
 and combines them into a user-facing string.
@@ -5965,11 +5991,16 @@ For example:
   => \"```console\\nls -la\\n```\""
   (let* ((title (map-nested-elt acp-request '(params toolCall title)))
          (command (agent-shell--tool-call-command-to-string
-                   (map-nested-elt acp-request '(params toolCall rawInput command))))
-         (filepath (or (map-nested-elt acp-request '(params toolCall rawInput filepath))
-                       (map-nested-elt acp-request '(params toolCall rawInput fileName))
-                       (map-nested-elt acp-request '(params toolCall rawInput path))
-                       (map-nested-elt acp-request '(params toolCall rawInput file_path))))
+                   (map-nested-elt (or raw-input (map-nested-elt acp-request '(params toolCall rawInput)))
+                                   '(command))))
+         (filepath (or (map-nested-elt (or raw-input (map-nested-elt acp-request '(params toolCall rawInput)))
+                                       '(filepath))
+                       (map-nested-elt (or raw-input (map-nested-elt acp-request '(params toolCall rawInput)))
+                                       '(fileName))
+                       (map-nested-elt (or raw-input (map-nested-elt acp-request '(params toolCall rawInput)))
+                                       '(path))
+                       (map-nested-elt (or raw-input (map-nested-elt acp-request '(params toolCall rawInput)))
+                                       '(file_path))))
          ;; Some agents don't include the command in the
          ;; permission/tool call title, so it's hard to know
          ;; what the permission is actually allowing.
@@ -5999,8 +6030,11 @@ For example:
         (concat "```console\n" text "\n```")
       text)))
 
-(cl-defun agent-shell--make-tool-call-permission-text (&key acp-request client state)
+(cl-defun agent-shell--make-tool-call-permission-text (&key acp-request client state raw-input)
   "Create text to render permission dialog using ACP-REQUEST, CLIENT, and STATE.
+
+Optional RAW-INPUT is the raw input data from the tool call, which may
+come from the ACP request or from the session state.
 
 For example:
 
@@ -6054,7 +6088,7 @@ For example:
                                  (with-current-buffer shell-buffer
                                    (agent-shell-interrupt t))))
                    map))
-         (title (agent-shell--permission-title :acp-request acp-request))
+         (title (agent-shell--permission-title :acp-request acp-request :raw-input raw-input))
          (diff-button (when diff
                         (agent-shell--make-permission-button
                          :text "View (v)"
