@@ -65,6 +65,23 @@ the word, nil otherwise."
 (defvar-local agent-shell--project-files-cache nil
   "Session-scoped cache for project files completion.")
 
+(defvar-local agent-shell-completion--shell-buffer nil
+  "Override shell buffer to source completion data from.
+When non-nil, file and command CAPFs read project files and
+available commands from this buffer instead of the current one.
+Set in non-shell buffers (e.g. the minibuffer) that want to offer
+@ and / completion against a specific shell.")
+
+(defun agent-shell-completion--source-buffer ()
+  "Return the buffer to source completion data from.
+Returns the override buffer when set and live, otherwise the current
+buffer.  Returns nil if the override is set but its buffer is dead."
+  (cond
+   ((null agent-shell-completion--shell-buffer)
+    (current-buffer))
+   ((buffer-live-p agent-shell-completion--shell-buffer)
+    agent-shell-completion--shell-buffer)))
+
 (defun agent-shell--clear-project-files-cache ()
   "Clear project files cache when completion session ends."
   (unless completion-in-region-mode
@@ -74,13 +91,15 @@ the word, nil otherwise."
 
 (defun agent-shell--file-completion-at-point ()
   "Complete project files after @."
-  (when-let* ((bounds (agent-shell--completion-bounds "[:alnum:]/_.-" ?@)))
-    (unless agent-shell--project-files-cache
-      (setq agent-shell--project-files-cache (agent-shell--project-files))
-      (add-hook 'completion-in-region-mode-hook
-                #'agent-shell--clear-project-files-cache nil t))
+  (when-let* ((source (agent-shell-completion--source-buffer))
+              (bounds (agent-shell--completion-bounds "[:alnum:]/_.-" ?@)))
+    (with-current-buffer source
+      (unless agent-shell--project-files-cache
+        (setq agent-shell--project-files-cache (agent-shell--project-files))
+        (add-hook 'completion-in-region-mode-hook
+                  #'agent-shell--clear-project-files-cache nil t)))
     (list (map-elt bounds :start) (map-elt bounds :end)
-          agent-shell--project-files-cache
+          (buffer-local-value 'agent-shell--project-files-cache source)
           :exclusive 'no
           :company-kind (lambda (f) (if (string-suffix-p "/" f) 'folder 'file))
           :exit-function #'agent-shell--capf-exit-with-space)))
@@ -88,9 +107,11 @@ the word, nil otherwise."
 (defun agent-shell--command-completion-at-point ()
   "Complete available commands after /."
   (when-let* ((bounds (agent-shell--completion-bounds "[:alnum:]_-" ?/))
-              (commands (with-current-buffer (agent-shell--shell-buffer
-                                              :no-error t :no-create t)
-                          (map-elt agent-shell--state :available-commands)))
+              (source (or (and (buffer-live-p agent-shell-completion--shell-buffer)
+                               agent-shell-completion--shell-buffer)
+                          (agent-shell--shell-buffer :no-error t :no-create t)))
+              (commands (map-elt (buffer-local-value 'agent-shell--state source)
+                                 :available-commands))
               (descriptions (mapcar (lambda (c)
                                       (cons (map-elt c 'name)
                                             (map-elt c 'description)))
@@ -119,6 +140,38 @@ preventing spurious completions mid-word or in paths."
      ((and (eq (char-before) ?/)
            (agent-shell--command-completion-at-point))
       (completion-at-point)))))
+
+(defun agent-shell-completion--setup-minibuffer (shell-buffer)
+  "Enable @ and / completion in the current minibuffer for SHELL-BUFFER.
+
+@ always completes project files.  / completes available agent commands
+when SHELL-BUFFER has received them via ACP; if not, / is a no-op.
+
+No-ops when SHELL-BUFFER does not have `agent-shell-completion-mode'
+enabled, so user preference set in the shell carries over."
+  (when (and (buffer-live-p shell-buffer)
+             (buffer-local-value 'agent-shell-completion-mode shell-buffer))
+    (setq-local agent-shell-completion--shell-buffer shell-buffer)
+    (add-hook 'completion-at-point-functions
+              #'agent-shell--file-completion-at-point nil t)
+    (add-hook 'completion-at-point-functions
+              #'agent-shell--command-completion-at-point nil t)
+    (add-hook 'post-self-insert-hook
+              #'agent-shell--trigger-completion-at-point nil t)
+    (add-hook 'minibuffer-exit-hook
+              #'agent-shell-completion--cleanup-minibuffer nil t)))
+
+(defun agent-shell-completion--cleanup-minibuffer ()
+  "Remove `agent-shell' completion hooks from the minibuffer."
+  (kill-local-variable 'agent-shell-completion--shell-buffer)
+  (remove-hook 'completion-at-point-functions
+               #'agent-shell--file-completion-at-point t)
+  (remove-hook 'completion-at-point-functions
+               #'agent-shell--command-completion-at-point t)
+  (remove-hook 'post-self-insert-hook
+               #'agent-shell--trigger-completion-at-point t)
+  (remove-hook 'minibuffer-exit-hook
+               #'agent-shell-completion--cleanup-minibuffer t))
 
 (define-minor-mode agent-shell-completion-mode
   "Toggle agent shell completion with @ or / prefix."

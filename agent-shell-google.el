@@ -180,7 +180,7 @@ Uses `agent-shell-google-authentication' for authentication configuration."
    ((map-elt agent-shell-google-authentication :api-key)
     (agent-shell--make-acp-client :command (car agent-shell-google-gemini-acp-command)
                                   :command-params (cdr agent-shell-google-gemini-acp-command)
-                                  :environment-variables (append (when-let ((api-key (agent-shell-google-key)))
+                                  :environment-variables (append (when-let* ((api-key (agent-shell-google-key)))
                                                                    (list (format "GEMINI_API_KEY=%s" api-key)))
                                                                  agent-shell-google-gemini-environment)
                                   :context-buffer buffer))

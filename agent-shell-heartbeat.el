@@ -84,7 +84,7 @@ Returns the heartbeat alist with the timer started."
       (map-put! heartbeat :heartbeat-timer
                 (run-at-time 0 (/ 1.0 (map-elt heartbeat :beats-per-second))
                              (lambda ()
-                               (when-let ((value (map-elt heartbeat :value)))
+                               (when-let* ((value (map-elt heartbeat :value)))
                                  (map-put! heartbeat :status 'busy)
                                  (map-put! heartbeat :value (1+ value))
                                  (funcall (map-elt heartbeat :on-heartbeat)
@@ -99,13 +99,13 @@ HEARTBEAT is the heartbeat state alist.
 
 Returns the heartbeat with latest state."
   (when heartbeat
-    (when-let ((timer (map-elt heartbeat :heartbeat-timer)))
+    (when-let* ((timer (map-elt heartbeat :heartbeat-timer)))
       (when (timerp timer)
         (cancel-timer timer))
       (map-put! heartbeat :heartbeat-timer nil))
     (map-put! heartbeat :status 'ended)
     (map-put! heartbeat :value nil)
-    (when-let ((callback (map-elt heartbeat :on-heartbeat)))
+    (when-let* ((callback (map-elt heartbeat :on-heartbeat)))
       (funcall callback nil 'ended))
     heartbeat))
 

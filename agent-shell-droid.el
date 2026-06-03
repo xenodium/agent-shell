@@ -21,7 +21,7 @@
 ;;; Commentary:
 ;;
 ;; This file includes Factory Droid specific configurations relying on the
-;; droid-acp client: https://github.com/yaonyan/droid-acp
+;; droid: https://docs.factory.ai/cli/getting-started/quickstart
 ;;
 
 ;;; Code:
@@ -73,8 +73,35 @@ For no authentication (e.g., using `droid-acp` built-in login):
   :type 'alist
   :group 'agent-shell)
 
+(defcustom agent-shell-droid-default-model-id
+  nil
+  "Default Droid AI model ID.
+
+Must be one of the model ID's displayed under \"Available models\"
+when starting a new shell."
+  :type '(choice (const nil) string)
+  :group 'agent-shell)
+
+(defcustom agent-shell-droid-default-session-mode-id
+  nil
+  "Default Droid AI session mode ID.
+
+Must be one of the mode ID's displayed under \"Available modes\"
+when starting a new shell."
+  :type '(choice (const nil) string)
+  :group 'agent-shell)
+
+(defcustom agent-shell-droid-default-reasoning-effort
+  nil
+  "Default reasoning effort.
+
+It can be one of the followings.
+none, dynamic, off, minimal, low, medium, high, xhigh, max"
+  :type '(choice (const nil) string)
+  :group 'agent-shell)
+
 (defcustom agent-shell-droid-acp-command
-  '("droid-acp")
+  '("droid" "exec" "--output-format" "acp")
   "Command and parameters for the Factory Droid ACP client.
 
 The first element is the command name, and the rest are command parameters."
@@ -111,7 +138,9 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :welcome-function #'agent-shell-droid--welcome-message
    :client-maker (lambda (buffer)
                    (agent-shell-droid-make-client :buffer buffer))
-   :install-instructions "See https://github.com/yaonyan/droid-acp for installation."))
+   :default-model-id (lambda () agent-shell-droid-default-model-id)
+   :default-session-mode-id (lambda () agent-shell-droid-default-session-mode-id)
+   :install-instructions "See https://docs.factory.ai/cli/getting-started/quickstart for installation."))
 
 (defun agent-shell-droid-start-agent ()
   "Start an interactive Factory Droid agent shell."
@@ -129,7 +158,10 @@ Uses `agent-shell-droid-authentication' for authentication configuration."
     (user-error "Please migrate to use agent-shell-droid-acp-command and eval (setq agent-shell-droid-command nil)"))
   (let ((api-key (agent-shell-droid-key)))
     (agent-shell--make-acp-client :command (car agent-shell-droid-acp-command)
-                                  :command-params (cdr agent-shell-droid-acp-command)
+                                  :command-params (append (seq-rest agent-shell-droid-acp-command)
+                                                          (when agent-shell-droid-default-reasoning-effort
+                                                            (list "--reasoning-effort"
+                                                                  agent-shell-droid-default-reasoning-effort)))
                                   :environment-variables (append (cond ((map-elt agent-shell-droid-authentication :none)
                                                                         nil)
                                                                        (api-key

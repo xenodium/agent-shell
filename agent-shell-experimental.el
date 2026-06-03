@@ -90,9 +90,9 @@ in progress), the request is immediately rejected with an error."
 Finds the active push prompt request, sends the response, and
 removes it from active requests.  Calls ON-FINISHED when done
 to allow the caller to finalize (e.g. display a new shell prompt)."
-  (when-let ((push-request (seq-find (lambda (r)
-                                       (equal (map-elt r :method) "session/push"))
-                                     (map-elt state :active-requests))))
+  (when-let* ((push-request (seq-find (lambda (r)
+                                        (equal (map-elt r :method) "session/push"))
+                                      (map-elt state :active-requests))))
     (acp-send-response
      :client (map-elt state :client)
      :response (agent-shell-experimental--make-session-push-response

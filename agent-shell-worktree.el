@@ -98,8 +98,8 @@ Returns a string like \"adoring-hawking\" or \"focused-turing\"."
 (defun agent-shell-worktree--git-repo-root ()
   "Return the root directory of the current git repository.
 Or nil if not in a repo."
-  (when-let ((output (shell-command-to-string
-                      "git rev-parse --show-toplevel 2>/dev/null")))
+  (when-let* ((output (shell-command-to-string
+                       "git rev-parse --show-toplevel 2>/dev/null")))
     (let ((trimmed (string-trim output)))
       (unless (string-empty-p trimmed)
         trimmed))))

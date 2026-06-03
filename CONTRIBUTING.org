@@ -100,31 +100,33 @@ Overall, try to flatten things. Look out for unnecessarily nested blocks and fla
         (insert content))
       buffer))
 
-  ;; Prefer (flatten let + when into when-let)
-  (when-let ((buffer (get-buffer name)))
+  ;; Prefer (flatten let + when into when-let*)
+  (when-let* ((buffer (get-buffer name)))
     (with-current-buffer buffer
       (erase-buffer)
       (insert content))
     buffer)
 #+end_src
 
-Similarly, flatten =when-let= + nested =when= by using boolean guard clauses as bindings in =when-let=.
+Similarly, flatten =when-let*= + nested =when= by using boolean guard clauses as bindings in =when-let*=.
 
 #+begin_src emacs-lisp :lexical no
   ;; Avoid
-  (when-let ((filename (file-name-nondirectory filepath)))
+  (when-let* ((filename (file-name-nondirectory filepath)))
     (when (not (string-empty-p filename))
       (do-something filename)))
 
   ;; Prefer (use boolean binding as guard clause)
-  (when-let ((filename (file-name-nondirectory filepath))
-             ((not (string-empty-p filename))))
+  (when-let* ((filename (file-name-nondirectory filepath))
+              ((not (string-empty-p filename))))
     (do-something filename))
 #+end_src
 
-** Prefer =let= and =when-let= over =let*= and =when-let*=
+** Prefer =let= over =let*=
 
-Only use the =*= variants when bindings depend on each other. LLMs tend to default to =let*= and =when-let*= even when there are no dependencies between bindings.
+Only use =let*= when bindings depend on each other. LLMs tend to default to =let*= even when there are no dependencies between bindings.
+
+For conditional bindings, use =when-let*=. The non-star =when-let= is obsolete as of Emacs 31.1.
 
 ** Avoid unnecessary =let=/local variables
 

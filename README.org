@@ -21,9 +21,17 @@ A native Emacs shell to interact with LLM agents powered by ACP ([[https://agent
 
 With agent-shell, you can chat with the likes of Gemini CLI, Claude Agent, Auggie, Mistral Vibe, or any other ACP-driven agent.
 
-Watch on [[https://www.youtube.com/watch?v=R2Ucr3amgGg][YouTube]]
+[[https://www.youtube.com/watch?v=R2Ucr3amgGg][agent-shell - YouTube]]
 
 [[https://www.youtube.com/watch?v=R2Ucr3amgGg][file:yt.png]]
+
+[[https://www.youtube.com/watch?v=ymMlftdGx4I][agent-shell + Claude Skills - YouTube]]
+
+[[https://www.youtube.com/watch?v=ymMlftdGx4I][https://img.youtube.com/vi/ymMlftdGx4I/0.jpg]]
+
+[[https://www.youtube.com/watch?v=HJQ86HuSIJI][agent-shell + Claude Skills + Charts - YouTube]]
+
+[[https://www.youtube.com/watch?v=HJQ86HuSIJI][https://img.youtube.com/vi/HJQ86HuSIJI/0.jpg]]
 
 * News
 
@@ -53,6 +61,18 @@ We now have a handful of additional packages to extend the =agent-shell= experie
 - [[https://github.com/zackattackz/agent-shell-notifications][agent-shell-notifications]]: Desktop notifications for =agent-shell= events.
 - [[https://github.com/ElleNajt/meta-agent-shell][meta-agent-shell]]: Multi-agent coordination system for =agent-shell= with inter-agent communication, task tracking, and project-level dispatching.
 - [[https://github.com/cxa/agent-shell-macext][agent-shell-macext]]: macOS-specific enhancements for =agent-shell=.
+- [[https://github.com/lllShamanlll/agent-shell-org-transcript][agent-shell-org-transcript]]: Org-mode transcripts for =agent-shell= sessions, with org-roam integration.
+- [[https://github.com/eddof13/ob-agent-shell][ob-agent-shell]]: Org Babel backend for executing =agent-shell= source blocks.
+- [[https://github.com/Marx-A00/agent-recall][agent-recall]]: Search, browse, and resume =agent-shell= conversation transcripts.
+- [[https://github.com/lgmoneda/agent-shell-pet][agent-shell-pet]]: Codex-like pets that broadcast agent-shell session states.
+- [[https://github.com/junyi-hou/agent-shell-tramp][agent-shell-tramp]]: Tramp integration for =agent-shell=.
+* Articles
+- 20Y: [[https://20y.hu/~slink/journal/agent-shell/index.html][Agentic development workflow in Emacs]]
+- Skye: [[https://skyefreeman.com/blog/2026/04/15/how-im-using-llms-with-emacs][How I'm using LLM's via Emacs]].
+- sincebyte: [[https://neoemacs.com/posts/agent-shell-cursor-agent-cli/][Agent Shell Cursor Agent Cli]].
+- Naputo: [[https://blog.n-daisuke897.com/posts/2026-03-01-agent-shell-session-selection/][How to Select Sessions When Starting the agent-shell ACP Client Running on Emacs]]
+- vandee: [[https://www.vandee.art/blog/2026-01-23-my-agent-practice-with-opencode-in-emacs.html][My Agent Practice with OpenCode in Emacs]].
+- Fedora Project Wiki: [[https://fedoraproject.org/wiki/SIGs/AI-ML#agent-shell][AI/ML Special Interest Group]].
 
 * Icons
 
@@ -64,13 +84,15 @@ Thanks to [[https://github.com/lobehub/lobe-icons][Lobe Icons]] for the lovely i
 
 *** Claude Agent SDK
 
-For Anthropic's [[https://platform.claude.com/docs/en/agent-sdk/overview][Claude Agent SDK]] (formerly known as the Claude Code SDK), follow [[https://github.com/agentclientprotocol/claude-agent-acp][claude-agent-acp instructions]], typically something like:
+For Anthropic's [[https://code.claude.com/docs/en/overview][Claude Agent]] (formerly known as the Claude Code), follow [[https://github.com/agentclientprotocol/claude-agent-acp][claude-agent-acp instructions]], typically something like:
 
 #+begin_src bash
 npm install -g @agentclientprotocol/claude-agent-acp
 #+end_src
 
 *Note:* The =-g= flag is required to install the binary globally so it's available in your PATH. After installation, verify it's available by running =which claude-agent-acp= in your terminal.
+
+Optionally: You may also need [[https://code.claude.com/docs/en/overview][Claude Agent]] itself if you want to use a Claude subscription (run the CLI outside of Emacs at least once to log in to your subscription and then use =agent-shell= from Emacs). Follow Claude Agent's [[https://code.claude.com/docs/en/overview#get-started][get started]] for installation.
 
 *** Codex
 
@@ -93,6 +115,28 @@ npm install -g @blowmage/cursor-agent-acp
 #+end_src
 
 See https://github.com/blowmage/cursor-agent-acp-npm for details.
+
+
+*** Kimi Code CLI
+
+For Kimi Code CLI, install with:
+
+#+begin_src bash
+curl -L code.kimi.com/install.sh | bash
+#+end_src
+
+See https://www.kimi.com/code for details.
+
+*** CodeBuddy
+
+For CodeBuddy agent, install the CodeBuddy CLI and ensure ACP mode is available.
+For example:
+
+#+begin_src bash
+codebuddy --acp
+#+end_src
+
+See https://www.codebuddy.ai/docs/zh/ide/Getting-Started/Installation for details.
 
 *** Kiro CLI
 
@@ -135,13 +179,13 @@ See https://github.com/mistralai/mistral-vibe for details.
 
 *** Factory Droid
 
-For Factory Droid, install the =droid-acp= client:
+For Factory Droid, install Droid:
 
 #+begin_src bash
-npm install -g droid-acp
+curl -fsSL https://app.factory.ai/cli | sh
 #+end_src
 
-See https://github.com/yaonyan/droid-acp for details.
+See https://factory.ai for details.
 
 *** Pi
 
@@ -152,6 +196,27 @@ npm install -g pi-acp
 #+end_src
 
 See https://github.com/svkozak/pi-acp for details.
+
+*** Opencode + local ollama models
+
+For opencode coding agent, install with:
+
+#+begin_src bash
+curl -fsSL https://opencode.ai/install | bash
+#+end_src
+
+See https://opencode.ai/ for details.
+
+For local ollama models, sudo permission is needed to initialize ~ollama.service~. The following will install ollama and a local Qwen2.5:7b model.
+
+#+begin_src bash
+curl -fsSL https://ollama.com/install.sh | sh
+opencode pull qwen2.5:7b
+#+end_src
+
+If you are behind a network proxy, ~opencode pull~ will timeout. You then need to add proxy settings inside ~/etc/systemd/system/ollama.service~
+
+See https://ollama.com/ for details
 
 ** Installation
 
@@ -171,6 +236,19 @@ You can install via:
 #+end_src
 
 This will automatically install the required dependencies ([[https://melpa.org/#/acp][acp.el]] and [[https://melpa.org/#/shell-maker][shell-maker]]).
+
+*** Optional: image utilities
+
+Pasting images from the clipboard (=agent-shell-send-clipboard-image= or =yank= or =C-y=) and capturing screenshots (=agent-shell-send-screenshot=) rely on external tools. Install the ones for your platform:
+
+| Platform        | Clipboard paste                          | Screenshot capture           |
+|-----------------+------------------------------------------+------------------------------|
+| macOS           | =brew install pngpaste=                    | =screencapture= (preinstalled) |
+| Linux (Wayland) | =wl-paste= (e.g. =apt install wl-clipboard=) | =import= (from ImageMagick)    |
+| Linux (X11)     | =apt install xclip=                        | =import= (from ImageMagick)    |
+| Windows         | =powershell=                               | (not bundled)                |
+
+Handlers are detected at runtime via =executable-find=. See =agent-shell-clipboard-image-handlers= and =agent-shell-screenshot-command= to customize.
 
 *** Doom Emacs
 
@@ -393,9 +471,59 @@ For API key authentication:
 		   (shell-command-to-string "source ~/.vibe/.env; echo $MISTRAL_API_KEY")))))
 #+end_src
 
+*** Opencode + local ollama Qwen2.5
+
+If ~opencode~ is not found by ~agent-shell~, you can add it to the search path
+
+#+begin_src emacs-lisp
+(use-package agent-shell
+      :ensure t
+      :config
+         (add-to-list 'exec-path "~/.opencode/bin/"))
+#+end_src
+
+To register the local Qwen2.5:7b model in opencode, two files needs to be edited:
+
+~./config/opencode/opencode.json~
+#+BEGIN_SRC js
+     {
+         "$schema": "https://opencode.ai/config.json",
+         "permission": {
+     	"edit": "ask",
+     	"bash": "ask",
+     	"webfetch": "allow"
+         },
+        "provider": {
+            "ollama": {
+     	   "name": "qwen2.5:7b",
+     	   "npm": "@ai-sdk/openai-compatible",
+                "options": {
+                    "baseURL": "http://localhost:11434/v1"
+                },
+                "models": {
+           	       "qwen2.5:7b": { "name": "Qwen2.5 7b" }
+                }
+            }
+        }
+     }
+#+END_SRC
+
+and a dummy auth file ~./local/share/opencode/auth.json~
+
+#+begin_src js
+{
+    "ollama": {
+      "type": "api",
+  	  "key": "ollama"
+    }
+}
+#+end_src
+
+Huge thanks for /gdindi/ for finding and and describing this in https://github.com/xenodium/agent-shell/issues/526
+
 *** Customizing Available Agents
 
-By default, =agent-shell= includes configurations for all supported agents (Claude Agent, Gemini CLI, Codex, Goose, Qwen Code, and Auggie). You can customize which agents are available through the =agent-shell-agent-configs= variable.
+By default, =agent-shell= includes configurations for all supported agents (Claude Agent, Gemini CLI, Codex, Goose, Cursor, CodeBuddy, Qwen Code, and Auggie). You can customize which agents are available through the =agent-shell-agent-configs= variable.
 
 ** Usage
 
@@ -411,6 +539,7 @@ Start a specific agent shell session directly:
 
 - =M-x agent-shell-anthropic-start-claude-code= - Start a Claude Agent session
 - =M-x agent-shell-auggie-start-agent= - Start an Auggie agent session
+- =M-x agent-shell-codebuddy-start-agent= - Start a CodeBuddy agent session
 - =M-x agent-shell-openai-start-codex= - Start a Codex agent session
 - =M-x agent-shell-google-start-gemini= - Start a Gemini agent session
 - =M-x agent-shell-goose-start-agent= - Start a Goose agent session
@@ -500,7 +629,7 @@ Optional: to prevent the agent running inside the container to access your local
 
 *** Data storage location
 
-By default, agent-shell stores per-project data (transcripts, screenshots, etc.) under a =.agent-shell/= directory in the project root, and automatically adds that directory to =.gitignore= the first time it is created.  This is a one-time operation: removing the entry from =.gitignore= will not cause it to be re-added.
+By default, agent-shell stores per-project data (transcripts, screenshots, etc.) under a =.agent-shell/= directory in the project root, and automatically adds that directory to =.gitignore= the first time it is created.  This is a one-time operation: removing the entry from =.gitignore= will not cause it to be re-added.  If you configure =agent-shell-dot-subdir-function= to store data outside the project =.agent-shell/= directory, agent-shell will not update the project's =.gitignore=.
 
 You can change where this data is stored by setting =agent-shell-dot-subdir-function= to a custom function.  The function receives one argument, SUBDIR (e.g. ="screenshots"=), and must return the absolute path to that subdirectory (without creating it).
 
@@ -523,6 +652,7 @@ You can send a screenshot from your clipboard to your shell with =agent-shell-se
 - =wl-paste= for Wayland desktops,
 - =xclip= for Xorg,
 - =pngpaste= for MacOS.
+- =powershell= for Windows.
 
 *** Inhibiting minor modes during file writes
 
@@ -560,6 +690,21 @@ All of the above settings can be applied on a per-project basis using [[https://
                   ("C-c C-k" . agent-shell-interrupt)))
   #+end_src
 
+*** Session controls
+
+When the active agent advertises the corresponding session option, you can switch it from the shell buffer:
+
+- =C-c C-v= - Set model.
+- =C-c C-m= - Set session mode.
+- =C-c C-t= - Set thought level (reasoning effort).
+- =C-<tab>= - Cycle session mode.
+
+The current selections are shown in the header right after the agent name; click any segment to open a popup menu. The thought level segment only appears for models that expose it (e.g. Claude Sonnet/Opus with effort levels; Codex's reasoning_effort).
+
+From the viewport (=agent-shell-viewport-view-mode= / =agent-shell-viewport-edit-mode=), the same controls are bound to:
+
+- View mode: =v= (model), =s= (mode), =t= (thought level).
+- Edit mode: =C-c C-v=, =C-c C-m=, =C-c C-t=.
 
 *** Evil
 Evil users may want to rebind ~RET~ for inserting a new line in =insert
@@ -666,12 +811,12 @@ always go to Evil modes if you need to with ~C-z~).
 | agent-shell-permission-icon                   | Icon displayed when shell commands require permission to execute.               |
 | agent-shell-pi-acp-command                    | Command and parameters for the Pi ACP client.                                   |
 | agent-shell-pi-environment                    | Environment variables for the Pi client.                                        |
-| agent-shell-prefer-session-resume             | Prefer ACP session resume over session load when both are available.            |
 | agent-shell-prefer-viewport-interaction       | Non-nil makes ‘agent-shell’ prefer viewport interaction over shell interaction. |
 | agent-shell-preferred-agent-config            | Default agent to use for all new shells.                                        |
 | agent-shell-qwen-acp-command                  | Command and parameters for the Qwen Code client.                                |
 | agent-shell-qwen-authentication               | Configuration for Qwen Code authentication.                                     |
 | agent-shell-qwen-environment                  | Environment variables for the Qwen Code client.                                 |
+| agent-shell-session-restore-strategy          | How much prior context to show when restoring a session.                        |
 | agent-shell-screenshot-command                | The program to use for capturing screenshots.                                   |
 | agent-shell-section-functions                 | Abnormal hook run after overlays are applied (experimental).                    |
 | agent-shell-session-strategy                  | How to handle sessions when starting a new shell.                               |
@@ -800,6 +945,7 @@ always go to Evil modes if you need to with ~C-z~).
 |                 | agent-shell-viewport-previous-page                      | Show previous interaction (request / response).                               |
 |                 | agent-shell-viewport-refresh                            | Refresh viewport buffer content with current item from shell.                 |
 |                 | agent-shell-viewport-reply                              | Reply as a follow-up and compose another prompt/query.                        |
+|                 | agent-shell-viewport-quote-reply                        | Reply with the entire response block-quoted.                                  |
 |                 | agent-shell-viewport-set-session-mode                   | Set session mode.                                                             |
 |                 | agent-shell-viewport-set-session-model                  | Set session model.                                                            |
 |                 | agent-shell-viewport-view-last                          | Display the last request/response interaction.                                |
@@ -815,6 +961,8 @@ Please read through this section before filing issues or feature requests. I won
 - *Screenshots*: A screenshot helps correlate what you see with the protocol data.
 - *Your agent-shell config*: Share any relevant =agent-shell= variable settings from your Emacs config.
 - *Profiling data* (for performance issues): Use =M-x profiler-start=, reproduce the issue, then =M-x profiler-report= (and =M-x profiler-stop=). Share the report.
+
+* FAQ
 
 ** Why doesn't =agent-shell= offer all slash commands/skills available in CLI agent?
 
@@ -833,6 +981,8 @@ Agents without ACP support are out of scope for integrating with =agent-shell=. 
 
 Could be the agent itself missing an [[https://agentclientprotocol.com][Agent Client Protocol]] feature, =agent-shell= missing the feature, or both :) So which one is it? It's hard to tell unless we look at [[https://agentclientprotocol.com][Agent Client Protocol]] traffic between the two.
 
+** Is shx supported?
+No. There are reports that [[https://github.com/xenodium/agent-shell/issues/543][it does not work]] with agent-shell.
 ** How do I view/get [[https://agentclientprotocol.com][Agent Client Protocol]] traffic?
 
 1. =M-x agent-shell-toggle-logging= (make sure logging is ON).
@@ -853,7 +1003,7 @@ Sometimes including a traffic screenshot in an issue is enough. Other times incl
 
 If you're able to determine the agent is missing a feature (or a bug is present) in their [[https://agentclientprotocol.com][Agent Client Protocol]] implementation, please file an issue directly with the agent folks. For example:
 
-- [[https://github.com/zed-industries/claude-code-acp][claude-code-acp]]: For Claude Agent.
+- [[https://github.com/agentclientprotocol/claude-agent-acp][claude-agent-acp]]: For Claude Agent.
 - [[https://github.com/zed-industries/codex-acp][codex-acp]]: For Codex.
 - [[https://github.com/google-gemini/gemini-cli][Gemini CLI]].
 - [[https://block.github.io/goose/docs/getting-started/installation][Goose]].

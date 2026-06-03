@@ -116,16 +116,18 @@ environment variables are required by default."
   "Pi ASCII art."
   (let* ((is-dark (eq (frame-parameter nil 'background-mode) 'dark))
          (text (string-trim "
-        ██████╗ ██╗
-        ██╔══██╗██║
-        ██████╔╝██║
-        ██╔═══╝ ██║
-        ██║     ██║
-        ╚═╝     ╚═╝
+        ████████████
+        ████████████
+        ████    ████
+        ████    ████
+        ████████    ████
+        ████████    ████
+        ████        ████
+        ████        ████
 " "\n")))
     (propertize text 'font-lock-face (if is-dark
-                                         '(:foreground "#ff6b6b" :inherit fixed-pitch)
-                                       '(:foreground "#c0392b" :inherit fixed-pitch)))))
+                                         '(:foreground "#ffffff" :inherit fixed-pitch)
+                                       '(:foreground "#000000" :inherit fixed-pitch)))))
 
 (provide 'agent-shell-pi)
 

@@ -37,10 +37,6 @@
 (require 'subr-x)
 (require 'text-property-search)
 
-(defvar-local agent-shell-ui--content-store nil
-  "A hash table used to save sui content like body.
-This avoids duplicating body content in text properties which is more costly.")
-
 (cl-defun agent-shell-ui-make-fragment-model (&key (namespace-id "global") (block-id "1") label-left label-right body)
   "Create a fragment model alist.
 NAMESPACE-ID, BLOCK-ID, LABEL-LEFT, LABEL-RIGHT, and BODY are the keys."
@@ -69,119 +65,314 @@ When NAVIGATION is `always', block is always TAB navigatable.
 When EXPANDED is non-nil, body will be expanded by default.
 When NO-UNDO is non-nil, disable undo recording for this operation.
 
-For existing blocks, the current expansion state is preserved unless overridden."
-  (save-mark-and-excursion
-    (let* ((inhibit-read-only t)
-           (buffer-undo-list (if no-undo t buffer-undo-list))
-           (namespace-id (map-elt model :namespace-id))
-           (qualified-id (format "%s-%s" namespace-id (map-elt model :block-id)))
-           (new-label-left (map-elt model :label-left))
-           (new-label-right (map-elt model :label-right))
-           (new-body (map-elt model :body))
-           (block-start nil)
-           (padding-start nil)
-           (padding-end nil)
-           (match (save-mark-and-excursion
-                    (goto-char (point-max))
-                    (text-property-search-backward
-                     'agent-shell-ui-state nil
-                     (lambda (_ state)
-                       (equal (map-elt state :qualified-id) qualified-id))
-                     t))))
-      (when (or new-label-left new-label-right new-body)
-        (when match
-          (goto-char (prop-match-beginning match)))
-        (if (and match (not create-new))
-            ;; Found existing block - delete and regenerate
-            (let* ((existing-model (agent-shell-ui--read-fragment-at-point))
-                   (state (get-text-property (point) 'agent-shell-ui-state))
-                   (existing-body (map-elt existing-model :body))
-                   (block-end (prop-match-end match))
-                   (final-body (if new-body
-                                   (if (and append existing-body)
-                                       (concat existing-body new-body)
-                                     new-body)
-                                 existing-body))
-                   (final-model (list (cons :namespace-id namespace-id)
-                                      (cons :block-id (map-elt model :block-id))
-                                      (cons :label-left (or new-label-left
-                                                            (map-elt existing-model :label-left)))
-                                      (cons :label-right (or new-label-right
-                                                             (map-elt existing-model :label-right)))
-                                      (cons :body final-body))))
-              (setq block-start (prop-match-beginning match))
+For existing blocks, the current expansion state is preserved unless overridden.
 
-              ;; Safely replace existing block using narrow-to-region
-              (save-excursion
-                (goto-char block-start)
-                (skip-chars-backward "\n")
-                (setq padding-start (point)))
-
-              ;; Replace block
-              (delete-region block-start block-end)
-              (goto-char block-start)
-              (agent-shell-ui--insert-fragment final-model qualified-id
-                                               (not (map-elt state :collapsed))
-                                               navigation)
-              (setq padding-end (point)))
-
-          ;; Not found or create-new - insert new block
-          (goto-char (point-max))
-          (setq padding-start (point))
-          (agent-shell-ui--insert-read-only (agent-shell-ui--required-newlines 2))
-          (setq block-start (point))
-          (agent-shell-ui--insert-fragment model qualified-id expanded navigation)
-          (agent-shell-ui--insert-read-only "\n\n")
-          (setq padding-end (point))))
-      (when on-post-process
-        (funcall on-post-process))
-      (when-let ((block-range (agent-shell-ui--block-range :position block-start)))
-        (list (cons :block block-range)
-              (cons :body (agent-shell-ui--nearest-range-matching-property
-                           :property 'agent-shell-ui-section :value 'body
-                           :from (map-elt block-range :start)
-                           :to (map-elt block-range :end)))
-              (cons :label-left (agent-shell-ui--nearest-range-matching-property
-                                 :property 'agent-shell-ui-section :value 'label-left
+Updates to existing blocks are applied per section: a body append
+inserts the new chunk at the end of the body region without disturbing
+already-rendered content, so `agent-shell-markdown' frozen ranges
+stay intact and streaming append is O(new-chunk) rather than
+O(accumulated-body).  Label-only updates leave the body untouched."
+  (let* ((window (get-buffer-window (current-buffer)))
+         (saved-window-start (and window (window-start window))))
+    (unwind-protect
+        (save-mark-and-excursion
+          (let* ((inhibit-read-only t)
+                 (buffer-undo-list (if no-undo t buffer-undo-list))
+                 (namespace-id (map-elt model :namespace-id))
+                 (qualified-id (format "%s-%s" namespace-id (map-elt model :block-id)))
+                 (new-label-left (map-elt model :label-left))
+                 (new-label-right (map-elt model :label-right))
+                 (new-body (map-elt model :body))
+                 (block-start nil)
+                 (padding-start nil)
+                 (padding-end nil)
+                 (match (save-mark-and-excursion
+                          (goto-char (point-max))
+                          (text-property-search-backward
+                           'agent-shell-ui-state nil
+                           (lambda (_ state)
+                             (equal (map-elt state :qualified-id) qualified-id))
+                           t))))
+            (when (or new-label-left new-label-right new-body)
+              (cond
+               ;; Existing block — apply edits per changed section.
+               ((and match (not create-new))
+                (let* ((state (get-text-property (prop-match-beginning match)
+                                                 'agent-shell-ui-state))
+                       (collapsed (map-elt state :collapsed))
+                       (existing-body-range
+                        (agent-shell-ui--nearest-range-matching-property
+                         :property 'agent-shell-ui-section :value 'body
+                         :from (prop-match-beginning match)
+                         :to (prop-match-end match))))
+                  (setq block-start (prop-match-beginning match))
+                  (save-excursion
+                    (goto-char block-start)
+                    (skip-chars-backward "\n")
+                    (setq padding-start (point)))
+                  (when new-label-left
+                    (agent-shell-ui--replace-label
+                     qualified-id 'label-left new-label-left))
+                  (when new-label-right
+                    (agent-shell-ui--replace-label
+                     qualified-id 'label-right new-label-right))
+                  (when new-body
+                    (cond
+                     ;; Append to existing body — preserves rendered content.
+                     ((and append existing-body-range)
+                      (agent-shell-ui--append-body
+                       existing-body-range new-body qualified-id collapsed))
+                     ;; Replace existing body in place.
+                     (existing-body-range
+                      (agent-shell-ui--replace-body
+                       existing-body-range new-body qualified-id collapsed))
+                     ;; Body arriving for the first time on a labels-only
+                     ;; block — fall back to delete-and-regenerate so the
+                     ;; indicator transitions from placeholder to triangle
+                     ;; and the labels↔body separator is inserted.  Labels
+                     ;; are recovered from the buffer (no cache).  The block
+                     ;; extent is re-derived from the buffer here because
+                     ;; `agent-shell-ui--replace-label' may have changed
+                     ;; label length, leaving the original `prop-match-end'
+                     ;; stale.
+                     (t
+                      (let* ((current-block-range
+                              (agent-shell-ui--block-range :position block-start))
+                             (current-block-end
+                              (or (map-elt current-block-range :end)
+                                  (prop-match-end match)))
+                             (existing-labels
+                              (agent-shell-ui--read-fragment-labels
+                               block-start current-block-end))
+                             (final-model
+                              (list (cons :namespace-id namespace-id)
+                                    (cons :block-id (map-elt model :block-id))
+                                    (cons :label-left
+                                          (or new-label-left
+                                              (map-elt existing-labels :label-left)))
+                                    (cons :label-right
+                                          (or new-label-right
+                                              (map-elt existing-labels :label-right)))
+                                    (cons :body new-body))))
+                        (delete-region block-start current-block-end)
+                        (goto-char block-start)
+                        (agent-shell-ui--insert-fragment
+                         final-model qualified-id (not collapsed) navigation)))))
+                  (setq padding-end
+                        (or (when-let* ((block-range
+                                         (agent-shell-ui--block-range :position block-start)))
+                              (map-elt block-range :end))
+                            (point)))))
+               ;; New block.
+               (t
+                (goto-char (point-max))
+                (setq padding-start (point))
+                (agent-shell-ui--insert-read-only (agent-shell-ui--required-newlines 2))
+                (setq block-start (point))
+                (agent-shell-ui--insert-fragment model qualified-id expanded navigation)
+                (agent-shell-ui--insert-read-only "\n\n")
+                (setq padding-end (point)))))
+            (when on-post-process
+              (funcall on-post-process))
+            (when-let* ((block-range (agent-shell-ui--block-range :position block-start)))
+              (list (cons :block block-range)
+                    (cons :body (agent-shell-ui--nearest-range-matching-property
+                                 :property 'agent-shell-ui-section :value 'body
                                  :from (map-elt block-range :start)
                                  :to (map-elt block-range :end)))
-              (cons :label-right (agent-shell-ui--nearest-range-matching-property
-                                  :property 'agent-shell-ui-section :value 'label-right
-                                  :from (map-elt block-range :start)
-                                  :to (map-elt block-range :end)))
-              (cons :padding (when (and padding-start padding-end)
-                               (list (cons :start padding-start)
-                                     (cons :end padding-end)))))))))
+                    (cons :label-left (agent-shell-ui--nearest-range-matching-property
+                                       :property 'agent-shell-ui-section :value 'label-left
+                                       :from (map-elt block-range :start)
+                                       :to (map-elt block-range :end)))
+                    (cons :label-right (agent-shell-ui--nearest-range-matching-property
+                                        :property 'agent-shell-ui-section :value 'label-right
+                                        :from (map-elt block-range :start)
+                                        :to (map-elt block-range :end)))
+                    (cons :padding (when (and padding-start padding-end)
+                                     (list (cons :start padding-start)
+                                           (cons :end padding-end))))))))
+      (when window
+        (set-window-start window saved-window-start t)))))
 
+(defun agent-shell-ui--read-fragment-labels (block-start block-end)
+  "Return alist with :label-left and :label-right strings (no properties).
+Reads from the buffer between BLOCK-START and BLOCK-END.  Used only by
+the body-arriving-on-labels-only fallback in `agent-shell-ui-update-fragment'.
+Labels are short, prop-free strings — safe to round-trip through the
+buffer."
+  (let (fields)
+    (when-let* ((range (agent-shell-ui--nearest-range-matching-property
+                        :property 'agent-shell-ui-section :value 'label-right
+                        :from block-start :to block-end)))
+      (push (cons :label-right
+                  (buffer-substring-no-properties (map-elt range :start)
+                                                  (map-elt range :end)))
+            fields))
+    (when-let* ((range (agent-shell-ui--nearest-range-matching-property
+                        :property 'agent-shell-ui-section :value 'label-left
+                        :from block-start :to block-end)))
+      (push (cons :label-left
+                  (buffer-substring-no-properties (map-elt range :start)
+                                                  (map-elt range :end)))
+            fields))
+    fields))
 
-(defun agent-shell-ui--read-fragment-at (position qualified-id)
-  "Read fragment at POSITION with QUALIFIED-ID."
-  (when-let ((fragment (list (cons :block-id qualified-id)))
-             (state (get-text-property position 'agent-shell-ui-state))
-             (range (agent-shell-ui--block-range :position position)))
-    ;; TODO: Get rid of merging block namespace and id.
-    ;; Extract namespace-id from qualified-id if it contains a dash
-    (when (string-match "^\\(.+\\)-\\(.+\\)$" qualified-id)
-      (setf (map-elt fragment :namespace-id) (match-string 1 qualified-id))
-      (setf (map-elt fragment :block-id) (match-string 2 qualified-id)))
-    (save-mark-and-excursion
-      (save-restriction
-        (narrow-to-region (map-elt range :start)
-                          (map-elt range :end))
-        (goto-char (map-elt range :start))
-        (setf (map-elt fragment :collapsed) (map-elt state :collapsed))
-        (when-let ((label-left (agent-shell-ui--nearest-range-matching-property
-                                :property 'agent-shell-ui-section :value 'label-left)))
-          (setf (map-elt fragment :label-left) (buffer-substring (map-elt label-left :start)
-                                                                 (map-elt label-left :end))))
-        (when-let ((label-right (agent-shell-ui--nearest-range-matching-property
-                                 :property 'agent-shell-ui-section :value 'label-right)))
-          (setf (map-elt fragment :label-right) (buffer-substring (map-elt label-right :start)
-                                                                  (map-elt label-right :end))))
-        (when agent-shell-ui--content-store
-          (when-let ((body (gethash (concat qualified-id "-body") agent-shell-ui--content-store)))
-            (setf (map-elt fragment :body) body)))))
-    fragment))
+(defun agent-shell-ui--apply-body-section-properties (start end qualified-id state body-invisible)
+  "Apply body-section text properties to chars in [START, END).
+QUALIFIED-ID and STATE feed the help-echo and agent-shell-ui-state
+properties.  BODY-INVISIBLE non-nil means the existing body region
+is currently hidden (collapsed label-ful fragment); new chars must
+match.  Explicit `invisible' assignment overrides any value the
+new chars might have inherited via rear-stickiness from preceding
+trailing-whitespace chars."
+  (add-text-properties start end
+                       `(agent-shell-ui-section body
+                                                help-echo ,qualified-id
+                                                read-only t
+                                                front-sticky (read-only)))
+  (when state
+    (put-text-property start end 'agent-shell-ui-state state))
+  (put-text-property start end 'invisible (if body-invisible t nil)))
+
+(defun agent-shell-ui--body-invisible-p (body-start body-end)
+  "Return non-nil if the existing body region [BODY-START, BODY-END) is hidden.
+Inspects the `invisible' property on the first body char.  The
+trailing-whitespace handler only sets `invisible' on chars from
+the last non-whitespace position onwards, never the first char,
+so the first char's `invisible' tracks the body's true collapse
+state — including whitespace-only bodies (e.g. a body left as
+two newlines after the markdown renderer stripped an empty
+fenced block)."
+  (and (< body-start body-end)
+       (eq (get-text-property body-start 'invisible) t)))
+
+(defun agent-shell-ui--apply-trailing-whitespace-invisible (body-start body-end)
+  "Hide trailing whitespace within [BODY-START, BODY-END) via invisible property.
+Marks the hidden chars `rear-nonsticky' for `invisible' so chars later
+inserted at BODY-END don't silently inherit `invisible t' from the
+trailing-whitespace tail."
+  (save-excursion
+    (goto-char body-end)
+    (when (re-search-backward "[^ \t\n]" body-start t)
+      (forward-char 1)
+      (when (< (point) body-end)
+        (add-text-properties (point) body-end
+                             '(invisible t rear-nonsticky (invisible)))))))
+
+(defun agent-shell-ui--append-body (body-range chunk qualified-id _collapsed)
+  "Append CHUNK to the body region described by BODY-RANGE.
+
+BODY-RANGE is an alist with `:start' and `:end' marking the existing
+body section.  Existing body chars stay in place — `agent-shell-markdown'
+frozen tags and per-char faces survive across streaming chunks, no
+re-rendering needed.  QUALIFIED-ID is the fragment identifier used to
+tag the new chars so the body's section property and help-echo line up
+with the rest of the block.
+
+_COLLAPSED is intentionally unused: visibility for new chars is derived
+from the current visibility of the existing body, not from caller-supplied
+state, because label-less fragments don't follow `state :collapsed'
+(their bodies stay visible regardless of how `:collapsed' was stored)."
+  (when (and (stringp chunk) (not (string-empty-p chunk)))
+    (let* ((body-start (map-elt body-range :start))
+           (body-end (map-elt body-range :end))
+           (state (get-text-property (max body-start (1- body-end))
+                                     'agent-shell-ui-state))
+           (body-invisible (agent-shell-ui--body-invisible-p body-start body-end)))
+      ;; Trailing-whitespace invisibility on the old tail may no longer
+      ;; apply once the chunk lands — clear and re-derive.  Only when
+      ;; the body is visible; for a hidden body the existing invisible
+      ;; spans the whole body and must stay.
+      (unless body-invisible
+        (remove-text-properties body-start body-end '(invisible nil)))
+      (goto-char body-end)
+      (let ((insert-start (point)))
+        (insert (agent-shell-ui--indent-text chunk "  "))
+        (let ((insert-end (point)))
+          (agent-shell-ui--apply-body-section-properties
+           insert-start insert-end qualified-id state body-invisible)
+          (agent-shell-ui--apply-trailing-whitespace-invisible
+           body-start insert-end))))))
+
+(defun agent-shell-ui--replace-body (body-range new-body qualified-id _collapsed)
+  "Replace the body region described by BODY-RANGE with NEW-BODY.
+
+BODY-RANGE is an alist with `:start' and `:end'.  Only the body chars
+are touched — the surrounding label, indicator, and padding stay put,
+so block-id and section tagging on the rest of the block are preserved.
+QUALIFIED-ID is the fragment identifier used to tag the inserted chars.
+
+_COLLAPSED is intentionally unused: visibility on the inserted chars
+matches the body's current visibility, not caller-supplied state."
+  (let* ((body-start (map-elt body-range :start))
+         (body-end (map-elt body-range :end))
+         (state (get-text-property (max body-start (1- body-end))
+                                   'agent-shell-ui-state))
+         (body-invisible (agent-shell-ui--body-invisible-p body-start body-end)))
+    (delete-region body-start body-end)
+    (goto-char body-start)
+    (when (and (stringp new-body) (not (string-empty-p new-body)))
+      (let ((trimmed new-body))
+        (when (string-prefix-p "\n" trimmed)
+          (setq trimmed (string-trim-left trimmed "\n")))
+        (when (string-suffix-p "\n\n" trimmed)
+          (setq trimmed (concat (string-trim-right trimmed) "\n\n")))
+        (let ((insert-start (point)))
+          (insert (agent-shell-ui--indent-text
+                   (string-remove-prefix "  " trimmed) "  "))
+          (let ((insert-end (point)))
+            (agent-shell-ui--apply-body-section-properties
+             insert-start insert-end qualified-id state body-invisible)
+            (agent-shell-ui--apply-trailing-whitespace-invisible
+             insert-start insert-end)))))))
+
+(defun agent-shell-ui--replace-label (qualified-id section new-text)
+  "Replace the SECTION region of fragment QUALIFIED-ID with NEW-TEXT.
+
+SECTION is one of `label-left' or `label-right'.  Only the named label
+region is rewritten — the other label, the indicator, and the body of
+the same block stay untouched, so block tagging and fragment identity
+are preserved across label updates."
+  (when (stringp new-text)
+    (when-let* ((block-match
+                 (save-excursion
+                   (goto-char (point-max))
+                   (text-property-search-backward
+                    'agent-shell-ui-state nil
+                    (lambda (_ state)
+                      (equal (map-elt state :qualified-id) qualified-id))
+                    t)))
+                (region
+                 (save-excursion
+                   (goto-char (prop-match-beginning block-match))
+                   (when-let* ((m (text-property-search-forward
+                                   'agent-shell-ui-section section t t)))
+                     (when (<= (prop-match-end m) (prop-match-end block-match))
+                       (cons (prop-match-beginning m)
+                             (prop-match-end m)))))))
+      (let* ((region-start (car region))
+             (region-end (cdr region))
+             (state (get-text-property region-start 'agent-shell-ui-state)))
+        (delete-region region-start region-end)
+        (goto-char region-start)
+        (let ((insert-start (point)))
+          (insert (agent-shell-ui-add-action-to-text
+                   new-text
+                   (lambda ()
+                     (interactive)
+                     (agent-shell-ui-toggle-fragment-at-point))
+                   (lambda ()
+                     (message "Press RET to toggle"))))
+          (let ((insert-end (point)))
+            (add-text-properties insert-start insert-end
+                                 `(agent-shell-ui-section ,section
+                                                          help-echo ,qualified-id
+                                                          read-only t
+                                                          front-sticky (read-only)))
+            (when state
+              (put-text-property insert-start insert-end
+                                 'agent-shell-ui-state state))))))))
+
 
 (cl-defun agent-shell-ui-delete-fragment (&key namespace-id block-id no-undo)
   "Delete fragment with NAMESPACE-ID and BLOCK-ID.
@@ -201,20 +392,11 @@ When NO-UNDO is non-nil, disable undo recording for this operation."
       (when match
         (let ((block-start (prop-match-beginning match))
               (block-end (prop-match-end match)))
-          (when agent-shell-ui--content-store
-            (remhash qualified-id agent-shell-ui--content-store))
           ;; Remove vertical space that's part of the block.
           (goto-char block-end)
           (skip-chars-forward " \t\n")
           (setq block-end (point))
           (delete-region block-start block-end))))))
-
-(defun agent-shell-ui--read-fragment-at-point ()
-  "Read fragment at point, returning model or nil if none found."
-  (when-let ((state (get-text-property (point) 'agent-shell-ui-state))
-             (range (agent-shell-ui--block-range :position (point))))
-    (agent-shell-ui--read-fragment-at (map-elt range :start)
-                                      (map-elt state :qualified-id))))
 
 (cl-defun agent-shell-ui--block-range (&key position)
   "Get block range at POSITION if found.  Nil otherwise.
@@ -223,7 +405,7 @@ In the form:
 
   ((start . 1)
    (end . 3))."
-  (when-let ((qualified-id (map-elt (get-text-property (or position (point)) 'agent-shell-ui-state) :qualified-id)))
+  (when-let* ((qualified-id (map-elt (get-text-property (or position (point)) 'agent-shell-ui-state) :qualified-id)))
     (agent-shell-ui--nearest-range-matching-property
      :property 'agent-shell-ui-state
      :value qualified-id
@@ -274,7 +456,7 @@ NAVIGATION controls navigability:
         (collapsable))
 
     ;; Insert collapse indicator if body exists
-    (when-let ((has-labels (or label-left label-right)))
+    (when-let* ((has-labels (or label-left label-right)))
       (if body
           (progn
             (setq collapsable has-labels)
@@ -379,17 +561,9 @@ NAVIGATION controls navigability:
           (when (< (point) body-end)
             (add-text-properties (point) body-end
                                  '(invisible t))))))
-    (when body
-      (unless agent-shell-ui--content-store
-        (setq agent-shell-ui--content-store (make-hash-table :test 'equal)))
-      (puthash (concat qualified-id "-body") body agent-shell-ui--content-store))
     (put-text-property
      block-start (or body-end label-right-end label-left-end)
      'agent-shell-ui-state (list
-                            ;; Note: Avoid storing chunky data in
-                            ;; agent-shell-ui-state as it will impact performance.
-                            ;; Use agent-shell-ui--content-store for these instances.
-                            ;; For example, fragment body.
                             (cons :qualified-id qualified-id)
                             (cons :collapsed (not expanded))
                             (cons :navigatable (cond
@@ -550,16 +724,21 @@ When NO-UNDO is non-nil, disable undo recording."
 (defun agent-shell-ui--indent-text (text &optional indent-string)
   "Indent TEXT visually without affecting copied text.
 INDENT-STRING defaults to two spaces.
-Uses `line-prefix' display property so indentation is visual only."
+Uses `line-prefix' display property so indentation is visual only.
+
+TEXT's caller-set text properties (eg. `agent-shell-markdown-frozen'
+on a pre-rendered diff) are preserved on every char — the previous
+split-and-rejoin reconstructed the inter-line `\\n's as bare strings,
+which broke contiguous property ranges and made the markdown
+renderer's avoid-range checks miss header / blockquote matches
+that span a line break."
   (when text
-    (let* ((indent (or indent-string "  "))
-           (lines (split-string text "\n")))
-      (concat
-       (propertize (car lines) 'line-prefix indent 'wrap-prefix indent)
-       (mapconcat (lambda (line)
-                    (propertize (concat "\n" line) 'line-prefix indent 'wrap-prefix indent))
-                  (cdr lines)
-                  "")))))
+    (let ((indent (or indent-string "  "))
+          (copy (copy-sequence text)))
+      (add-text-properties 0 (length copy)
+                           `(line-prefix ,indent wrap-prefix ,indent)
+                           copy)
+      copy)))
 
 (defun agent-shell-ui-forward-block ()
   "Jump to the next block."
@@ -568,14 +747,14 @@ Uses `line-prefix' display property so indentation is visual only."
               (found (save-mark-and-excursion
                        ;; In navigatable block already
                        ;; move past it.
-                       (when-let ((state (get-text-property (point) 'agent-shell-ui-state))
-                                  (block (agent-shell-ui--block-range :position (point))))
+                       (when-let* ((state (get-text-property (point) 'agent-shell-ui-state))
+                                   (block (agent-shell-ui--block-range :position (point))))
                          (goto-char (map-elt block :end)))
-                       (when-let ((next (text-property-search-forward
-                                         'agent-shell-ui-state nil
-                                         (lambda (_old-val new-val)
-                                           (and new-val (map-elt new-val :navigatable)))
-                                         t)))
+                       (when-let* ((next (text-property-search-forward
+                                          'agent-shell-ui-state nil
+                                          (lambda (_old-val new-val)
+                                            (and new-val (map-elt new-val :navigatable)))
+                                          t)))
                          (prop-match-beginning next)))))
     (when found
       (deactivate-mark)
@@ -589,14 +768,14 @@ Uses `line-prefix' display property so indentation is visual only."
               (found (save-mark-and-excursion
                        ;; In navigatable block already
                        ;; move to beginning.
-                       (when-let ((state (get-text-property (point) 'agent-shell-ui-state))
-                                  (block (agent-shell-ui--block-range :position (point))))
+                       (when-let* ((state (get-text-property (point) 'agent-shell-ui-state))
+                                   (block (agent-shell-ui--block-range :position (point))))
                          (goto-char (map-elt block :start)))
-                       (when-let ((prev (text-property-search-backward
-                                         'agent-shell-ui-state nil
-                                         (lambda (_old-val new-val)
-                                           (and new-val (map-elt new-val :navigatable)))
-                                         t)))
+                       (when-let* ((prev (text-property-search-backward
+                                          'agent-shell-ui-state nil
+                                          (lambda (_old-val new-val)
+                                            (and new-val (map-elt new-val :navigatable)))
+                                          t)))
                          (prop-match-beginning prev)))))
     (when found
       (deactivate-mark)

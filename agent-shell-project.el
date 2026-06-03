@@ -77,7 +77,7 @@ Otherwise, if in a project, use project root."
                   (fboundp 'projectile-project-root))
          (projectile-project-root))
        (when (fboundp 'project-root)
-         (when-let ((proj (project-current)))
+         (when-let* ((proj (project-current)))
            (project-root proj)))
        default-directory
        (error "No CWD available"))))
@@ -86,12 +86,12 @@ Otherwise, if in a project, use project root."
   "Return the project name for this shell.
 
 If in a project, use project name."
-  (or (when-let (((boundp 'projectile-mode))
+  (or (when-let* (((boundp 'projectile-mode))
                  projectile-mode
                  ((fboundp 'projectile-project-name))
                  (root (projectile-project-root)))
         (projectile-project-name root))
-      (when-let (((fboundp 'project-name))
+      (when-let* (((fboundp 'project-name))
                  (project (project-current)))
         (project-name project))
       (file-name-nondirectory
