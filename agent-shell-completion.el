@@ -39,6 +39,15 @@
   :type 'boolean
   :group 'agent-shell)
 
+(defcustom agent-shell-file-completion-function
+  #'agent-shell--file-completion-at-point
+  "Function to call for @ file completion.
+Called with no arguments when @ is typed at a word boundary.
+If it returns non-nil, `completion-at-point' is not called.
+If it returns nil, falls through to the standard CAPF."
+  :type 'function
+  :group 'agent-shell)
+
 (defun agent-shell--completion-bounds (char-class trigger-char)
   "Find completion bounds for CHAR-CLASS, if TRIGGER-CHAR precedes them.
 Returns alist with :start and :end if TRIGGER-CHAR is found before
@@ -126,7 +135,8 @@ preventing spurious completions mid-word or in paths."
                  (memq (char-before (1- (point))) '(?\s ?\t ?\n))))
     (cond
      ((eq (char-before) ?@)
-      (completion-at-point))
+      (unless (funcall agent-shell-file-completion-function)
+        (completion-at-point)))
      ((and (eq (char-before) ?/)
            (agent-shell--command-completion-at-point))
       (completion-at-point)))))
