@@ -110,6 +110,46 @@ You may use \"􀇾\" as an SF Symbol on macOS."
   :type 'string
   :group 'agent-shell)
 
+(defcustom agent-shell-permission-detail-field-map
+  '(("emacs_eval-elisp" . expression)
+    ("org-search" . match)
+    ("org-roam-search" . query))
+  "Alist mapping tool call titles to their rawInput detail field.
+
+Each entry is (TITLE . FIELD) where TITLE is the tool call title
+and FIELD is the symbol name of the rawInput field to display in
+the permission dialog.
+
+This mapping is used to extract meaningful details from rawInput
+for display in permission dialogs.  For example, eval-elisp uses
+the `expression' field to show the code being evaluated.
+
+Users can extend this alist to add mappings for custom tools:
+
+  (add-to-list \\='agent-shell-permission-detail-field-map
+               \\='(\"my-custom-tool\" . my-field))"
+  :type '(alist :key-type string :value-type symbol)
+  :group 'agent-shell)
+
+(defcustom agent-shell-permission-language-map
+  '(("Bash" . "console")
+    ("emacs_eval-elisp" . "elisp"))
+  "Alist mapping tool call titles to code fence language.
+
+Each entry is (TITLE . LANGUAGE) where TITLE is the tool call title
+and LANGUAGE is the language identifier for markdown code fences.
+
+When a permission dialog displays a detail with a code fence,
+this mapping determines the language for syntax highlighting.
+For example, Bash commands use \"console\" and eval-elisp uses \"elisp\".
+
+Users can extend this alist to add mappings for custom tools:
+
+  (add-to-list \\='agent-shell-permission-language-map
+               \\='(\"python_execute\" . \"python\"))"
+  :type '(alist :key-type string :value-type string)
+  :group 'agent-shell)
+
 (defcustom agent-shell-thought-process-icon "💡"
   "Icon displayed during the AI's thought process.
 
@@ -6054,12 +6094,68 @@ for details."
 
 ;;; Permissions
 
+(defun agent-shell--extract-permission-detail (tool-call)
+  "Extract detail to display from TOOL-CALL's rawInput.
+
+Uses `agent-shell-permission-detail-field-map' to find the appropriate
+field for the tool call title.  Falls back to heuristic detection
+of long string values when no mapping exists.
+
+Returns the detail string or nil if nothing suitable found."
+  (let* ((title (map-elt tool-call :title))
+         (raw-input (map-elt tool-call :raw-input))
+         ;; Step 1: Check mapping table
+         (field-name (cdr (assoc title agent-shell-permission-detail-field-map)))
+         (mapped-detail (when field-name (map-elt raw-input field-name)))
+         ;; Step 2: Fallback to heuristic detection
+         (heuristic-detail (unless mapped-detail
+                             (agent-shell--extract-detail-from-raw-input raw-input))))
+    (or mapped-detail heuristic-detail)))
+
+(defun agent-shell--extract-detail-from-raw-input (raw-input)
+  "Extract the most display-worthy value from RAW-INPUT.
+
+Iterates through all fields and selects the longest string value
+that is at least 20 characters long and not a URL.
+Returns the value or nil if nothing suitable found."
+  (let* ((candidates
+          (delq nil
+                (mapcar (lambda (pair)
+                          (let ((val (cdr pair)))
+                            ;; Only consider strings that are long enough and not URLs
+                            (when (and (stringp val)
+                                       (> (length val) 20)
+                                       (not (string-match-p "\\`https?://" val)))
+                              val)))
+                        raw-input)))
+         ;; Select the longest string
+         (best (car (sort candidates
+                          (lambda (a b)
+                            (> (length a) (length b)))))))
+    best))
+
+(defun agent-shell--get-permission-language (tool-call)
+  "Get code fence language for TOOL-CALL.
+
+Uses `agent-shell-permission-language-map' to find the language
+identifier for syntax highlighting.
+Returns the language string or nil if no mapping exists."
+  (let ((title (map-elt tool-call :title)))
+    (cdr (assoc title agent-shell-permission-language-map))))
+
 (cl-defun agent-shell--permission-title (&key tool-call)
   "Build a display title for a permission dialog from TOOL-CALL.
 
-Combines the ACP ToolCall \\='title, \\='rawInput-derived command and
-filepath, and the structured \\='content and \\='locations fields
-(when the agent provides them) into a user-facing string.
+Combines the ACP ToolCall \\='title, \\='rawInput-derived command,
+filepath, and detail fields, and the structured \\='content and
+\\='locations fields (when the agent provides them) into a
+user-facing string.
+
+The detail field is extracted using `agent-shell-permission-detail-field-map'
+which maps tool call titles to their rawInput field names.  When a
+detail is found and a language mapping exists in
+`agent-shell-permission-language-map', the detail is wrapped in a
+code fence for syntax highlighting.
 
 Simple substring deduplication avoids showing the same info
 twice when an agent populates both \\='rawInput and \\='content,
@@ -6072,7 +6168,10 @@ For example:
   => \"edit (foo.rs)\"
 
   TOOL-CALL with title \"Bash\" and command \"ls -la\"
-  => \"```console\\nls -la\\n```\""
+  => \"```console\\nls -la\\n```\"
+
+  TOOL-CALL with title \"emacs_eval-elisp\" and expression \"(+ 1 2)\"
+  => \"```elisp\\n(+ 1 2)\\n```\""
   (let* ((title (map-elt tool-call :title))
          (raw-input (map-elt tool-call :raw-input))
          (command (agent-shell--tool-call-command-to-string
@@ -6081,6 +6180,8 @@ For example:
                        (map-elt raw-input 'fileName)
                        (map-elt raw-input 'path)
                        (map-elt raw-input 'file_path)))
+         (detail (agent-shell--extract-permission-detail tool-call))
+         (language (agent-shell--get-permission-language tool-call))
          (content-texts
           (delq nil
                 (mapcar (lambda (item)
@@ -6107,6 +6208,14 @@ For example:
                         (string-match-p (regexp-quote command) title))
                    title
                  (or command title))))
+    ;; Append detail with code fence when available
+    (when (and detail (not (string-empty-p detail)))
+      (let ((detail-text (if language
+                             (concat "```" language "\n" (string-trim detail) "\n```")
+                           (string-trim detail))))
+        (setq text (if text
+                       (concat text "\n\n" detail-text)
+                     detail-text))))
     ;; Append filename to title when available and not
     ;; already included, so the user can see which file
     ;; the permission applies to.
@@ -6120,9 +6229,12 @@ For example:
                    filename)))
     ;; Fence execute commands so markdown-overlays
     ;; renders them verbatim, not as markdown.
+    ;; This is kept for backward compatibility when command exists
+    ;; but no detail/language mapping is configured.
     (when (and text
                (equal text command)
-               (equal (map-elt tool-call :kind) "execute"))
+               (equal (map-elt tool-call :kind) "execute")
+               (not language))
       (setq text (concat "```console\n" text "\n```")))
     ;; Fold in ACP `content' text blocks attached to the tool call.
     ;; Skip blocks whose text is already a substring of what we
