@@ -591,6 +591,49 @@ x
         (agent-shell-markdown-math--refresh-if-changed))
       (should-not refreshed))))
 
+(ert-deftest agent-shell-markdown-math-image-cache-key-includes-scale ()
+  ;; The in-memory image-cache key folds in the display scale, so the same
+  ;; equation at two font sizes maps to two distinct entries.
+  (should (equal (agent-shell-markdown--math-image-cache-key "K" 0.8)
+                 (agent-shell-markdown--math-image-cache-key "K" 0.8)))
+  (should-not (equal (agent-shell-markdown--math-image-cache-key "K" 0.8)
+                     (agent-shell-markdown--math-image-cache-key "K" 1.5))))
+
+(ert-deftest agent-shell-markdown-math-image-cache-coexists-per-scale ()
+  ;; The same on-disk SVG cached at two display scales yields two distinct
+  ;; image objects that coexist: the first stays warm after the second is
+  ;; created (so a sibling buffer's images survive a font change — no clear).
+  (let ((tmp (make-temp-file "asm-svg" nil ".svg")))
+    (unwind-protect
+        (progn
+          (with-temp-file tmp
+            (insert "<svg xmlns='http://www.w3.org/2000/svg' "
+                    "width='10pt' height='10pt'>"
+                    "<rect width='10' height='10'/></svg>"))
+          (clrhash agent-shell-markdown-math--image-cache)
+          (cl-letf (((symbol-function 'agent-shell-markdown--math-svg-file)
+                     (lambda (_key) tmp)))
+            (let (img1 img2)
+              (cl-letf (((symbol-function 'agent-shell-markdown--math-display-scale)
+                         (lambda () 0.8)))
+                (setq img1 (agent-shell-markdown--math-cached-image "K")))
+              (cl-letf (((symbol-function 'agent-shell-markdown--math-display-scale)
+                         (lambda () 1.5)))
+                (setq img2 (agent-shell-markdown--math-cached-image "K")))
+              (should img1)
+              (should img2)
+              ;; Two coexisting entries, one per scale.
+              (should (= 2 (hash-table-count
+                            agent-shell-markdown-math--image-cache)))
+              ;; The first is still served from cache (warm, not evicted).
+              (cl-letf (((symbol-function 'agent-shell-markdown--math-display-scale)
+                         (lambda () 0.8)))
+                (should (eq img1 (agent-shell-markdown--math-cached-image "K"))))
+              ;; Each image carries its own scale.
+              (should (equal (image-property img1 :scale) 0.8))
+              (should (equal (image-property img2 :scale) 1.5)))))
+      (delete-file tmp))))
+
 (provide 'agent-shell-markdown-math-tests)
 
 ;;; agent-shell-markdown-math-tests.el ends here

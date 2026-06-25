@@ -236,11 +236,14 @@ real session.  The renderer's test harness loads this module
 without `agent-shell.el'; set this variable there (or stub
 `agent-shell--cache-dir') if a code path needs the directory.")
 
-;; key (sha1 of latex + color + scale + preamble) -> image object.  An
-;; equation is compiled at most once per key; subsequent renders (same
-;; session, or any buffer) reuse the cached image.
+;; image-cache key = content key (sha1 of latex + color + scale + preamble +
+;; inline) plus the display scale, via `--math-image-cache-key'.  Folding the
+;; scale in lets images at different font sizes coexist, so a font change just
+;; adds an entry (no cache clear) and sibling buffers' warm images survive.
+;; The underlying SVG is still compiled at most once per content key (the disk
+;; cache is font-independent); only the cheap `create-image' is per scale.
 (defvar agent-shell-markdown-math--image-cache (make-hash-table :test 'equal)
-  "In-memory map of cache key to rendered equation image.")
+  "In-memory map of image-cache key to rendered equation image.")
 
 ;; key -> list of (BUFFER START-MARKER END-MARKER) awaiting one in-flight
 ;; compile.  Dedupes concurrent compiles of the same equation and records
@@ -759,23 +762,41 @@ leaving the image at its natural size."
               (agent-shell-markdown--math-svg-px-per-pt)))
       1.0)))
 
-(defun agent-shell-markdown--math-load-svg-image (file)
+(defun agent-shell-markdown--math-load-svg-image (file &optional scale)
   "Return an SVG image created from FILE, sized to the buffer font.
-The image is scaled (see `agent-shell-markdown--math-display-scale')
+Scaled by SCALE (default `agent-shell-markdown--math-display-scale')
 so the equation's body font matches the surrounding text, and
 centred vertically for inline display."
   (create-image file 'svg nil
-                :scale (agent-shell-markdown--math-display-scale)
+                :scale (or scale (agent-shell-markdown--math-display-scale))
                 :ascent 'center))
 
+(defun agent-shell-markdown--math-image-cache-key (key scale)
+  "Return the in-memory image-cache key for content KEY at display SCALE.
+KEY names the font-independent on-disk SVG; the cached image object
+bakes in a display `:scale', so the in-memory key adds SCALE.  This
+lets images at different font sizes coexist, so a font change just
+creates a new entry — no cache clearing, and a sibling buffer's
+warm images survive."
+  (format "%s@%s" key scale))
+
 (defun agent-shell-markdown--math-cached-image (key)
-  "Return the rendered image for KEY from memory or disk, or nil.
-A disk hit is promoted into the in-memory cache."
-  (or (gethash key agent-shell-markdown-math--image-cache)
-      (let ((file (agent-shell-markdown--math-svg-file key)))
-        (when (file-exists-p file)
-          (puthash key (agent-shell-markdown--math-load-svg-image file)
-                   agent-shell-markdown-math--image-cache)))))
+  "Return the rendered image for content KEY at the current font scale.
+Checks the in-memory cache (keyed by KEY and the display scale via
+`agent-shell-markdown--math-image-cache-key', so each font size has
+its own image), else loads KEY's on-disk SVG and caches a freshly
+scaled image.  Returns nil when the SVG isn't on disk yet (its
+compile hasn't finished).  Computes the scale from the current
+buffer, so call it within the target buffer to honour a buffer-local
+text scale."
+  (let* ((scale (agent-shell-markdown--math-display-scale))
+         (image-key (agent-shell-markdown--math-image-cache-key key scale)))
+    (or (gethash image-key agent-shell-markdown-math--image-cache)
+        (let ((file (agent-shell-markdown--math-svg-file key)))
+          (when (file-exists-p file)
+            (puthash image-key
+                     (agent-shell-markdown--math-load-svg-image file scale)
+                     agent-shell-markdown-math--image-cache))))))
 
 (defun agent-shell-markdown--math-overlay-image (buffer start end image)
   "Lay IMAGE over BUFFER's START..END as a `display' property.
@@ -899,15 +920,21 @@ portable; it can slot in here without changing callers."
            (start-process-shell-command "agent-shell-markdown-math" nil command)
            (lambda (process _event)
              (when (memq (process-status process) '(exit signal))
-               (let ((image (when (and (eq (process-status process) 'exit)
-                                       (zerop (process-exit-status process))
-                                       (file-exists-p svg))
-                              (agent-shell-markdown--math-load-svg-image svg))))
-                 (when image
-                   (puthash key image agent-shell-markdown-math--image-cache)
-                   (dolist (region (gethash key agent-shell-markdown-math--pending))
-                     (agent-shell-markdown--math-overlay-image
-                      (nth 0 region) (nth 1 region) (nth 2 region) image))))
+               (when (and (eq (process-status process) 'exit)
+                          (zerop (process-exit-status process))
+                          (file-exists-p svg))
+                 ;; Overlay each queued region with an image scaled to its
+                 ;; own buffer's font (via `--math-cached-image', which now
+                 ;; keys per display scale and loads the just-written SVG).
+                 (dolist (region (gethash key agent-shell-markdown-math--pending))
+                   (let ((buffer (nth 0 region))
+                         (start (nth 1 region))
+                         (end (nth 2 region)))
+                     (when (buffer-live-p buffer)
+                       (with-current-buffer buffer
+                         (agent-shell-markdown--math-overlay-image
+                          buffer start end
+                          (agent-shell-markdown--math-cached-image key)))))))
                (remhash key agent-shell-markdown-math--pending)
                (funcall cleanup))))
         (error
@@ -946,15 +973,18 @@ default) every buffer that has rendered equations.  Call after a
 theme, appearance, or font-size change so equation images pick up
 the new colors and size.
 
-The in-memory image cache and the pixels-per-point calibration are
-dropped so images are rebuilt at the current font scale from the
-on-disk SVGs (cheap — no LaTeX recompile unless the color also
-changed); each re-rendered buffer records its new appearance via
-`agent-shell-markdown--math-render', so unchanged buffers stay
-fast and untouched buffers refresh lazily when next displayed."
+The pixels-per-point calibration is dropped so it is re-measured
+\(e.g. after a display / scaling change); images are then rebuilt at
+the current font scale from the on-disk SVGs — cheap, no LaTeX
+recompile unless the color also changed.  The in-memory image cache
+is keyed per display scale (see
+`agent-shell-markdown--math-image-cache-key'), so a new size just
+adds entries and a sibling buffer's warm images survive — no clear
+needed.  Each re-rendered buffer records its new appearance via
+`agent-shell-markdown--math-render', so unchanged buffers stay fast
+and untouched buffers refresh lazily when next displayed."
   (interactive)
   (setq agent-shell-markdown-math--svg-px-per-pt nil)
-  (clrhash agent-shell-markdown-math--image-cache)
   (dolist (buf (if buffer
                    (list buffer)
                  (seq-filter
