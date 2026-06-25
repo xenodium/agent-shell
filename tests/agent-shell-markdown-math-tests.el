@@ -553,21 +553,43 @@ x
 
 (ert-deftest agent-shell-markdown-math-refresh-if-changed-detects-font ()
   ;; `--refresh-if-changed' triggers a refresh when only the font height
-  ;; moved (colors unchanged) — the new behavior over a colors-only check.
+  ;; moved (colors unchanged), and targets just the current buffer (the
+  ;; one the hook made relevant) rather than every buffer.
   (let ((agent-shell-markdown-render-math t)
         (refreshed nil))
-    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
-              ((symbol-function 'agent-shell-markdown--svg-color)
-               (lambda (_face attr _fallback)
-                 (if (eq attr :foreground) "#000000" "#ffffff")))
-              ((symbol-function 'agent-shell-markdown-math-refresh)
-               (lambda () (setq refreshed t))))
-      ;; Rendered at font height 20; current font is now 30, same colors.
-      (let ((agent-shell-markdown-math--rendered-appearance
-             '("#000000" "#ffffff" 20)))
-        (cl-letf (((symbol-function 'default-font-height) (lambda (&rest _) 30)))
-          (agent-shell-markdown-math--refresh-if-changed)))
-      (should refreshed))))
+    (with-temp-buffer
+      (setq agent-shell-markdown-math--present t)
+      ;; Buffer was last rendered at font height 20; same colors.
+      (setq agent-shell-markdown-math--rendered-appearance
+            '("#000000" "#ffffff" 20))
+      (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
+                ((symbol-function 'agent-shell-markdown--svg-color)
+                 (lambda (_face attr _fallback)
+                   (if (eq attr :foreground) "#000000" "#ffffff")))
+                ((symbol-function 'default-font-height) (lambda (&rest _) 30))
+                ((symbol-function 'agent-shell-markdown-math-refresh)
+                 (lambda (&optional buffer) (setq refreshed (or buffer t)))))
+        (agent-shell-markdown-math--refresh-if-changed))
+      ;; Refreshed, and scoped to this buffer.
+      (should (eq refreshed (current-buffer))))))
+
+(ert-deftest agent-shell-markdown-math-refresh-if-changed-skips-non-present ()
+  ;; In a buffer with no equations (`--present' nil), a hook firing is a
+  ;; no-op even if the appearance differs — nothing to re-render.
+  (let ((agent-shell-markdown-render-math t)
+        (refreshed nil))
+    (with-temp-buffer
+      (setq agent-shell-markdown-math--present nil)
+      (setq agent-shell-markdown-math--rendered-appearance nil)
+      (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
+                ((symbol-function 'agent-shell-markdown--svg-color)
+                 (lambda (_face attr _fallback)
+                   (if (eq attr :foreground) "#000000" "#ffffff")))
+                ((symbol-function 'default-font-height) (lambda (&rest _) 30))
+                ((symbol-function 'agent-shell-markdown-math-refresh)
+                 (lambda (&optional _buffer) (setq refreshed t))))
+        (agent-shell-markdown-math--refresh-if-changed))
+      (should-not refreshed))))
 
 (provide 'agent-shell-markdown-math-tests)
 

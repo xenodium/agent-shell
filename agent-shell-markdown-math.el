@@ -248,13 +248,15 @@ without `agent-shell.el'; set this variable there (or stub
 (defvar agent-shell-markdown-math--pending (make-hash-table :test 'equal)
   "In-memory map of cache key to regions awaiting an in-flight compile.")
 
-(defvar agent-shell-markdown-math--rendered-appearance nil
-  "The appearance signature the displayed equations were rendered for.
+(defvar-local agent-shell-markdown-math--rendered-appearance nil
+  "The appearance signature this buffer's equations were rendered for.
 A list (FOREGROUND BACKGROUND FONT-HEIGHT) — see
-`agent-shell-markdown-math--current-appearance'.  Updated whenever
-an equation renders; compared on theme / frame / font changes to
-decide whether equations need re-rendering (see
-`agent-shell-markdown-math--maybe-refresh').")
+`agent-shell-markdown-math--current-appearance'.  Buffer-local:
+each buffer tracks its own last-rendered appearance, so a refresh
+can re-render just the affected buffer and leave the others to
+re-render lazily when they are next displayed (see
+`agent-shell-markdown-math--refresh-if-changed').  Updated whenever
+an equation renders.")
 
 (defvar-local agent-shell-markdown-math--present nil
   "Non-nil in a buffer that has rendered display-math regions.
@@ -937,22 +939,29 @@ is reused from cache)."
               (agent-shell-markdown--math-render buffer pos end latex inline)
               (setq pos end))))))))
 
-(defun agent-shell-markdown-math-refresh ()
-  "Re-render all displayed equations for the current colors and font.
-Call after a theme, appearance, or font-size change so equation
-images pick up the new colors and size.  The in-memory image cache
-and the pixels-per-point calibration are dropped so images are
-rebuilt at the current font scale from the on-disk SVGs (cheap — no
-LaTeX recompile unless the color also changed); equations otherwise
-unchanged stay fast."
+(defun agent-shell-markdown-math-refresh (&optional buffer)
+  "Re-render displayed equations for the current colors and font.
+With BUFFER, re-render only that buffer; otherwise (the interactive
+default) every buffer that has rendered equations.  Call after a
+theme, appearance, or font-size change so equation images pick up
+the new colors and size.
+
+The in-memory image cache and the pixels-per-point calibration are
+dropped so images are rebuilt at the current font scale from the
+on-disk SVGs (cheap — no LaTeX recompile unless the color also
+changed); each re-rendered buffer records its new appearance via
+`agent-shell-markdown--math-render', so unchanged buffers stay
+fast and untouched buffers refresh lazily when next displayed."
   (interactive)
   (setq agent-shell-markdown-math--svg-px-per-pt nil)
   (clrhash agent-shell-markdown-math--image-cache)
-  (setq agent-shell-markdown-math--rendered-appearance
-        (agent-shell-markdown-math--current-appearance))
-  (dolist (buffer (buffer-list))
-    (when (buffer-local-value 'agent-shell-markdown-math--present buffer)
-      (agent-shell-markdown-math--refresh-buffer buffer))))
+  (dolist (buf (if buffer
+                   (list buffer)
+                 (seq-filter
+                  (lambda (b)
+                    (buffer-local-value 'agent-shell-markdown-math--present b))
+                  (buffer-list))))
+    (agent-shell-markdown-math--refresh-buffer buf)))
 
 (defun agent-shell-markdown-math--maybe-refresh (&rest _)
   "Re-render equations if the appearance changed since they were rendered.
@@ -966,15 +975,19 @@ updates the recorded appearance)."
     (run-at-time 0 nil #'agent-shell-markdown-math--refresh-if-changed)))
 
 (defun agent-shell-markdown-math--refresh-if-changed ()
-  "Run `agent-shell-markdown-math-refresh' iff the appearance changed.
-The appearance signature folds in both colors and the buffer font
-height (see `agent-shell-markdown-math--current-appearance'), so a
-font-size change is picked up the next time a hook fires (e.g. on
-switching to the buffer), just like a color change."
+  "Re-render the current buffer's equations if its appearance changed.
+Acts only on the current buffer — the one the firing hook just made
+relevant (displayed, themed, or zoomed) — so making one chat visible
+never re-renders the others; each refreshes lazily when it is itself
+displayed.  The appearance signature folds in both colors and the
+buffer font height (see
+`agent-shell-markdown-math--current-appearance'), so a font-size
+change is picked up just like a color change."
   (when (and agent-shell-markdown-render-math
+             agent-shell-markdown-math--present
              (not (equal (agent-shell-markdown-math--current-appearance)
                          agent-shell-markdown-math--rendered-appearance)))
-    (agent-shell-markdown-math-refresh)))
+    (agent-shell-markdown-math-refresh (current-buffer))))
 
 ;; Re-render lazily, when an equation buffer is next displayed, rather than
 ;; eagerly on every event that might recolor the default face.
