@@ -190,6 +190,23 @@ ever).")
 (defvar agent-shell-markdown-math--pending (make-hash-table :test 'equal)
   "In-memory map of cache key to regions awaiting an in-flight compile.")
 
+(defvar agent-shell-markdown-math--rendered-colors nil
+  "The (FOREGROUND . BACKGROUND) the displayed equations were rendered for.
+Updated whenever an equation renders; compared on theme / frame /
+appearance changes to decide whether equations need re-rendering
+\(see `agent-shell-markdown-math--maybe-refresh').")
+
+(defvar-local agent-shell-markdown-math--present nil
+  "Non-nil in a buffer that has rendered display-math regions.
+Lets `agent-shell-markdown-math-refresh' visit only relevant buffers.")
+
+(defun agent-shell-markdown-math--current-colors ()
+  "Return the (FOREGROUND . BACKGROUND) equations should render for now.
+Both are `#rrggbb' strings resolved from the `default' face of the
+selected frame."
+  (cons (agent-shell-markdown--svg-color 'default :foreground "#000000")
+        (agent-shell-markdown--svg-color 'default :background "#ffffff")))
+
 (defun agent-shell-markdown--math-delimiter-flush-p (start end)
   "Return non-nil if the delimiter spanning START..END is flush on its line.
 Flush means it begins the line (only whitespace before it) or ends
@@ -385,6 +402,7 @@ Shared by the delimiter pass (`--style-math-blocks') and the
 fenced-block path (`agent-shell-markdown--style-source-blocks',
 for ```math / ```latex)."
   (with-current-buffer buffer
+    (setq agent-shell-markdown-math--present t)
     (add-face-text-property start end 'agent-shell-markdown-math)
     (add-text-properties
      start end
@@ -557,22 +575,26 @@ an async compile (see `agent-shell-markdown--math-compile') that
 overlays the result once ready — START / END are captured as
 markers so the overlay lands even after more output streams in."
   (when (agent-shell-markdown--math-renderable-p)
-    (cond
-     ((or agent-shell-markdown-math-use-placeholder
-          (not (agent-shell-markdown--math-tools-available-p)))
-      (agent-shell-markdown--math-overlay-image
-       buffer start end
-       (agent-shell-markdown--latex-placeholder-image latex)))
-     (t
-      (let* ((color (agent-shell-markdown--svg-color 'default :foreground "#000000"))
-             (scale agent-shell-markdown-math-scale)
-             (key (agent-shell-markdown--math-cache-key latex color scale))
-             (image (agent-shell-markdown--math-cached-image key)))
-        (if image
-            (agent-shell-markdown--math-overlay-image buffer start end image)
-          (agent-shell-markdown--math-schedule
-           key latex color scale buffer
-           (copy-marker start) (copy-marker end))))))))
+    ;; Record the colors this render is for, so a later theme / frame /
+    ;; appearance change can detect the difference and re-render.
+    (let ((colors (agent-shell-markdown-math--current-colors)))
+      (setq agent-shell-markdown-math--rendered-colors colors)
+      (cond
+       ((or agent-shell-markdown-math-use-placeholder
+            (not (agent-shell-markdown--math-tools-available-p)))
+        (agent-shell-markdown--math-overlay-image
+         buffer start end
+         (agent-shell-markdown--latex-placeholder-image latex)))
+       (t
+        (let* ((color (car colors))
+               (scale agent-shell-markdown-math-scale)
+               (key (agent-shell-markdown--math-cache-key latex color scale))
+               (image (agent-shell-markdown--math-cached-image key)))
+          (if image
+              (agent-shell-markdown--math-overlay-image buffer start end image)
+            (agent-shell-markdown--math-schedule
+             key latex color scale buffer
+             (copy-marker start) (copy-marker end)))))))))
 
 (defun agent-shell-markdown--math-schedule (key latex color scale
                                                 buffer start end)
@@ -645,6 +667,67 @@ portable; it can slot in here without changing callers."
          (remhash key agent-shell-markdown-math--pending)
          (funcall cleanup)
          (signal (car err) (cdr err)))))))
+
+(defun agent-shell-markdown-math--refresh-buffer (buffer)
+  "Re-render every display-math region in BUFFER for the current colors.
+Each `agent-shell-markdown-math-source' region is handed back to
+`agent-shell-markdown--math-render', which recomputes the cache key
+\(so a foreground change yields a fresh image and an unchanged one
+is reused from cache)."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (save-excursion
+        (let ((pos (point-min)))
+          (while (setq pos (text-property-not-all
+                            pos (point-max)
+                            'agent-shell-markdown-math-source nil))
+            (let ((latex (get-text-property
+                          pos 'agent-shell-markdown-math-source))
+                  (end (or (next-single-property-change
+                            pos 'agent-shell-markdown-math-source nil (point-max))
+                           (point-max))))
+              (agent-shell-markdown--math-render buffer pos end latex)
+              (setq pos end))))))))
+
+(defun agent-shell-markdown-math-refresh ()
+  "Re-render all displayed equations for the current foreground/background.
+Call after a theme or appearance change so equation images pick up
+the new colors.  Unchanged equations are served from cache, so this
+is cheap when nothing actually changed."
+  (interactive)
+  (setq agent-shell-markdown-math--rendered-colors
+        (agent-shell-markdown-math--current-colors))
+  (dolist (buffer (buffer-list))
+    (when (buffer-local-value 'agent-shell-markdown-math--present buffer)
+      (agent-shell-markdown-math--refresh-buffer buffer))))
+
+(defun agent-shell-markdown-math--maybe-refresh (&rest _)
+  "Re-render equations if the appearance changed since they were rendered.
+Hooked to theme / frame-creation / system-appearance changes.  A
+no-op when math rendering is off; otherwise the actual comparison
+and refresh are deferred to the next idle moment, by which point the
+new theme / frame is fully in effect (and rapid repeat triggers
+collapse, since the first refresh updates the recorded colors)."
+  (when agent-shell-markdown-render-math
+    (run-at-time 0 nil #'agent-shell-markdown-math--refresh-if-changed)))
+
+(defun agent-shell-markdown-math--refresh-if-changed ()
+  "Run `agent-shell-markdown-math-refresh' iff the current colors changed."
+  (when (and agent-shell-markdown-render-math
+             (not (equal (agent-shell-markdown-math--current-colors)
+                         agent-shell-markdown-math--rendered-colors)))
+    (agent-shell-markdown-math-refresh)))
+
+;; Re-render on the events that change the default face's colors: a theme
+;; being enabled (Emacs 29+), a new frame opening (e.g. a graphical client
+;; attaching to a daemon after a TTY render), and macOS light/dark
+;; switches.  Each handler is gated by `agent-shell-markdown-render-math'
+;; and a colors-actually-changed check, so they're cheap no-ops otherwise.
+(add-hook 'enable-theme-functions #'agent-shell-markdown-math--maybe-refresh)
+(add-hook 'after-make-frame-functions #'agent-shell-markdown-math--maybe-refresh)
+(when (boundp 'ns-system-appearance-change-functions)
+  (add-hook 'ns-system-appearance-change-functions
+            #'agent-shell-markdown-math--maybe-refresh))
 
 (provide 'agent-shell-markdown-math)
 

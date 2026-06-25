@@ -322,6 +322,23 @@ E=mc^2
     (let ((agent-shell-markdown-math-render-on-non-graphic t))
       (should-not (agent-shell-markdown--math-renderable-p)))))
 
+(ert-deftest agent-shell-markdown-math-refresh-buffer-revisits-each-region ()
+  ;; A refresh hands every `agent-shell-markdown-math-source' region
+  ;; back to --math-render (with its own latex), so a theme change
+  ;; re-tints all equations.  Stub --math-render to record the visits.
+  (let ((calls '()))
+    (cl-letf (((symbol-function 'agent-shell-markdown--math-render)
+               (lambda (_buffer start end latex)
+                 (push (list start end latex) calls))))
+      (with-temp-buffer
+        (insert "first eq then second eq")
+        ;; Two separate math-source regions with distinct latex.
+        (put-text-property 1 6 'agent-shell-markdown-math-source "A")
+        (put-text-property 15 21 'agent-shell-markdown-math-source "B")
+        (agent-shell-markdown-math--refresh-buffer (current-buffer))))
+    (should (equal (nreverse calls)
+                   '((1 6 "A") (15 21 "B"))))))
+
 (ert-deftest agent-shell-markdown-math-cache-key-distinguishes-inputs ()
   ;; The cache key must be stable for identical inputs and differ when the
   ;; equation, colour, or scale changes — otherwise cached SVGs collide or
