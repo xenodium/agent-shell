@@ -135,6 +135,21 @@ Also used as the automatic fallback when the LaTeX toolchain
 \(`agent-shell-markdown-math-latex-program' /
 `agent-shell-markdown-math-dvisvgm-program') is unavailable.")
 
+(defvar agent-shell-markdown-math-render-on-non-graphic nil
+  "When non-nil, render equation images even on a non-graphical frame.
+
+By default equations are only compiled when the selected frame is
+graphical (`display-graphic-p').  In an Emacs daemon a buffer may
+be rendered while a TTY frame is selected, yet later viewed in a
+graphical frame; without this the equation would never have been
+produced and stays raw text in the GUI too.
+
+Set non-nil (typically in a daemon setup) to always compile the
+SVG when the build supports it: it is ignored on a TTY frame (the
+raw LaTeX shows) but appears as soon as a graphical frame views
+the buffer.  The trade-off is that a purely terminal session then
+spawns LaTeX compiles whose images it never displays.")
+
 (defvar agent-shell-markdown-math-latex-program "latex"
   "Program that compiles a LaTeX document to DVI.")
 
@@ -399,18 +414,31 @@ For example:
         (apply #'color-rgb-to-hex (append rgb '(2)))
       fallback)))
 
+(defun agent-shell-markdown--math-renderable-p ()
+  "Return non-nil when equation images should be produced.
+
+Requires SVG image support in this Emacs build, plus either a
+graphical selected frame or
+`agent-shell-markdown-math-render-on-non-graphic' (the daemon /
+mixed TTY+GUI case — the image is ignored on a TTY frame but shows
+once a graphical frame views the buffer)."
+  (and (image-type-available-p 'svg)
+       (or (display-graphic-p)
+           agent-shell-markdown-math-render-on-non-graphic)))
+
 (defun agent-shell-markdown--latex-placeholder-image (latex)
   "Return a placeholder SVG image boxing the raw LATEX, or nil.
 
 This does NOT typeset LATEX — it draws the source inside a
 bordered panel.  Used when `agent-shell-markdown-math-use-placeholder'
 is set or the LaTeX toolchain is unavailable, so math still has a
-visible (if un-typeset) rendering.  Returns nil when no graphical
-display is available, so callers fall back to the raw text.
+visible (if un-typeset) rendering.  Returns nil when equations
+aren't renderable (see `agent-shell-markdown--math-renderable-p'),
+so callers fall back to the raw text.
 
 LATEX is the equation source with the surrounding delimiters
 already stripped, e.g. \"E=mc^2\"."
-  (when (display-graphic-p)
+  (when (agent-shell-markdown--math-renderable-p)
     (let* ((lines (split-string latex "\n"))
            ;; `frame-char-width' / `-height' give per-char pixel
            ;; dimensions on a graphical frame and stay robust off it
@@ -520,14 +548,15 @@ is preserved."
 (defun agent-shell-markdown--math-render (buffer start end latex)
   "Render LATEX over BUFFER's START..END as an equation image.
 
-On a non-graphical display, does nothing (the raw faced text
-stands in).  With `agent-shell-markdown-math-use-placeholder' set
+Does nothing when equations aren't renderable (see
+`agent-shell-markdown--math-renderable-p') — the raw faced text
+stands in.  With `agent-shell-markdown-math-use-placeholder' set
 or no LaTeX toolchain, overlays the placeholder panel.  Otherwise
 overlays the cached SVG immediately when available, else schedules
 an async compile (see `agent-shell-markdown--math-compile') that
 overlays the result once ready — START / END are captured as
 markers so the overlay lands even after more output streams in."
-  (when (display-graphic-p)
+  (when (agent-shell-markdown--math-renderable-p)
     (cond
      ((or agent-shell-markdown-math-use-placeholder
           (not (agent-shell-markdown--math-tools-available-p)))

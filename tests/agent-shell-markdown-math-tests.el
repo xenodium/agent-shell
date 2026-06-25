@@ -304,6 +304,24 @@ E=mc^2
                         (memq 'agent-shell-markdown-source-block (cadr run)))
                       runs))))
 
+(ert-deftest agent-shell-markdown-math-renderable-p-honors-non-graphic-opt-in ()
+  ;; Renderability requires SVG build support, and then either a
+  ;; graphical frame or the non-graphic opt-in (for daemon use).
+  (cl-letf (((symbol-function 'image-type-available-p) (lambda (_) t)))
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) nil)))
+      (let ((agent-shell-markdown-math-render-on-non-graphic nil))
+        (should-not (agent-shell-markdown--math-renderable-p)))
+      (let ((agent-shell-markdown-math-render-on-non-graphic t))
+        (should (agent-shell-markdown--math-renderable-p))))
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t)))
+      (let ((agent-shell-markdown-math-render-on-non-graphic nil))
+        (should (agent-shell-markdown--math-renderable-p)))))
+  ;; No SVG support in the build => never renderable, even with the opt-in.
+  (cl-letf (((symbol-function 'image-type-available-p) (lambda (_) nil))
+            ((symbol-function 'display-graphic-p) (lambda (&rest _) t)))
+    (let ((agent-shell-markdown-math-render-on-non-graphic t))
+      (should-not (agent-shell-markdown--math-renderable-p)))))
+
 (ert-deftest agent-shell-markdown-math-cache-key-distinguishes-inputs ()
   ;; The cache key must be stable for identical inputs and differ when the
   ;; equation, colour, or scale changes — otherwise cached SVGs collide or
