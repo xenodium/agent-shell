@@ -697,16 +697,17 @@ the cache persists across sessions next to other cached assets."
       (make-directory dir t))
     dir))
 
-(defun agent-shell-markdown--math-cache-key (latex color &optional inline)
-  "Return a stable cache key for LATEX rendered in COLOR.
+(defun agent-shell-markdown--math-cache-key (latex &optional inline)
+  "Return a stable cache key for LATEX.
 The preamble is folded in so changing it invalidates the cache.
 INLINE (text style vs display) is folded in too, since the same
-LATEX renders differently in each.  The key names the
-font-independent on-disk SVG; display size is applied later (see
-`agent-shell-markdown--math-image-cache-key'), so it is not part of
-this key."
-  (secure-hash 'sha1 (format "%s\0%s\0%s%s"
-                             latex color
+LATEX renders differently in each.  The key names the on-disk SVG,
+which is both font- AND color-independent (equations are compiled
+with dvisvgm `--currentcolor', then sized and tinted at display
+time — see `agent-shell-markdown--math-image-cache-key'), so
+neither size nor color is part of this key."
+  (secure-hash 'sha1 (format "%s\0%s%s"
+                             latex
                              agent-shell-markdown-math-preamble
                              (if inline "\0inline" ""))))
 
@@ -754,40 +755,49 @@ leaving the image at its natural size."
            (* 10.0 (agent-shell-markdown--math-svg-px-per-pt)))
       1.0)))
 
-(defun agent-shell-markdown--math-load-svg-image (file &optional scale)
-  "Return an SVG image created from FILE, sized to the buffer font.
-Scaled by SCALE (default `agent-shell-markdown--math-display-scale')
-so the equation's body font matches the surrounding text, and
-centred vertically for inline display."
-  (create-image file 'svg nil
-                :scale (or scale (agent-shell-markdown--math-display-scale))
-                :ascent 'center))
+(defun agent-shell-markdown--math-load-svg-image (file &optional scale color)
+  "Return an SVG image from FILE, tinted COLOR and sized to the buffer font.
+The on-disk SVG emits its default ink as the literal token
+`currentColor' (dvisvgm `--currentcolor'); when COLOR (a `#rrggbb'
+string) is given it is substituted in, so the equation matches the
+buffer foreground without recompiling.  Scaled by SCALE (default
+`agent-shell-markdown--math-display-scale') so the body font matches
+the surrounding text, and centred vertically for inline display."
+  (let ((data (with-temp-buffer
+                (insert-file-contents file)
+                (buffer-string))))
+    (when color
+      (setq data (replace-regexp-in-string "currentColor" color data t t)))
+    (create-image data 'svg t
+                  :scale (or scale (agent-shell-markdown--math-display-scale))
+                  :ascent 'center)))
 
-(defun agent-shell-markdown--math-image-cache-key (key scale)
-  "Return the in-memory image-cache key for content KEY at display SCALE.
-KEY names the font-independent on-disk SVG; the cached image object
-bakes in a display `:scale', so the in-memory key adds SCALE.  This
-lets images at different font sizes coexist, so a font change just
-creates a new entry — no cache clearing, and a sibling buffer's
-warm images survive."
-  (format "%s@%s" key scale))
+(defun agent-shell-markdown--math-image-cache-key (key scale color)
+  "Return the in-memory image-cache key for content KEY at SCALE and COLOR.
+KEY names the font- and color-independent on-disk SVG; the cached
+image object bakes in a display `:scale' and a tint COLOR, so the
+in-memory key adds both.  Images at different font sizes or colors
+coexist, so a font or theme change just creates a new entry — no
+cache clearing, and a sibling buffer's warm images survive."
+  (format "%s@%s@%s" key scale color))
 
 (defun agent-shell-markdown--math-cached-image (key)
-  "Return the rendered image for content KEY at the current font scale.
-Checks the in-memory cache (keyed by KEY and the display scale via
-`agent-shell-markdown--math-image-cache-key', so each font size has
-its own image), else loads KEY's on-disk SVG and caches a freshly
-scaled image.  Returns nil when the SVG isn't on disk yet (its
-compile hasn't finished).  Computes the scale from the current
-buffer, so call it within the target buffer to honour a buffer-local
-text scale."
+  "Return the rendered image for content KEY at the current font and color.
+Checks the in-memory cache (keyed by KEY, the display scale, and the
+buffer foreground via `agent-shell-markdown--math-image-cache-key',
+so each size / color has its own image), else loads KEY's on-disk
+SVG and caches a freshly scaled, tinted image.  Returns nil when the
+SVG isn't on disk yet (its compile hasn't finished).  Reads the
+scale and color from the current buffer / frame, so call it within
+the target buffer to honour a buffer-local text scale."
   (let* ((scale (agent-shell-markdown--math-display-scale))
-         (image-key (agent-shell-markdown--math-image-cache-key key scale)))
+         (color (car (agent-shell-markdown-math--current-colors)))
+         (image-key (agent-shell-markdown--math-image-cache-key key scale color)))
     (or (gethash image-key agent-shell-markdown-math--image-cache)
         (let ((file (agent-shell-markdown--math-svg-file key)))
           (when (file-exists-p file)
             (puthash image-key
-                     (agent-shell-markdown--math-load-svg-image file scale)
+                     (agent-shell-markdown--math-load-svg-image file scale color)
                      agent-shell-markdown-math--image-cache))))))
 
 (defun agent-shell-markdown--math-overlay-image (buffer start end image)
@@ -828,11 +838,14 @@ markers so the overlay lands even after more output streams in.
 
 INLINE non-nil typesets LATEX in text style instead of display
 style; it feeds both the cache key and the compile, so inline and
-display renders of the same source don't collide in the cache."
+display renders of the same source don't collide in the cache.
+Color is not baked in here — `agent-shell-markdown--math-cached-image'
+tints the color-independent SVG to the buffer foreground at display
+time."
   (when (agent-shell-markdown--math-renderable-p)
     ;; Record the appearance (colors + font height) this render is for,
     ;; so a later theme / frame / font change can detect the difference
-    ;; and re-render.
+    ;; and re-render (a color change re-tints; it no longer recompiles).
     (let ((appearance (agent-shell-markdown-math--current-appearance)))
       (setq agent-shell-markdown-math--rendered-appearance appearance)
       (cond
@@ -842,21 +855,20 @@ display renders of the same source don't collide in the cache."
          buffer start end
          (agent-shell-markdown--latex-placeholder-image latex)))
        (t
-        (let* ((color (car appearance))
-               (key (agent-shell-markdown--math-cache-key latex color inline))
+        (let* ((key (agent-shell-markdown--math-cache-key latex inline))
                (image (agent-shell-markdown--math-cached-image key)))
           (if image
               (agent-shell-markdown--math-overlay-image buffer start end image)
             (agent-shell-markdown--math-schedule
-             key latex color buffer
+             key latex buffer
              (copy-marker start) (copy-marker end) inline))))))))
 
-(defun agent-shell-markdown--math-schedule (key latex color
+(defun agent-shell-markdown--math-schedule (key latex
                                                 buffer start end &optional inline)
   "Queue BUFFER's START..END for KEY and start a compile if none is running.
 
-KEY identifies the equation; LATEX, COLOR, and INLINE are forwarded
-to `agent-shell-markdown--math-compile' for the render.  Multiple
+KEY identifies the equation; LATEX and INLINE are forwarded to
+`agent-shell-markdown--math-compile' for the render.  Multiple
 regions sharing KEY (the same equation rendered more than once) are
 coalesced onto a single in-flight compile; all are overlaid when it
 finishes."
@@ -864,10 +876,10 @@ finishes."
     (puthash key (cons (list buffer start end) pending)
              agent-shell-markdown-math--pending)
     (unless pending
-      (agent-shell-markdown--math-compile key latex color inline))))
+      (agent-shell-markdown--math-compile key latex inline))))
 
-(defun agent-shell-markdown--math-compile (key latex color &optional inline)
-  "Asynchronously compile LATEX (in COLOR) to the cache SVG for KEY.
+(defun agent-shell-markdown--math-compile (key latex &optional inline)
+  "Asynchronously compile LATEX to the color-independent cache SVG for KEY.
 
 Writes a standalone LaTeX document, runs
 `agent-shell-markdown-math-latex-program' then
@@ -877,6 +889,12 @@ every region queued for KEY (see
 `agent-shell-markdown--math-schedule').  On failure the queued
 regions keep their raw faced text.  The scratch directory is
 removed when the process exits.
+
+No color is baked in: the equation's default ink is emitted as the
+literal `currentColor' (dvisvgm `--currentcolor'), so the SVG is
+color-independent and is tinted to the buffer foreground at display
+time (`agent-shell-markdown--math-load-svg-image').  A theme change
+therefore re-tints from cache without recompiling.
 
 Future optimization: a precompiled-preamble `.fmt' (mylatexformat)
 would cut per-equation latency, but plain compilation keeps this
@@ -892,8 +910,9 @@ portable; it can slot in here without changing callers."
               ;; Display math is typeset `\displaystyle' (full-size sums /
               ;; fractions / integrals); inline `\(...\)' is left in text
               ;; style so it sits compactly within the surrounding line.
-              (format "{\\color[HTML]{%s}$%s%s$}\n"
-                      (upcase (substring color 1))
+              ;; No `\color' — `--currentcolor' below turns the default
+              ;; (black) ink into the `currentColor' token, tinted at display.
+              (format "$%s%s$\n"
                       (if inline "" "\\displaystyle ")
                       latex)
               "\\end{document}\n"))
@@ -901,8 +920,10 @@ portable; it can slot in here without changing callers."
     ;; paths via --no-fonts), so the scale doesn't affect quality, and the
     ;; displayed size is set later by `--math-display-scale'.  Fixing it at 1
     ;; means the SVG carries the equation's natural point dimensions.
+    ;; `--currentcolor' rewrites the default ink to the `currentColor' token
+    ;; so the file is color-independent (tinted at display time).
     (let ((command
-           (format "cd %s && %s -interaction=nonstopmode -halt-on-error %s && %s --no-fonts --exact-bbox --scale=1 -o %s %s"
+           (format "cd %s && %s -interaction=nonstopmode -halt-on-error %s && %s --no-fonts --exact-bbox --currentcolor --scale=1 -o %s %s"
                    (shell-quote-argument dir)
                    (shell-quote-argument agent-shell-markdown-math-latex-program)
                    (shell-quote-argument tex)

@@ -363,21 +363,20 @@ E=mc^2
                    '((1 6 "A") (15 21 "B"))))))
 
 (ert-deftest agent-shell-markdown-math-cache-key-distinguishes-inputs ()
-  ;; The cache key must be stable for identical inputs and differ when the
-  ;; equation or colour changes — otherwise cached SVGs collide or never
-  ;; hit.  (Pure function; no TeX or graphical display needed.)  Display
-  ;; size is NOT part of this key (the on-disk SVG is font-independent).
-  (let ((base (agent-shell-markdown--math-cache-key "E=mc^2" "#000000")))
-    (should (equal base (agent-shell-markdown--math-cache-key "E=mc^2" "#000000")))
-    (should-not (equal base (agent-shell-markdown--math-cache-key "E=mc^3" "#000000")))
-    (should-not (equal base (agent-shell-markdown--math-cache-key "E=mc^2" "#ffffff")))))
+  ;; The content key must be stable for identical inputs and differ when the
+  ;; equation changes — otherwise cached SVGs collide or never hit.  (Pure
+  ;; function; no TeX or graphical display needed.)  Neither display size
+  ;; NOR color is part of this key: the on-disk SVG is font-independent and
+  ;; color-independent (compiled with --currentcolor, tinted at display).
+  (let ((base (agent-shell-markdown--math-cache-key "E=mc^2")))
+    (should (equal base (agent-shell-markdown--math-cache-key "E=mc^2")))
+    (should-not (equal base (agent-shell-markdown--math-cache-key "E=mc^3")))))
 
 (ert-deftest agent-shell-markdown-math-cache-key-folds-in-preamble ()
   ;; Changing the preamble must invalidate the cache (different output).
-  (let ((base (agent-shell-markdown--math-cache-key "E=mc^2" "#000000")))
+  (let ((base (agent-shell-markdown--math-cache-key "E=mc^2")))
     (let ((agent-shell-markdown-math-preamble "\\documentclass{minimal}"))
-      (should-not (equal base (agent-shell-markdown--math-cache-key
-                               "E=mc^2" "#000000"))))))
+      (should-not (equal base (agent-shell-markdown--math-cache-key "E=mc^2"))))))
 
 (ert-deftest agent-shell-markdown-convert-inline-math-protects-markup ()
   ;; Inline `\\(...\\)' is matched anywhere on a line (not just block
@@ -484,10 +483,10 @@ x
   ;; Inline and display renders of the same source must not collide:
   ;; the inline flag changes the key, while the default (display) key is
   ;; unchanged from the no-flag form.
-  (should (equal (agent-shell-markdown--math-cache-key "x" "#000000")
-                 (agent-shell-markdown--math-cache-key "x" "#000000" nil)))
-  (should-not (equal (agent-shell-markdown--math-cache-key "x" "#000000")
-                     (agent-shell-markdown--math-cache-key "x" "#000000" t))))
+  (should (equal (agent-shell-markdown--math-cache-key "x")
+                 (agent-shell-markdown--math-cache-key "x" nil)))
+  (should-not (equal (agent-shell-markdown--math-cache-key "x")
+                     (agent-shell-markdown--math-cache-key "x" t))))
 
 (ert-deftest agent-shell-markdown-math-cache-dir-uses-agent-shell-cache ()
   ;; By default the equation cache lives under agent-shell's shared cache
@@ -612,13 +611,32 @@ x
   (should (memq 'agent-shell-markdown-math--maybe-refresh
                 (default-value 'text-scale-mode-hook))))
 
-(ert-deftest agent-shell-markdown-math-image-cache-key-includes-scale ()
-  ;; The in-memory image-cache key folds in the display scale, so the same
-  ;; equation at two font sizes maps to two distinct entries.
-  (should (equal (agent-shell-markdown--math-image-cache-key "K" 0.8)
-                 (agent-shell-markdown--math-image-cache-key "K" 0.8)))
-  (should-not (equal (agent-shell-markdown--math-image-cache-key "K" 0.8)
-                     (agent-shell-markdown--math-image-cache-key "K" 1.5))))
+(ert-deftest agent-shell-markdown-math-image-cache-key-includes-scale-and-color ()
+  ;; The in-memory image-cache key folds in BOTH the display scale and the
+  ;; tint color, so the same equation at two font sizes or two themes maps
+  ;; to distinct entries (the on-disk SVG is shared).
+  (should (equal (agent-shell-markdown--math-image-cache-key "K" 0.8 "#fff")
+                 (agent-shell-markdown--math-image-cache-key "K" 0.8 "#fff")))
+  (should-not (equal (agent-shell-markdown--math-image-cache-key "K" 0.8 "#fff")
+                     (agent-shell-markdown--math-image-cache-key "K" 1.5 "#fff")))
+  (should-not (equal (agent-shell-markdown--math-image-cache-key "K" 0.8 "#fff")
+                     (agent-shell-markdown--math-image-cache-key "K" 0.8 "#000"))))
+
+(ert-deftest agent-shell-markdown-math-load-svg-recolors-currentcolor ()
+  ;; The on-disk SVG carries `currentColor'; loading substitutes the given
+  ;; foreground in, so the image is tinted without recompiling.
+  (let ((tmp (make-temp-file "asm-cc" nil ".svg")))
+    (unwind-protect
+        (progn
+          (with-temp-file tmp
+            (insert "<svg xmlns='http://www.w3.org/2000/svg'>"
+                    "<path fill='currentColor' d='M0 0h1v1z'/></svg>"))
+          (let ((data (image-property
+                       (agent-shell-markdown--math-load-svg-image tmp 1.0 "#abcdef")
+                       :data)))
+            (should (string-match-p "#abcdef" data))
+            (should-not (string-match-p "currentColor" data))))
+      (delete-file tmp))))
 
 (ert-deftest agent-shell-markdown-math-image-cache-coexists-per-scale ()
   ;; The same on-disk SVG cached at two display scales yields two distinct
