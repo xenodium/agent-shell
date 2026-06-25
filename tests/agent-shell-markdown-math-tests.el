@@ -494,6 +494,48 @@ x
           (should (file-directory-p dir)))
       (delete-directory parent t))))
 
+(ert-deftest agent-shell-markdown-math-display-scale-is-1-when-non-graphical ()
+  ;; Off a graphical frame (batch, the daemon-prerender path) the font
+  ;; height is unknown, so the image is left at natural size — this is
+  ;; why the batch render paths and the rest of the suite are unaffected.
+  (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) nil)))
+    (should (equal (agent-shell-markdown--math-display-scale) 1.0))))
+
+(ert-deftest agent-shell-markdown-math-svg-px-per-pt-falls-back-uncached ()
+  ;; Without a graphical frame the calibration returns the 96/72 fallback
+  ;; and must NOT cache it, so a later graphical frame can still measure.
+  (let ((agent-shell-markdown-math--svg-px-per-pt nil))
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) nil)))
+      (should (equal (agent-shell-markdown--math-svg-px-per-pt) (/ 96.0 72.0)))
+      (should-not agent-shell-markdown-math--svg-px-per-pt))))
+
+(ert-deftest agent-shell-markdown-math-display-scale-matches-font ()
+  ;; The display scale maps LaTeX's 10pt body font onto the buffer font
+  ;; height: scale = target * font-scale / (10 * math-scale * px-per-pt).
+  ;; Stub the graphical inputs so the arithmetic is checked deterministically.
+  (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
+            ((symbol-function 'default-font-height) (lambda (&rest _) 28))
+            ((symbol-function 'agent-shell-markdown--math-svg-px-per-pt)
+             (lambda () 2.0)))
+    (let ((agent-shell-markdown-math-scale 1.4)
+          (agent-shell-markdown-math-font-scale 1.0))
+      (should (equal (agent-shell-markdown--math-display-scale)
+                     (/ 28.0 (* 10.0 1.4 2.0)))))
+    ;; Doubling font-scale doubles the displayed size.
+    (let* ((agent-shell-markdown-math-scale 1.4)
+           (agent-shell-markdown-math-font-scale 1.0)
+           (base (agent-shell-markdown--math-display-scale))
+           (agent-shell-markdown-math-font-scale 2.0))
+      (should (equal (agent-shell-markdown--math-display-scale) (* 2 base))))
+    ;; The compile scale cancels: changing it leaves on-screen size unchanged.
+    (let ((agent-shell-markdown-math-font-scale 1.0))
+      (should (equal (let ((agent-shell-markdown-math-scale 1.4))
+                       (* agent-shell-markdown-math-scale
+                          (agent-shell-markdown--math-display-scale)))
+                     (let ((agent-shell-markdown-math-scale 3.0))
+                       (* agent-shell-markdown-math-scale
+                          (agent-shell-markdown--math-display-scale))))))))
+
 (provide 'agent-shell-markdown-math-tests)
 
 ;;; agent-shell-markdown-math-tests.el ends here

@@ -188,8 +188,30 @@ spawns LaTeX compiles whose images it never displays.")
   "Program that converts DVI to SVG.")
 
 (defvar agent-shell-markdown-math-scale 1.4
-  "`dvisvgm' output scale for rendered equations.
-Larger values produce bigger images.")
+  "`dvisvgm' output scale for compiled equation SVGs.
+
+This is a render-quality / vector-precision knob, not a size knob:
+the displayed equation is rescaled to the buffer font at display
+time (see `agent-shell-markdown--math-display-scale'), and this
+factor cancels out of that computation.  To change how big
+equations appear on screen, use `agent-shell-markdown-math-font-scale'.")
+
+(defvar agent-shell-markdown-math-font-scale 1.0
+  "Size of rendered equations relative to the buffer font.
+
+Equation images are scaled so LaTeX's 10pt body font maps onto the
+buffer's font height; this multiplier rides on top of that match.
+1.0 makes equation text the same size as the surrounding text;
+greater than 1 enlarges, less than 1 shrinks.  Because the match is
+recomputed from the current font, equations track the buffer font
+across themes and faces (run `agent-shell-markdown-math-refresh'
+after a pure font-size change — see its docstring).")
+
+(defvar agent-shell-markdown-math--svg-px-per-pt nil
+  "Cached pixels-per-point Emacs uses to render SVG images.
+Measured once on a graphical frame by
+`agent-shell-markdown--math-svg-px-per-pt' (so HiDPI / image
+scaling is captured exactly); nil until then.")
 
 (defvar agent-shell-markdown-math-preamble
   "\\documentclass[border=2pt]{standalone}
@@ -681,9 +703,54 @@ existing display-math cache keys stay stable."
   (expand-file-name (concat key ".svg")
                     (agent-shell-markdown--math-cache-dir)))
 
+(defun agent-shell-markdown--math-svg-px-per-pt ()
+  "Return how many pixels Emacs renders one SVG point as.
+
+Measured once from a reference SVG declared at a known point size
+\(so HiDPI and `image-scaling-factor' are captured exactly — the
+same factor applies to equation images, so it cancels in the size
+ratio) and cached in `agent-shell-markdown-math--svg-px-per-pt'.
+Falls back to 96/72 (the usual 96-DPI ratio) when not on a
+graphical frame or measurement fails; the fallback is not cached,
+so a later graphical frame can still measure."
+  (or agent-shell-markdown-math--svg-px-per-pt
+      (and (display-graphic-p)
+           (ignore-errors
+             (let* ((svg (concat "<svg xmlns='http://www.w3.org/2000/svg' "
+                                 "width='100pt' height='100pt'>"
+                                 "<rect width='100pt' height='100pt'/></svg>"))
+                    (size (image-size (create-image svg 'svg t) t)))
+               (setq agent-shell-markdown-math--svg-px-per-pt
+                     (/ (cdr size) 100.0)))))
+      (/ 96.0 72.0)))
+
+(defun agent-shell-markdown--math-display-scale ()
+  "Return the `create-image' :scale that sizes equations to the buffer font.
+
+Maps LaTeX's 10pt body font onto the buffer's font pixel height,
+times `agent-shell-markdown-math-font-scale'.  Derivation: an
+equation's displayed font height is
+\(10 * `agent-shell-markdown-math-scale' * px-per-pt * scale) px,
+so scale = target / (10 * math-scale * px-per-pt); the compile
+scale cancels, so it doesn't affect on-screen size.  Returns 1.0
+when the font height can't be determined (batch / non-graphical),
+leaving the image at its natural size."
+  (let ((target (and (display-graphic-p)
+                     (ignore-errors (default-font-height)))))
+    (if target
+        (/ (* target agent-shell-markdown-math-font-scale)
+           (* 10.0 agent-shell-markdown-math-scale
+              (agent-shell-markdown--math-svg-px-per-pt)))
+      1.0)))
+
 (defun agent-shell-markdown--math-load-svg-image (file)
-  "Return an SVG image created from FILE, centred for inline display."
-  (create-image file 'svg nil :scale 1.0 :ascent 'center))
+  "Return an SVG image created from FILE, sized to the buffer font.
+The image is scaled (see `agent-shell-markdown--math-display-scale')
+so the equation's body font matches the surrounding text, and
+centred vertically for inline display."
+  (create-image file 'svg nil
+                :scale (agent-shell-markdown--math-display-scale)
+                :ascent 'center))
 
 (defun agent-shell-markdown--math-cached-image (key)
   "Return the rendered image for KEY from memory or disk, or nil.
@@ -856,11 +923,16 @@ is reused from cache)."
               (setq pos end))))))))
 
 (defun agent-shell-markdown-math-refresh ()
-  "Re-render all displayed equations for the current foreground/background.
-Call after a theme or appearance change so equation images pick up
-the new colors.  Unchanged equations are served from cache, so this
-is cheap when nothing actually changed."
+  "Re-render all displayed equations for the current colors and font.
+Call after a theme, appearance, or font-size change so equation
+images pick up the new colors and size.  The in-memory image cache
+and the pixels-per-point calibration are dropped so images are
+rebuilt at the current font scale from the on-disk SVGs (cheap — no
+LaTeX recompile unless the color also changed); equations otherwise
+unchanged stay fast."
   (interactive)
+  (setq agent-shell-markdown-math--svg-px-per-pt nil)
+  (clrhash agent-shell-markdown-math--image-cache)
   (setq agent-shell-markdown-math--rendered-colors
         (agent-shell-markdown-math--current-colors))
   (dolist (buffer (buffer-list))
