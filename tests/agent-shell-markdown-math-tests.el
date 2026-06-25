@@ -328,7 +328,7 @@ E=mc^2
   ;; re-tints all equations.  Stub --math-render to record the visits.
   (let ((calls '()))
     (cl-letf (((symbol-function 'agent-shell-markdown--math-render)
-               (lambda (_buffer start end latex)
+               (lambda (_buffer start end latex &optional _inline)
                  (push (list start end latex) calls))))
       (with-temp-buffer
         (insert "first eq then second eq")
@@ -355,6 +355,116 @@ E=mc^2
     (let ((agent-shell-markdown-math-preamble "\\documentclass{minimal}"))
       (should-not (equal base (agent-shell-markdown--math-cache-key
                                "E=mc^2" "#000000" 1.4))))))
+
+(ert-deftest agent-shell-markdown-convert-inline-math-protects-markup ()
+  ;; Inline `\\(...\\)' is matched anywhere on a line (not just block
+  ;; level) and faced `agent-shell-markdown-math', keeping its interior
+  ;; literal (here `**x**' is not turned bold).
+  (agent-shell-markdown-math-tests--enabled
+    (should (equal (agent-shell-markdown--deconstruct
+                    (agent-shell-markdown-convert "a \\( **x** \\) b"))
+                   '(("a " nil)
+                     ("\\( **x** \\)" (agent-shell-markdown-math))
+                     (" b" nil))))))
+
+(ert-deftest agent-shell-markdown-convert-inline-math-multiple-per-line ()
+  ;; Several inline spans on one line each render independently.
+  (agent-shell-markdown-math-tests--enabled
+    (should (equal (agent-shell-markdown--deconstruct
+                    (agent-shell-markdown-convert "\\(a\\) and \\(b\\)"))
+                   '(("\\(a\\)" (agent-shell-markdown-math))
+                     (" and " nil)
+                     ("\\(b\\)" (agent-shell-markdown-math)))))))
+
+(ert-deftest agent-shell-markdown-convert-inline-math-in-inline-code-untouched ()
+  ;; A `\\(...\\)' inside an inline-code span is literal code, not math:
+  ;; it keeps the inline-code face and gets no math face.
+  (agent-shell-markdown-math-tests--enabled
+    (let ((runs (agent-shell-markdown--deconstruct
+                 (agent-shell-markdown-convert "`\\(x\\)`"))))
+      (should-not (seq-some (lambda (run)
+                              (memq 'agent-shell-markdown-math (cadr run)))
+                            runs))
+      (should (seq-some (lambda (run)
+                          (memq 'agent-shell-markdown-inline-code (cadr run)))
+                        runs)))))
+
+(ert-deftest agent-shell-markdown-convert-inline-math-in-fenced-block-untouched ()
+  ;; A `\\(...\\)' inside a fenced code block is body text, not math.
+  (agent-shell-markdown-math-tests--enabled
+    (let ((runs (agent-shell-markdown--deconstruct
+                 (agent-shell-markdown-convert "```
+\\(x\\)
+```"))))
+      (should-not (seq-some (lambda (run)
+                              (memq 'agent-shell-markdown-math (cadr run)))
+                            runs)))))
+
+(ert-deftest agent-shell-markdown-convert-inline-math-closer-must-be-same-line ()
+  ;; The closer must be on the opener's line; a `\\(' whose `\\)' is on a
+  ;; later line is not matched (left as plain text), which bounds the
+  ;; single-line inline form.
+  (agent-shell-markdown-math-tests--enabled
+    (should (equal (agent-shell-markdown--deconstruct
+                    (agent-shell-markdown-convert "\\(
+x
+\\)"))
+                   '(("\\(
+x
+\\)" nil))))))
+
+(ert-deftest agent-shell-markdown-convert-inline-math-streaming-tail ()
+  ;; An unclosed `\\(' on the buffer's last line is left raw (the closer
+  ;; may still stream in); the start-of-last-line watermark re-scans it.
+  (agent-shell-markdown-math-tests--enabled
+    (should (equal (agent-shell-markdown--deconstruct
+                    (agent-shell-markdown-convert "text \\(E=mc^2"))
+                   '(("text \\(E=mc^2" nil))))))
+
+(ert-deftest agent-shell-markdown-convert-inline-math-can-be-disabled ()
+  ;; `agent-shell-markdown-math-render-inline' nil disables `\\(...\\)'
+  ;; even with the master switch on: delimiters are plain and inner
+  ;; markup (`**x**') is processed normally.
+  (let ((agent-shell-markdown-render-math t)
+        (agent-shell-markdown-math-render-inline nil))
+    (should (equal (agent-shell-markdown--deconstruct
+                    (agent-shell-markdown-convert "a \\( **x** \\) b"))
+                   '(("a \\( " nil)
+                     ("x" (agent-shell-markdown-bold))
+                     (" \\) b" nil))))))
+
+(ert-deftest agent-shell-markdown-convert-inline-math-master-switch-off ()
+  ;; With the master switch off, inline `\\(...\\)' is plain text and
+  ;; inner markup is processed (here `**x**' becomes bold).
+  (let ((agent-shell-markdown-render-math nil))
+    (should (equal (agent-shell-markdown--deconstruct
+                    (agent-shell-markdown-convert "a \\( **x** \\) b"))
+                   '(("a \\( " nil)
+                     ("x" (agent-shell-markdown-bold))
+                     (" \\) b" nil))))))
+
+(ert-deftest agent-shell-markdown-convert-inline-math-tags-source-and-inline ()
+  ;; Inline math stashes its source and the inline flag, while display
+  ;; math stashes its source with the flag nil — so a refresh re-renders
+  ;; each in the right style.
+  (agent-shell-markdown-math-tests--enabled
+    (let ((inline (agent-shell-markdown-convert "a \\(x\\) b"))
+          (display (agent-shell-markdown-convert "\\[ x \\]")))
+      (should (equal (get-text-property 2 'agent-shell-markdown-math-source inline)
+                     "x"))
+      (should (get-text-property 2 'agent-shell-markdown-math-inline inline))
+      (should (equal (get-text-property 0 'agent-shell-markdown-math-source display)
+                     "x"))
+      (should-not (get-text-property 0 'agent-shell-markdown-math-inline display)))))
+
+(ert-deftest agent-shell-markdown-math-cache-key-distinguishes-inline ()
+  ;; Inline and display renders of the same source must not collide:
+  ;; the inline flag changes the key, while the default (display) key is
+  ;; unchanged from the no-flag form (so existing caches stay valid).
+  (should (equal (agent-shell-markdown--math-cache-key "x" "#000000" 1.4)
+                 (agent-shell-markdown--math-cache-key "x" "#000000" 1.4 nil)))
+  (should-not (equal (agent-shell-markdown--math-cache-key "x" "#000000" 1.4)
+                     (agent-shell-markdown--math-cache-key "x" "#000000" 1.4 t))))
 
 (provide 'agent-shell-markdown-math-tests)
 

@@ -256,10 +256,12 @@ remote (http) image URLs are downloaded and cached; when nil
 \(the default), remote images are not fetched and their markup is
 left as text.  RENDER-MATH (default
 `agent-shell-markdown-render-math', itself nil), when non-nil,
-overlays display math with an equation image compiled via latex /
-dvisvgm: the `\\[...\\]' / `$$...$$' delimiter styles in
-`agent-shell-markdown-math-delimiters' (see
-`agent-shell-markdown--style-math-blocks') and the
+overlays math with an equation image compiled via latex /
+dvisvgm: the block-level `\\[...\\]' / `$$...$$' delimiter styles
+in `agent-shell-markdown-math-delimiters' (see
+`agent-shell-markdown--style-math-blocks'), inline `\\(...\\)'
+spans (when `agent-shell-markdown-math-render-inline' is on, see
+`agent-shell-markdown--style-inline-math'), and the
 `agent-shell-markdown-math-fence-languages' fenced blocks
 \(```math / ```latex, handled in
 `agent-shell-markdown--style-source-blocks').  Nil leaves the
@@ -290,14 +292,27 @@ body un-fontified."
                               (agent-shell-markdown--make-markers
                                (agent-shell-markdown--math-block-ranges
                                 source-ranges))))
-               (protect-ranges (agent-shell-markdown--sort-ranges
-                                source-ranges math-ranges))
                (rendered-ranges (agent-shell-markdown--make-markers
                                  (agent-shell-markdown--frozen-ranges)))
                (inline-ranges (agent-shell-markdown--make-markers
                                (agent-shell-markdown--inline-code-ranges
                                 :avoid-ranges (agent-shell-markdown--sort-ranges
-                                               protect-ranges rendered-ranges))))
+                                               source-ranges math-ranges
+                                               rendered-ranges))))
+               ;; Inline math (`\\(...\\)'), detected after inline code so
+               ;; it avoids (and never nests inside) a code span — a
+               ;; backticked `\\(x\\)' stays literal.  Protected like
+               ;; display math so the inline emphasis passes don't mangle
+               ;; the LaTeX interior.  Skipped unless RENDER-MATH and
+               ;; `agent-shell-markdown-math-render-inline' are both on.
+               (inline-math-ranges
+                (when (and render-math agent-shell-markdown-math-render-inline)
+                  (agent-shell-markdown--make-markers
+                   (agent-shell-markdown--math-inline-ranges
+                    (agent-shell-markdown--sort-ranges
+                     source-ranges math-ranges inline-ranges rendered-ranges)))))
+               (protect-ranges (agent-shell-markdown--sort-ranges
+                                source-ranges math-ranges inline-math-ranges))
                (avoid-ranges (agent-shell-markdown--sort-ranges
                               protect-ranges rendered-ranges inline-ranges)))
           (while (let ((italic-changed (agent-shell-markdown--replace-italics
@@ -331,7 +346,15 @@ body un-fontified."
           ;; the still-open-fence case the same way the other passes do.
           (when render-math
             (agent-shell-markdown--style-math-blocks
-             :avoid-ranges source-ranges))
+             :avoid-ranges source-ranges)
+            ;; Inline `\\(...\\)' spans, faced and overlaid in text style.
+            ;; Avoids code (source / inline) and display math so a `\\('
+            ;; inside any of them stays literal and ranges stay disjoint.
+            (when agent-shell-markdown-math-render-inline
+              (agent-shell-markdown--style-inline-math
+               :avoid-ranges (agent-shell-markdown--sort-ranges
+                              source-ranges math-ranges inline-ranges
+                              rendered-ranges))))
           ;; Tables run last so cell content has already been processed by
           ;; every other pass (bold, italic, links, inline code, etc.).
           ;; The cell parser respects face and `agent-shell-markdown-frozen'

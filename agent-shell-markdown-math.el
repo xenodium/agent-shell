@@ -23,11 +23,16 @@
 ;; Display-math support for `agent-shell-markdown': intercept LaTeX
 ;; display equations in agent output and overlay them with an image.
 ;;
-;; Two delimiter styles are recognized, toggled independently via
-;; `agent-shell-markdown-math-delimiters':
+;; Two block-level delimiter styles are recognized, toggled
+;; independently via `agent-shell-markdown-math-delimiters':
 ;;
 ;;   bracket  `\[X\]'    (default; unambiguous)
-;;   dollar   `$$X$$'    (opt-in; can clash with prose / currency)
+;;   dollar   `$$X$$'    (default; safe because matched block-level only)
+;;
+;; Inline math `\(X\)' is recognized separately (toggle
+;; `agent-shell-markdown-math-render-inline', default on) and typeset
+;; in text style.  Inline `$X$' is intentionally not matched — a lone
+;; `$' is too common in prose to be safe.
 ;;
 ;; The raw LaTeX is kept in the buffer (so copy / save round-trips the
 ;; source) and, on a graphical display, an equation image is layered on
@@ -74,6 +79,12 @@ on a non-graphical display."
   "Map of display-math delimiter styles to their (OPEN . CLOSE) tokens.
 `dollar' is `$$...$$'; `bracket' is `\\[...\\]'.  The keys of this
 map are the values accepted in `agent-shell-markdown-math-delimiters'.")
+
+(defconst agent-shell-markdown--math-inline-open "\\("
+  "Opening delimiter for inline math (a literal backslash and paren).")
+
+(defconst agent-shell-markdown--math-inline-close "\\)"
+  "Closing delimiter for inline math (a literal backslash and paren).")
 
 (defvar agent-shell-markdown-math-delimiters '(bracket dollar)
   "Display-math delimiter styles recognized when rendering markdown.
@@ -128,6 +139,25 @@ only when `agent-shell-markdown-render-math' is non-nil.  Several
 agents emit `math'/`latex' fences (GitHub renders ```math as
 display math), so this complements the `\\[...\\]' / `$$...$$'
 delimiter styles.  Set to nil to leave such fences as code.")
+
+(defvar agent-shell-markdown-math-render-inline t
+  "When non-nil, recognize inline math `\\(...\\)' in agent responses.
+
+Only effective when the master switch
+`agent-shell-markdown-render-math' is non-nil.  Inline math is
+typeset in text style (no `\\displaystyle') and overlaid in place,
+so it sits within the surrounding line rather than on its own.
+
+Unlike the block-level delimiters, `\\(...\\)' is matched anywhere
+on a line (it is inline by nature), but its body may not cross a
+line break — the closer must appear on the same line as the
+opener, which bounds the match and keeps a stray `\\(' from
+swallowing the rest of a streaming response.
+
+Inline `$...$' is deliberately NOT recognized: a lone `$' is far
+too common in prose, currency, and shell snippets to match safely.
+Only the unambiguous `\\(...\\)' form is detected; `$...$' support
+can be added later if agents prove to need it.")
 
 (defvar agent-shell-markdown-math-use-placeholder nil
   "When non-nil, draw the placeholder panel instead of typesetting LaTeX.
@@ -339,6 +369,114 @@ returns ((1 . 11))."
             (cons (plist-get block :start) (plist-get block :end)))
           (agent-shell-markdown--math-blocks avoid-ranges)))
 
+(defun agent-shell-markdown--math-inline-spans (&optional avoid-ranges)
+  "Return inline-math spans `\\(...\\)' in the current buffer.
+
+Each element is a plist (:start S :end E :open O :close C), with
+the same shape as `agent-shell-markdown--math-blocks': S..E spans
+the whole delimited span (delimiters included) and the LaTeX body
+is the buffer text in [S+O, E-C).
+
+Inline math is matched anywhere on a line, but only when the
+closing `\\)' appears on the SAME line as the opening `\\(' — a
+single-line bound that keeps a stray opener from swallowing the
+buffer and means the renderer's start-of-last-line watermark
+already covers the still-streaming case (no open-span bookkeeping
+needed, unlike `agent-shell-markdown--math-blocks').
+
+A delimiter inside any of AVOID-RANGES (a sorted vector, typically
+fenced code, display math, or inline code) is ignored, and a
+candidate whose body would overlap an avoid-range is rejected, so
+returned spans never overlap AVOID-RANGES or each other.
+
+For example, with buffer \"see \\=\\(E=mc^2\\=\\) here\", returns
+\((:start 5 :end 15 :open 2 :close 2))."
+  (let ((spans '())
+        (open agent-shell-markdown--math-inline-open)
+        (close agent-shell-markdown--math-inline-close)
+        (case-fold-search nil))
+    (save-excursion
+      (goto-char (point-min))
+      (let ((open-re (regexp-quote open))
+            (close-re (regexp-quote close)))
+        (while (re-search-forward open-re nil t)
+          (let* ((open-start (match-beginning 0))
+                 (open-end (match-end 0))
+                 (avoid (agent-shell-markdown--in-avoid-range-p
+                         open-start open-end avoid-ranges)))
+            (if avoid
+                (goto-char (cdr avoid))
+              ;; Look for the closer on this line only; skip a closer
+              ;; that sits inside an avoid-range (it is protected text).
+              (let ((eol (line-end-position))
+                    (close-end nil))
+                (save-excursion
+                  (goto-char open-end)
+                  (while (and (not close-end)
+                              (re-search-forward close-re eol t))
+                    (let ((in (agent-shell-markdown--in-avoid-range-p
+                               (match-beginning 0) (match-end 0) avoid-ranges)))
+                      (if in
+                          (goto-char (cdr in))
+                        (setq close-end (match-end 0))))))
+                (cond
+                 ;; Clean closer on the line and nothing protected sits
+                 ;; between the delimiters: a valid inline span.
+                 ((and close-end
+                       (not (seq-some
+                             (lambda (range)
+                               (and (< (car range) close-end)
+                                    (> (cdr range) open-start)))
+                             avoid-ranges)))
+                  (push (list :start open-start :end close-end
+                              :open (length open) :close (length close))
+                        spans)
+                  (goto-char close-end))
+                 ;; No usable closer on the line (false positive, or the
+                 ;; span is still streaming on the buffer's last line):
+                 ;; resume just after the opener so a later real span is
+                 ;; still found.  The start-of-last-line watermark re-scans
+                 ;; an unclosed tail on the next chunk.
+                 (t (goto-char open-end)))))))))
+    (nreverse spans)))
+
+(defun agent-shell-markdown--math-inline-ranges (&optional avoid-ranges)
+  "Return list of (start . end) ranges covering inline-math spans.
+Thin adapter over `agent-shell-markdown--math-inline-spans' for
+callers that only need the protected spans.  AVOID-RANGES is
+forwarded."
+  (mapcar (lambda (span)
+            (cons (plist-get span :start) (plist-get span :end)))
+          (agent-shell-markdown--math-inline-spans avoid-ranges)))
+
+(cl-defun agent-shell-markdown--style-inline-math (&key avoid-ranges)
+  "Overlay inline-math spans `\\(...\\)' with a text-style equation image.
+
+Mirrors `agent-shell-markdown--style-math-blocks' but for inline
+`\\(...\\)' spans (see `agent-shell-markdown--math-inline-spans'):
+the raw delimited text is kept and the region handed to
+`agent-shell-markdown--apply-math-region' with INLINE non-nil, so
+it is typeset in text style.  Spans inside AVOID-RANGES, or with an
+empty body, are left untouched.
+
+A span that lands on already-`agent-shell-markdown-frozen' text is
+also skipped.  AVOID-RANGES alone can't catch this: an earlier
+pass (notably inline code) may have rewritten its region in the
+same call, collapsing the range markers we were handed — the live
+`frozen' property is the reliable signal, so a backticked
+`\\(x\\)' stays literal code."
+  (dolist (span (agent-shell-markdown--math-inline-spans avoid-ranges))
+    (when-let* ((start (plist-get span :start))
+                ((not (get-text-property start 'agent-shell-markdown-frozen)))
+                (end (plist-get span :end))
+                (latex (string-trim
+                        (buffer-substring-no-properties
+                         (+ start (plist-get span :open))
+                         (- end (plist-get span :close)))))
+                ((not (string-empty-p latex))))
+      (agent-shell-markdown--apply-math-region
+       (current-buffer) start end latex t))))
+
 (cl-defun agent-shell-markdown--style-math-blocks (&key avoid-ranges)
   "Overlay display-math blocks with an equation image.
 
@@ -389,8 +527,8 @@ empty (a fence with no info string), which is not a math language."
        (member (downcase lang) agent-shell-markdown-math-fence-languages)
        t))
 
-(defun agent-shell-markdown--apply-math-region (buffer start end latex)
-  "Mark BUFFER's START..END as display math with source LATEX and render it.
+(defun agent-shell-markdown--apply-math-region (buffer start end latex &optional inline)
+  "Mark BUFFER's START..END as math with source LATEX and render it.
 
 Keeps the underlying text in place, faces the region
 `agent-shell-markdown-math', tags it `agent-shell-markdown-frozen'
@@ -398,9 +536,15 @@ Keeps the underlying text in place, faces the region
 `agent-shell-markdown-math-source', then hands off to
 `agent-shell-markdown--math-render' for the equation image.
 
-Shared by the delimiter pass (`--style-math-blocks') and the
-fenced-block path (`agent-shell-markdown--style-source-blocks',
-for ```math / ```latex)."
+INLINE non-nil typesets LATEX in text style (for `\\(...\\)'
+inline math) rather than as a display equation; it is stashed in
+`agent-shell-markdown-math-inline' so a later refresh re-renders in
+the same style.
+
+Shared by the delimiter pass (`--style-math-blocks'), the inline
+pass (`--style-inline-math'), and the fenced-block path
+\(`agent-shell-markdown--style-source-blocks', for ```math /
+```latex)."
   (with-current-buffer buffer
     (setq agent-shell-markdown-math--present t)
     (add-face-text-property start end 'agent-shell-markdown-math)
@@ -408,9 +552,10 @@ for ```math / ```latex)."
      start end
      `(help-echo ,latex
        agent-shell-markdown-math-source ,latex
+       agent-shell-markdown-math-inline ,inline
        agent-shell-markdown-frozen t
        rear-nonsticky (agent-shell-markdown-frozen)))
-    (agent-shell-markdown--math-render buffer start end latex)))
+    (agent-shell-markdown--math-render buffer start end latex inline)))
 
 (defun agent-shell-markdown--svg-color (face attribute fallback)
   "Return FACE's ATTRIBUTE color as a `#rrggbb' string, or FALLBACK.
@@ -514,12 +659,16 @@ subdirectory of the variable `temporary-file-directory'."
       (make-directory dir t))
     dir))
 
-(defun agent-shell-markdown--math-cache-key (latex color scale)
+(defun agent-shell-markdown--math-cache-key (latex color scale &optional inline)
   "Return a stable cache key for LATEX rendered in COLOR at SCALE.
-The preamble is folded in so changing it invalidates the cache."
-  (secure-hash 'sha1 (format "%s\0%s\0%s\0%s"
+The preamble is folded in so changing it invalidates the cache.
+INLINE (text style vs display) is folded in too, since the same
+LATEX renders differently in each — appended only when set so
+existing display-math cache keys stay stable."
+  (secure-hash 'sha1 (format "%s\0%s\0%s\0%s%s"
                              latex color scale
-                             agent-shell-markdown-math-preamble)))
+                             agent-shell-markdown-math-preamble
+                             (if inline "\0inline" ""))))
 
 (defun agent-shell-markdown--math-svg-file (key)
   "Return the cache SVG path for KEY."
@@ -563,7 +712,7 @@ is preserved."
               (when wrap-prefix
                 (put-text-property s e 'wrap-prefix wrap-prefix)))))))))
 
-(defun agent-shell-markdown--math-render (buffer start end latex)
+(defun agent-shell-markdown--math-render (buffer start end latex &optional inline)
   "Render LATEX over BUFFER's START..END as an equation image.
 
 Does nothing when equations aren't renderable (see
@@ -573,7 +722,11 @@ or no LaTeX toolchain, overlays the placeholder panel.  Otherwise
 overlays the cached SVG immediately when available, else schedules
 an async compile (see `agent-shell-markdown--math-compile') that
 overlays the result once ready — START / END are captured as
-markers so the overlay lands even after more output streams in."
+markers so the overlay lands even after more output streams in.
+
+INLINE non-nil typesets LATEX in text style instead of display
+style; it feeds both the cache key and the compile, so inline and
+display renders of the same source don't collide in the cache."
   (when (agent-shell-markdown--math-renderable-p)
     ;; Record the colors this render is for, so a later theme / frame /
     ;; appearance change can detect the difference and re-render.
@@ -588,30 +741,30 @@ markers so the overlay lands even after more output streams in."
        (t
         (let* ((color (car colors))
                (scale agent-shell-markdown-math-scale)
-               (key (agent-shell-markdown--math-cache-key latex color scale))
+               (key (agent-shell-markdown--math-cache-key latex color scale inline))
                (image (agent-shell-markdown--math-cached-image key)))
           (if image
               (agent-shell-markdown--math-overlay-image buffer start end image)
             (agent-shell-markdown--math-schedule
              key latex color scale buffer
-             (copy-marker start) (copy-marker end)))))))))
+             (copy-marker start) (copy-marker end) inline))))))))
 
 (defun agent-shell-markdown--math-schedule (key latex color scale
-                                                buffer start end)
+                                                buffer start end &optional inline)
   "Queue BUFFER's START..END for KEY and start a compile if none is running.
 
-KEY identifies the equation; LATEX, COLOR, and SCALE are forwarded
-to `agent-shell-markdown--math-compile' for the render.  Multiple
-regions sharing KEY (the same equation rendered more than once)
-are coalesced onto a single in-flight compile; all are overlaid
-when it finishes."
+KEY identifies the equation; LATEX, COLOR, SCALE, and INLINE are
+forwarded to `agent-shell-markdown--math-compile' for the render.
+Multiple regions sharing KEY (the same equation rendered more than
+once) are coalesced onto a single in-flight compile; all are
+overlaid when it finishes."
   (let ((pending (gethash key agent-shell-markdown-math--pending)))
     (puthash key (cons (list buffer start end) pending)
              agent-shell-markdown-math--pending)
     (unless pending
-      (agent-shell-markdown--math-compile key latex color scale))))
+      (agent-shell-markdown--math-compile key latex color scale inline))))
 
-(defun agent-shell-markdown--math-compile (key latex color scale)
+(defun agent-shell-markdown--math-compile (key latex color scale &optional inline)
   "Asynchronously compile LATEX (in COLOR, at SCALE) to the cache SVG for KEY.
 
 Writes a standalone LaTeX document, runs
@@ -634,8 +787,13 @@ portable; it can slot in here without changing callers."
     (with-temp-file tex
       (insert agent-shell-markdown-math-preamble "\n"
               "\\begin{document}\n"
-              (format "{\\color[HTML]{%s}$\\displaystyle %s$}\n"
-                      (upcase (substring color 1)) latex)
+              ;; Display math is typeset `\displaystyle' (full-size sums /
+              ;; fractions / integrals); inline `\(...\)' is left in text
+              ;; style so it sits compactly within the surrounding line.
+              (format "{\\color[HTML]{%s}$%s%s$}\n"
+                      (upcase (substring color 1))
+                      (if inline "" "\\displaystyle ")
+                      latex)
               "\\end{document}\n"))
     (let ((command
            (format "cd %s && %s -interaction=nonstopmode -halt-on-error %s && %s --no-fonts --exact-bbox --scale=%s -o %s %s"
@@ -683,10 +841,12 @@ is reused from cache)."
                             'agent-shell-markdown-math-source nil))
             (let ((latex (get-text-property
                           pos 'agent-shell-markdown-math-source))
+                  (inline (get-text-property
+                           pos 'agent-shell-markdown-math-inline))
                   (end (or (next-single-property-change
                             pos 'agent-shell-markdown-math-source nil (point-max))
                            (point-max))))
-              (agent-shell-markdown--math-render buffer pos end latex)
+              (agent-shell-markdown--math-render buffer pos end latex inline)
               (setq pos end))))))))
 
 (defun agent-shell-markdown-math-refresh ()
