@@ -604,6 +604,14 @@ x
         (agent-shell-markdown-math--refresh-if-changed))
       (should-not refreshed))))
 
+(ert-deftest agent-shell-markdown-math-text-scale-wired-to-refresh ()
+  ;; A buffer zoom (`text-scale-adjust') fires `text-scale-mode-hook' but
+  ;; neither display nor theme hooks, so the lazy refresh must subscribe to
+  ;; it directly — otherwise equations only re-size on the next buffer
+  ;; switch.  Verify the hook is wired at load time.
+  (should (memq 'agent-shell-markdown-math--maybe-refresh
+                (default-value 'text-scale-mode-hook))))
+
 (ert-deftest agent-shell-markdown-math-image-cache-key-includes-scale ()
   ;; The in-memory image-cache key folds in the display scale, so the same
   ;; equation at two font sizes maps to two distinct entries.

@@ -989,12 +989,13 @@ and untouched buffers refresh lazily when next displayed."
 
 (defun agent-shell-markdown-math--maybe-refresh (&rest _)
   "Re-render equations if the appearance changed since they were rendered.
-Hooked to buffer display (`window-buffer-change-functions') and theme
-enabling (`enable-theme-functions').  A no-op when math rendering is
-off; otherwise the actual comparison and refresh are deferred to the
-next idle moment, by which point a freshly applied theme is fully in
-effect (and rapid repeat triggers collapse, since the first refresh
-updates the recorded appearance)."
+Hooked to buffer display (`window-buffer-change-functions'), theme
+enabling (`enable-theme-functions'), and buffer zoom
+\(`text-scale-mode-hook').  A no-op when math rendering is off;
+otherwise the actual comparison and refresh are deferred to the next
+idle moment, by which point a freshly applied theme / text scale is
+fully in effect (and rapid repeat triggers collapse, since the first
+refresh updates the recorded appearance)."
   (when agent-shell-markdown-render-math
     (run-at-time 0 nil #'agent-shell-markdown-math--refresh-if-changed)))
 
@@ -1021,13 +1022,16 @@ change is picked up just like a color change."
 ;; the next time the buffer is shown in a window and repaint if stale.
 ;; `enable-theme-functions' (Emacs 29+, cross-platform) covers the one case
 ;; display alone misses: a theme enabled while the buffer stays visible and
-;; untouched.  Both go through the same appearance-changed check (colors +
-;; font height), so they're cheap no-ops when nothing changed (or math
-;; rendering is off), and a font-size change re-sizes equations on the next
-;; buffer display.
+;; untouched.  `text-scale-mode-hook' covers the other: a buffer-local zoom
+;; (`text-scale-adjust', C-x C-+/-) changes the font height without a
+;; display or theme event, so without this hook equations only re-size on
+;; the next buffer switch.  All three go through the same appearance-changed
+;; check (colors + font height), so they're cheap no-ops when nothing
+;; changed (or math rendering is off).
 (add-hook 'window-buffer-change-functions
           #'agent-shell-markdown-math--maybe-refresh)
 (add-hook 'enable-theme-functions #'agent-shell-markdown-math--maybe-refresh)
+(add-hook 'text-scale-mode-hook #'agent-shell-markdown-math--maybe-refresh)
 
 (provide 'agent-shell-markdown-math)
 
