@@ -466,6 +466,34 @@ x
   (should-not (equal (agent-shell-markdown--math-cache-key "x" "#000000" 1.4)
                      (agent-shell-markdown--math-cache-key "x" "#000000" 1.4 t))))
 
+(ert-deftest agent-shell-markdown-math-cache-dir-uses-agent-shell-cache ()
+  ;; By default the equation cache lives under agent-shell's shared cache
+  ;; directory (so SVGs persist across sessions next to other cached
+  ;; assets).  `agent-shell.el' isn't loaded by this renderer-only test
+  ;; harness, so stub the helper — exactly the seam the production code
+  ;; relies on agent-shell.el providing in a real session.
+  (let ((agent-shell-markdown-math-cache-directory nil)
+        (tmp (make-temp-file "asm-cache" t)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'agent-shell--cache-dir)
+                   (lambda (&rest components)
+                     (apply #'file-name-concat tmp components))))
+          (should (equal (agent-shell-markdown--math-cache-dir)
+                         (file-name-concat tmp "markdown-math"))))
+      (delete-directory tmp t))))
+
+(ert-deftest agent-shell-markdown-math-cache-dir-honors-explicit-override ()
+  ;; An explicit `agent-shell-markdown-math-cache-directory' wins over the
+  ;; shared default and is created on demand.
+  (let* ((parent (make-temp-file "asm-cache-override" t))
+         (dir (file-name-concat parent "eqs"))
+         (agent-shell-markdown-math-cache-directory dir))
+    (unwind-protect
+        (progn
+          (should (equal (agent-shell-markdown--math-cache-dir) dir))
+          (should (file-directory-p dir)))
+      (delete-directory parent t))))
+
 (provide 'agent-shell-markdown-math-tests)
 
 ;;; agent-shell-markdown-math-tests.el ends here

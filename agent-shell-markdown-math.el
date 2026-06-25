@@ -64,6 +64,7 @@
 (require 'svg)
 
 (declare-function agent-shell-markdown--in-avoid-range-p "agent-shell-markdown")
+(declare-function agent-shell--cache-dir "agent-shell")
 
 (defface agent-shell-markdown-math
   '((t :inherit font-lock-constant-face))
@@ -203,10 +204,15 @@ equation to match the buffer foreground.  Equations are typeset as
 
 (defvar agent-shell-markdown-math-cache-directory nil
   "Directory for cached equation SVGs and scratch compiles.
-When nil, a subdirectory of the variable `temporary-file-directory'
-is used.  Point this at a persistent location to keep the cache
-across sessions (each unique equation then compiles at most once
-ever).")
+When nil, agent-shell's shared cache directory is used (via
+`agent-shell--cache-dir'), so equation SVGs persist across sessions
+alongside agent-shell's other cached assets and each unique
+equation compiles at most once ever.
+
+That helper lives in `agent-shell.el', which is always loaded in a
+real session.  The renderer's test harness loads this module
+without `agent-shell.el'; set this variable there (or stub
+`agent-shell--cache-dir') if a code path needs the directory.")
 
 ;; key (sha1 of latex + color + scale + preamble) -> image object.  An
 ;; equation is compiled at most once per key; subsequent renders (same
@@ -650,11 +656,11 @@ already stripped, e.g. \"E=mc^2\"."
 
 (defun agent-shell-markdown--math-cache-dir ()
   "Return the equation cache directory, creating it if needed.
-Honours `agent-shell-markdown-math-cache-directory', else a
-subdirectory of the variable `temporary-file-directory'."
+Honours `agent-shell-markdown-math-cache-directory', else
+agent-shell's shared cache directory (`agent-shell--cache-dir'), so
+the cache persists across sessions next to other cached assets."
   (let ((dir (or agent-shell-markdown-math-cache-directory
-                 (expand-file-name "agent-shell-markdown-math"
-                                   temporary-file-directory))))
+                 (agent-shell--cache-dir "markdown-math"))))
     (unless (file-directory-p dir)
       (make-directory dir t))
     dir))
