@@ -536,6 +536,39 @@ x
                        (* agent-shell-markdown-math-scale
                           (agent-shell-markdown--math-display-scale))))))))
 
+(ert-deftest agent-shell-markdown-math-appearance-tracks-color-and-font ()
+  ;; The appearance signature folds in both the colors and the buffer font
+  ;; height, so the lazy refresh detects a font-size change as well as a
+  ;; color change.  Stub the graphical inputs.
+  (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
+            ((symbol-function 'agent-shell-markdown--svg-color)
+             (lambda (_face attr _fallback)
+               (if (eq attr :foreground) "#111111" "#eeeeee"))))
+    (cl-letf (((symbol-function 'default-font-height) (lambda (&rest _) 20)))
+      (let ((a (agent-shell-markdown-math--current-appearance)))
+        (should (equal a '("#111111" "#eeeeee" 20)))
+        ;; Same colors, larger font => different signature => would refresh.
+        (cl-letf (((symbol-function 'default-font-height) (lambda (&rest _) 28)))
+          (should-not (equal a (agent-shell-markdown-math--current-appearance))))))))
+
+(ert-deftest agent-shell-markdown-math-refresh-if-changed-detects-font ()
+  ;; `--refresh-if-changed' triggers a refresh when only the font height
+  ;; moved (colors unchanged) — the new behavior over a colors-only check.
+  (let ((agent-shell-markdown-render-math t)
+        (refreshed nil))
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
+              ((symbol-function 'agent-shell-markdown--svg-color)
+               (lambda (_face attr _fallback)
+                 (if (eq attr :foreground) "#000000" "#ffffff")))
+              ((symbol-function 'agent-shell-markdown-math-refresh)
+               (lambda () (setq refreshed t))))
+      ;; Rendered at font height 20; current font is now 30, same colors.
+      (let ((agent-shell-markdown-math--rendered-appearance
+             '("#000000" "#ffffff" 20)))
+        (cl-letf (((symbol-function 'default-font-height) (lambda (&rest _) 30)))
+          (agent-shell-markdown-math--refresh-if-changed)))
+      (should refreshed))))
+
 (provide 'agent-shell-markdown-math-tests)
 
 ;;; agent-shell-markdown-math-tests.el ends here

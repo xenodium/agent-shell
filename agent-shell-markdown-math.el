@@ -248,11 +248,13 @@ without `agent-shell.el'; set this variable there (or stub
 (defvar agent-shell-markdown-math--pending (make-hash-table :test 'equal)
   "In-memory map of cache key to regions awaiting an in-flight compile.")
 
-(defvar agent-shell-markdown-math--rendered-colors nil
-  "The (FOREGROUND . BACKGROUND) the displayed equations were rendered for.
-Updated whenever an equation renders; compared on theme / frame /
-appearance changes to decide whether equations need re-rendering
-\(see `agent-shell-markdown-math--maybe-refresh').")
+(defvar agent-shell-markdown-math--rendered-appearance nil
+  "The appearance signature the displayed equations were rendered for.
+A list (FOREGROUND BACKGROUND FONT-HEIGHT) — see
+`agent-shell-markdown-math--current-appearance'.  Updated whenever
+an equation renders; compared on theme / frame / font changes to
+decide whether equations need re-rendering (see
+`agent-shell-markdown-math--maybe-refresh').")
 
 (defvar-local agent-shell-markdown-math--present nil
   "Non-nil in a buffer that has rendered display-math regions.
@@ -264,6 +266,18 @@ Both are `#rrggbb' strings resolved from the `default' face of the
 selected frame."
   (cons (agent-shell-markdown--svg-color 'default :foreground "#000000")
         (agent-shell-markdown--svg-color 'default :background "#ffffff")))
+
+(defun agent-shell-markdown-math--current-appearance ()
+  "Return the appearance signature equations should render for now.
+A list (FOREGROUND BACKGROUND FONT-HEIGHT): the colors equations
+are tinted with (see `agent-shell-markdown-math--current-colors')
+and the buffer font pixel height they are sized to (nil off a
+graphical frame).  Comparing this against
+`agent-shell-markdown-math--rendered-appearance' detects a color
+*or* font-size change so the lazy refresh can re-render."
+  (let ((colors (agent-shell-markdown-math--current-colors)))
+    (list (car colors) (cdr colors)
+          (and (display-graphic-p) (ignore-errors (default-font-height))))))
 
 (defun agent-shell-markdown--math-delimiter-flush-p (start end)
   "Return non-nil if the delimiter spanning START..END is flush on its line.
@@ -801,10 +815,11 @@ INLINE non-nil typesets LATEX in text style instead of display
 style; it feeds both the cache key and the compile, so inline and
 display renders of the same source don't collide in the cache."
   (when (agent-shell-markdown--math-renderable-p)
-    ;; Record the colors this render is for, so a later theme / frame /
-    ;; appearance change can detect the difference and re-render.
-    (let ((colors (agent-shell-markdown-math--current-colors)))
-      (setq agent-shell-markdown-math--rendered-colors colors)
+    ;; Record the appearance (colors + font height) this render is for,
+    ;; so a later theme / frame / font change can detect the difference
+    ;; and re-render.
+    (let ((appearance (agent-shell-markdown-math--current-appearance)))
+      (setq agent-shell-markdown-math--rendered-appearance appearance)
       (cond
        ((or agent-shell-markdown-math-use-placeholder
             (not (agent-shell-markdown--math-tools-available-p)))
@@ -812,7 +827,7 @@ display renders of the same source don't collide in the cache."
          buffer start end
          (agent-shell-markdown--latex-placeholder-image latex)))
        (t
-        (let* ((color (car colors))
+        (let* ((color (car appearance))
                (scale agent-shell-markdown-math-scale)
                (key (agent-shell-markdown--math-cache-key latex color scale inline))
                (image (agent-shell-markdown--math-cached-image key)))
@@ -933,8 +948,8 @@ unchanged stay fast."
   (interactive)
   (setq agent-shell-markdown-math--svg-px-per-pt nil)
   (clrhash agent-shell-markdown-math--image-cache)
-  (setq agent-shell-markdown-math--rendered-colors
-        (agent-shell-markdown-math--current-colors))
+  (setq agent-shell-markdown-math--rendered-appearance
+        (agent-shell-markdown-math--current-appearance))
   (dolist (buffer (buffer-list))
     (when (buffer-local-value 'agent-shell-markdown-math--present buffer)
       (agent-shell-markdown-math--refresh-buffer buffer))))
@@ -946,15 +961,19 @@ enabling (`enable-theme-functions').  A no-op when math rendering is
 off; otherwise the actual comparison and refresh are deferred to the
 next idle moment, by which point a freshly applied theme is fully in
 effect (and rapid repeat triggers collapse, since the first refresh
-updates the recorded colors)."
+updates the recorded appearance)."
   (when agent-shell-markdown-render-math
     (run-at-time 0 nil #'agent-shell-markdown-math--refresh-if-changed)))
 
 (defun agent-shell-markdown-math--refresh-if-changed ()
-  "Run `agent-shell-markdown-math-refresh' iff the current colors changed."
+  "Run `agent-shell-markdown-math-refresh' iff the appearance changed.
+The appearance signature folds in both colors and the buffer font
+height (see `agent-shell-markdown-math--current-appearance'), so a
+font-size change is picked up the next time a hook fires (e.g. on
+switching to the buffer), just like a color change."
   (when (and agent-shell-markdown-render-math
-             (not (equal (agent-shell-markdown-math--current-colors)
-                         agent-shell-markdown-math--rendered-colors)))
+             (not (equal (agent-shell-markdown-math--current-appearance)
+                         agent-shell-markdown-math--rendered-appearance)))
     (agent-shell-markdown-math-refresh)))
 
 ;; Re-render lazily, when an equation buffer is next displayed, rather than
@@ -965,8 +984,10 @@ updates the recorded colors)."
 ;; the next time the buffer is shown in a window and repaint if stale.
 ;; `enable-theme-functions' (Emacs 29+, cross-platform) covers the one case
 ;; display alone misses: a theme enabled while the buffer stays visible and
-;; untouched.  Both go through the same colors-actually-changed check, so
-;; they're cheap no-ops when nothing changed (or math rendering is off).
+;; untouched.  Both go through the same appearance-changed check (colors +
+;; font height), so they're cheap no-ops when nothing changed (or math
+;; rendering is off), and a font-size change re-sizes equations on the next
+;; buffer display.
 (add-hook 'window-buffer-change-functions
           #'agent-shell-markdown-math--maybe-refresh)
 (add-hook 'enable-theme-functions #'agent-shell-markdown-math--maybe-refresh)
