@@ -41,7 +41,7 @@
 ;;   image path  bare image path on a line  same as `![alt](url)' (no markup)
 ;;   divider     `---' / `***' / `___'    rendered as an underlined rule line
 ;;   fenced code ```LANG\nX\n```          body syntax-highlighted via LANG mode
-;;   display math `$$X$$'                  overlaid with an equation image
+;;   display math `$$X$$' / `\[X\]'        overlaid with an equation image
 ;;                                         (placeholder; LaTeX source kept beneath)
 ;;   tables      `| A | B |' grid rows    rendered with aligned columns,
 ;;                                         unicode borders, header/zebra rows
@@ -163,11 +163,37 @@ window edge."
 
 (defface agent-shell-markdown-math
   '((t :inherit font-lock-constant-face))
-  "Face applied to rendered `$$...$$' display-math source.
+  "Face applied to rendered display-math source.
 On a graphical display the source is hidden behind an equation
 image; this face is the fallback styling for the raw LaTeX shown
 on a non-graphical display."
   :group 'agent-shell-markdown)
+
+(defconst agent-shell-markdown--math-delimiters
+  '((dollar . ("$$" . "$$"))
+    (bracket . ("\\[" . "\\]")))
+  "Map of display-math delimiter styles to their (OPEN . CLOSE) tokens.
+`dollar' is `$$...$$'; `bracket' is `\\[...\\]'.  The keys of this
+map are the values accepted in `agent-shell-markdown-math-delimiters'.")
+
+(defvar agent-shell-markdown-math-delimiters '(bracket)
+  "Display-math delimiter styles recognized when rendering markdown.
+
+A list whose members are keys of
+`agent-shell-markdown--math-delimiters':
+
+  `bracket'  recognize `\\[...\\]'
+  `dollar'   recognize `$$...$$'
+
+The two are independent — add or drop one to toggle it.  An empty
+list disables math rendering entirely (as does passing
+`:render-math nil' to `agent-shell-markdown-replace-markup').
+
+Defaults to `bracket' only: `\\[...\\]' is unambiguous, whereas
+`dollar' can false-positive on prose or currency like \"it cost
+$$$\".  Opt into `$$...$$' with:
+
+  (setq agent-shell-markdown-math-delimiters \\='(bracket dollar))")
 
 (defvar agent-shell-markdown-image-max-width 0.4
   "Maximum width for inline images rendered from `![alt](url)'.
@@ -258,8 +284,9 @@ file; nil leaves the markup as-is.  IMAGE-CACHE-DIRECTORY is where
 remote (http) image URLs are downloaded and cached; when nil
 \(the default), remote images are not fetched and their markup is
 left as text.  RENDER-MATH, when non-nil (the
-default), overlays `$$...$$' display-math blocks with an equation
-image (currently a placeholder; see
+default), overlays display-math blocks (`$$...$$' and / or
+`\\[...\\]', per `agent-shell-markdown-math-delimiters') with an
+equation image (currently a placeholder; see
 `agent-shell-markdown--style-math-blocks'); nil leaves the LaTeX
 source raw.  HIGHLIGHT-BLOCKS, when non-nil
 (the default), runs the fenced-block body through the language's
@@ -277,13 +304,16 @@ body un-fontified."
         (let* ((source-ranges (agent-shell-markdown--sort-ranges
                                (agent-shell-markdown--make-markers
                                 (agent-shell-markdown--source-block-ranges))))
-               ;; `$$...$$' display-math regions, excluding any `$$' that
-               ;; lives inside a fenced code block.  Protected like
-               ;; source blocks so inline passes don't mangle the LaTeX
-               ;; interior (e.g. `a_b' subscripts, `**' superscripts).
-               (math-ranges (agent-shell-markdown--make-markers
-                             (agent-shell-markdown--math-block-ranges
-                              source-ranges)))
+               ;; Display-math regions (`$$...$$' / `\\[...\\]'),
+               ;; excluding any delimiter inside a fenced code block.
+               ;; Protected like source blocks so inline passes don't
+               ;; mangle the LaTeX interior (e.g. `a_b' subscripts,
+               ;; `**' superscripts).  Skipped when RENDER-MATH is nil
+               ;; so the delimiters stay plain text.
+               (math-ranges (when render-math
+                              (agent-shell-markdown--make-markers
+                               (agent-shell-markdown--math-block-ranges
+                                source-ranges))))
                (protect-ranges (agent-shell-markdown--sort-ranges
                                 source-ranges math-ranges))
                (rendered-ranges (agent-shell-markdown--make-markers
@@ -1011,68 +1041,64 @@ with `emacs-lisp-mode' face properties on the body and a
             (goto-char (marker-position body-end))))))))
 
 (cl-defun agent-shell-markdown--style-math-blocks (&key avoid-ranges)
-  "Overlay `$$...$$' display-math blocks with an equation image.
+  "Overlay display-math blocks with an equation image.
 
-For each complete `$$...$$' block with a non-empty body, the raw
-`$$...$$' text is left in the buffer (so copy / save round-trips
-the LaTeX source) and, on a graphical display, an image of the
-equation is layered over it via a `display' text property.  The
-whole region is faced with `agent-shell-markdown-math' and tagged
+Recognizes the delimiter styles in
+`agent-shell-markdown-math-delimiters' (`$$...$$' and/or
+`\\[...\\]').  For each complete block with a non-empty body, the
+raw delimited text is left in the buffer (so copy / save
+round-trips the LaTeX source) and, on a graphical display, an
+image of the equation is layered over it via a `display' text
+property.  The whole region is faced with
+`agent-shell-markdown-math' and tagged
 `agent-shell-markdown-frozen' so later passes and subsequent
 streaming calls leave it alone.  Blocks inside any of AVOID-RANGES
-\(typically fenced code) are left untouched, as is an
-empty (`$$$$') block.
+\(typically fenced code) are left untouched, as is an empty block.
+
+Adds only text properties (no insert / delete), so the block
+positions returned by `agent-shell-markdown--math-blocks' stay
+valid while iterating.
 
 Image rendering is currently a PLACEHOLDER: it boxes the raw
 LaTeX rather than typesetting it.  Real compilation is meant to
 slot into `agent-shell-markdown--latex-to-image' without touching
 this pass.
 
-For example, the buffer:
+For example, with the buffer:
 
-  $$
-  E=mc^2
-  $$
+  \\[E=mc^2\\]
 
-keeps the `$$\\nE=mc^2\\n$$' text but shows an equation image in
-its place, faced `agent-shell-markdown-math' and frozen."
-  (let ((case-fold-search nil))
-    (goto-char (point-min))
-    (while (re-search-forward
-            (rx "$$" (group (*? anychar)) "$$")
-            nil t)
-      (let* ((block-start (match-beginning 0))
-             (block-end (match-end 0))
-             (latex (string-trim
-                     (buffer-substring-no-properties
-                      (match-beginning 1) (match-end 1))))
-             (avoid (agent-shell-markdown--in-avoid-range-p
-                     block-start block-end avoid-ranges)))
-        (cond
-         (avoid (goto-char (cdr avoid)))
-         ((string-empty-p latex))
-         (t
-          (let ((image (agent-shell-markdown--latex-to-image latex))
-                (line-prefix (get-text-property block-start 'line-prefix))
-                (wrap-prefix (get-text-property block-start 'wrap-prefix)))
-            (add-face-text-property block-start block-end
-                                    'agent-shell-markdown-math)
-            (when image
-              (put-text-property block-start block-end 'display image)
-              (put-text-property block-start block-end 'mouse-face 'highlight)
-              (when line-prefix
-                (put-text-property block-start block-end
-                                   'line-prefix line-prefix))
-              (when wrap-prefix
-                (put-text-property block-start block-end
-                                   'wrap-prefix wrap-prefix)))
-            (add-text-properties
-             block-start block-end
-             `(help-echo ,latex
-               agent-shell-markdown-math-source ,latex
-               agent-shell-markdown-frozen t
-               rear-nonsticky (agent-shell-markdown-frozen)))
-            (goto-char block-end))))))))
+the `\\[E=mc^2\\]' text is kept but shows an equation image in its
+place, faced `agent-shell-markdown-math' and frozen."
+  (dolist (block (agent-shell-markdown--math-blocks avoid-ranges))
+    ;; A still-open block (no closing delimiter yet) reports :close 0
+    ;; and runs to `point-max'; leave it raw until the closer streams in.
+    (when-let* ((close (plist-get block :close))
+                ((> close 0))
+                (start (plist-get block :start))
+                (end (plist-get block :end))
+                (latex (string-trim
+                        (buffer-substring-no-properties
+                         (+ start (plist-get block :open))
+                         (- end close))))
+                ((not (string-empty-p latex))))
+      (let ((image (agent-shell-markdown--latex-to-image latex))
+            (line-prefix (get-text-property start 'line-prefix))
+            (wrap-prefix (get-text-property start 'wrap-prefix)))
+        (add-face-text-property start end 'agent-shell-markdown-math)
+        (when image
+          (put-text-property start end 'display image)
+          (put-text-property start end 'mouse-face 'highlight)
+          (when line-prefix
+            (put-text-property start end 'line-prefix line-prefix))
+          (when wrap-prefix
+            (put-text-property start end 'wrap-prefix wrap-prefix)))
+        (add-text-properties
+         start end
+         `(help-echo ,latex
+           agent-shell-markdown-math-source ,latex
+           agent-shell-markdown-frozen t
+           rear-nonsticky (agent-shell-markdown-frozen)))))))
 
 (defun agent-shell-markdown--svg-color (face attribute fallback)
   "Return FACE's ATTRIBUTE color as a `#rrggbb' string, or FALLBACK.
@@ -2629,43 +2655,82 @@ returns a list with one range covering the whole block."
         (push (cons open-start (point-max)) ranges)))
     (nreverse ranges)))
 
-(defun agent-shell-markdown--math-block-ranges (&optional avoid-ranges)
-  "Return list of (start . end) ranges covering `$$...$$' display math.
+(defun agent-shell-markdown--math-blocks (&optional avoid-ranges)
+  "Return display-math blocks in the current buffer.
 
-Each range spans from the opening `$$' to the end of its matching
-closing `$$'.  An opening `$$' with no closing `$$' yet
-\(mid-stream) extends to `point-max', so its contents are
+Each element is a plist (:start S :end E :open O :close C): S..E
+spans the whole delimited block (delimiters included), and O / C
+are the opening / closing delimiter token lengths, so the LaTeX
+body is the buffer text in [S+O, E-C).
+
+Only the delimiter styles listed in
+`agent-shell-markdown-math-delimiters' are recognized (`$$...$$'
+and/or `\\[...\\]').  Scanning is a single left-to-right pass with
+one open delimiter at a time: while a block is open only its own
+closer ends it, so a `$$' inside a `\\[...\\]' block (or vice
+versa) is body, and the returned blocks never overlap each other.
+A delimiter inside any of AVOID-RANGES (a sorted vector, typically
+fenced code) is ignored, so blocks never overlap AVOID-RANGES
+either.  A block whose closing delimiter has not streamed in yet
+extends to `point-max' with :close 0, so its contents stay
 protected as the buffer grows — mirrors
 `agent-shell-markdown--source-block-ranges'.
 
-A `$$' delimiter that falls inside any of AVOID-RANGES (a sorted
-vector, typically fenced code blocks) is ignored, so the returned
-ranges never overlap AVOID-RANGES.
+For example, with `bracket' enabled and buffer \"\\=\\[E=mc^2\\]\",
+returns ((:start 1 :end 10 :open 2 :close 2))."
+  (let* ((specs (seq-keep (lambda (style)
+                            (map-elt agent-shell-markdown--math-delimiters style))
+                          agent-shell-markdown-math-delimiters))
+         (tokens (seq-uniq (append (mapcar #'car specs) (mapcar #'cdr specs))))
+         (blocks '())
+         (open-start nil)
+         (open-len nil)
+         (open-close nil)
+         (case-fold-search nil))
+    (when tokens
+      (save-excursion
+        (goto-char (point-min))
+        (while (re-search-forward (regexp-opt tokens) nil t)
+          (let* ((token (match-string-no-properties 0))
+                 (token-start (match-beginning 0))
+                 (avoid (agent-shell-markdown--in-avoid-range-p
+                         token-start (point) avoid-ranges)))
+            (cond
+             (avoid (goto-char (cdr avoid)))
+             ;; Inside a block: only its own closer ends it.
+             (open-close
+              (when (string= token open-close)
+                (push (list :start open-start :end (point)
+                            :open open-len :close (length token))
+                      blocks)
+                (setq open-start nil open-len nil open-close nil)))
+             ;; Not in a block: an opener of some style starts one.  A
+             ;; stray closer (e.g. a lone `\\]') matches no opener and
+             ;; is skipped.
+             ((seq-find (lambda (spec) (string= token (car spec))) specs)
+              (setq open-start token-start
+                    open-len (length token)
+                    open-close (cdr (seq-find (lambda (spec)
+                                                (string= token (car spec)))
+                                              specs)))))))
+        (when open-start
+          (push (list :start open-start :end (point-max)
+                      :open open-len :close 0)
+                blocks))))
+    (nreverse blocks)))
 
-For example, given the buffer:
+(defun agent-shell-markdown--math-block-ranges (&optional avoid-ranges)
+  "Return list of (start . end) ranges covering display-math blocks.
 
-  $$
-  E=mc^2
-  $$
+Thin adapter over `agent-shell-markdown--math-blocks' for callers
+that only need the protected spans (avoid-ranges, watermark
+back-off).  AVOID-RANGES is forwarded.
 
-returns a list with one range covering the whole block."
-  (let ((ranges '())
-        (open-start nil)
-        (case-fold-search nil))
-    (save-excursion
-      (goto-char (point-min))
-      (while (search-forward "$$" nil t)
-        (let ((avoid (agent-shell-markdown--in-avoid-range-p
-                      (match-beginning 0) (point) avoid-ranges)))
-          (cond
-           (avoid (goto-char (cdr avoid)))
-           (open-start
-            (push (cons open-start (point)) ranges)
-            (setq open-start nil))
-           (t (setq open-start (match-beginning 0))))))
-      (when open-start
-        (push (cons open-start (point-max)) ranges)))
-    (nreverse ranges)))
+For example, with `bracket' enabled and buffer \"\\=\\[E=mc^2\\]\",
+returns ((1 . 10))."
+  (mapcar (lambda (block)
+            (cons (plist-get block :start) (plist-get block :end)))
+          (agent-shell-markdown--math-blocks avoid-ranges)))
 
 (defun agent-shell-markdown--frozen-ranges ()
   "Return ranges of buffer chars tagged `agent-shell-markdown-frozen'.
