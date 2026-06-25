@@ -703,11 +703,12 @@ is cheap when nothing actually changed."
 
 (defun agent-shell-markdown-math--maybe-refresh (&rest _)
   "Re-render equations if the appearance changed since they were rendered.
-Hooked to theme / frame-creation / system-appearance changes.  A
-no-op when math rendering is off; otherwise the actual comparison
-and refresh are deferred to the next idle moment, by which point the
-new theme / frame is fully in effect (and rapid repeat triggers
-collapse, since the first refresh updates the recorded colors)."
+Hooked to buffer display (`window-buffer-change-functions') and theme
+enabling (`enable-theme-functions').  A no-op when math rendering is
+off; otherwise the actual comparison and refresh are deferred to the
+next idle moment, by which point a freshly applied theme is fully in
+effect (and rapid repeat triggers collapse, since the first refresh
+updates the recorded colors)."
   (when agent-shell-markdown-render-math
     (run-at-time 0 nil #'agent-shell-markdown-math--refresh-if-changed)))
 
@@ -718,16 +719,19 @@ collapse, since the first refresh updates the recorded colors)."
                          agent-shell-markdown-math--rendered-colors)))
     (agent-shell-markdown-math-refresh)))
 
-;; Re-render on the events that change the default face's colors: a theme
-;; being enabled (Emacs 29+), a new frame opening (e.g. a graphical client
-;; attaching to a daemon after a TTY render), and macOS light/dark
-;; switches.  Each handler is gated by `agent-shell-markdown-render-math'
-;; and a colors-actually-changed check, so they're cheap no-ops otherwise.
+;; Re-render lazily, when an equation buffer is next displayed, rather than
+;; eagerly on every event that might recolor the default face.
+;; `window-buffer-change-functions' is the workhorse: whatever changed the
+;; colors (a theme, a macOS/Linux system light/dark toggle on any platform,
+;; a graphical client attaching to a daemon after a TTY render), we notice
+;; the next time the buffer is shown in a window and repaint if stale.
+;; `enable-theme-functions' (Emacs 29+, cross-platform) covers the one case
+;; display alone misses: a theme enabled while the buffer stays visible and
+;; untouched.  Both go through the same colors-actually-changed check, so
+;; they're cheap no-ops when nothing changed (or math rendering is off).
+(add-hook 'window-buffer-change-functions
+          #'agent-shell-markdown-math--maybe-refresh)
 (add-hook 'enable-theme-functions #'agent-shell-markdown-math--maybe-refresh)
-(add-hook 'after-make-frame-functions #'agent-shell-markdown-math--maybe-refresh)
-(when (boundp 'ns-system-appearance-change-functions)
-  (add-hook 'ns-system-appearance-change-functions
-            #'agent-shell-markdown-math--maybe-refresh))
 
 (provide 'agent-shell-markdown-math)
 
