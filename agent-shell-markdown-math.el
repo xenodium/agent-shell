@@ -187,15 +187,6 @@ spawns LaTeX compiles whose images it never displays.")
 (defvar agent-shell-markdown-math-dvisvgm-program "dvisvgm"
   "Program that converts DVI to SVG.")
 
-(defvar agent-shell-markdown-math-scale 1.4
-  "`dvisvgm' output scale for compiled equation SVGs.
-
-This is a render-quality / vector-precision knob, not a size knob:
-the displayed equation is rescaled to the buffer font at display
-time (see `agent-shell-markdown--math-display-scale'), and this
-factor cancels out of that computation.  To change how big
-equations appear on screen, use `agent-shell-markdown-math-font-scale'.")
-
 (defvar agent-shell-markdown-math-font-scale 1.0
   "Size of rendered equations relative to the buffer font.
 
@@ -706,14 +697,16 @@ the cache persists across sessions next to other cached assets."
       (make-directory dir t))
     dir))
 
-(defun agent-shell-markdown--math-cache-key (latex color scale &optional inline)
-  "Return a stable cache key for LATEX rendered in COLOR at SCALE.
+(defun agent-shell-markdown--math-cache-key (latex color &optional inline)
+  "Return a stable cache key for LATEX rendered in COLOR.
 The preamble is folded in so changing it invalidates the cache.
 INLINE (text style vs display) is folded in too, since the same
-LATEX renders differently in each — appended only when set so
-existing display-math cache keys stay stable."
-  (secure-hash 'sha1 (format "%s\0%s\0%s\0%s%s"
-                             latex color scale
+LATEX renders differently in each.  The key names the
+font-independent on-disk SVG; display size is applied later (see
+`agent-shell-markdown--math-image-cache-key'), so it is not part of
+this key."
+  (secure-hash 'sha1 (format "%s\0%s\0%s%s"
+                             latex color
                              agent-shell-markdown-math-preamble
                              (if inline "\0inline" ""))))
 
@@ -746,20 +739,19 @@ so a later graphical frame can still measure."
 (defun agent-shell-markdown--math-display-scale ()
   "Return the `create-image' :scale that sizes equations to the buffer font.
 
-Maps LaTeX's 10pt body font onto the buffer's font pixel height,
-times `agent-shell-markdown-math-font-scale'.  Derivation: an
-equation's displayed font height is
-\(10 * `agent-shell-markdown-math-scale' * px-per-pt * scale) px,
-so scale = target / (10 * math-scale * px-per-pt); the compile
-scale cancels, so it doesn't affect on-screen size.  Returns 1.0
-when the font height can't be determined (batch / non-graphical),
+Maps the LaTeX document's 10pt body font (the `standalone' default,
+compiled at dvisvgm scale 1, so 10pt of LaTeX = 10 SVG points) onto
+the buffer's font pixel height, times
+`agent-shell-markdown-math-font-scale'.  An equation's displayed
+font height is (10 * px-per-pt * scale) px, so
+scale = target * font-scale / (10 * px-per-pt).  Returns 1.0 when
+the font height can't be determined (batch / non-graphical),
 leaving the image at its natural size."
   (let ((target (and (display-graphic-p)
                      (ignore-errors (default-font-height)))))
     (if target
         (/ (* target agent-shell-markdown-math-font-scale)
-           (* 10.0 agent-shell-markdown-math-scale
-              (agent-shell-markdown--math-svg-px-per-pt)))
+           (* 10.0 (agent-shell-markdown--math-svg-px-per-pt)))
       1.0)))
 
 (defun agent-shell-markdown--math-load-svg-image (file &optional scale)
@@ -851,32 +843,31 @@ display renders of the same source don't collide in the cache."
          (agent-shell-markdown--latex-placeholder-image latex)))
        (t
         (let* ((color (car appearance))
-               (scale agent-shell-markdown-math-scale)
-               (key (agent-shell-markdown--math-cache-key latex color scale inline))
+               (key (agent-shell-markdown--math-cache-key latex color inline))
                (image (agent-shell-markdown--math-cached-image key)))
           (if image
               (agent-shell-markdown--math-overlay-image buffer start end image)
             (agent-shell-markdown--math-schedule
-             key latex color scale buffer
+             key latex color buffer
              (copy-marker start) (copy-marker end) inline))))))))
 
-(defun agent-shell-markdown--math-schedule (key latex color scale
+(defun agent-shell-markdown--math-schedule (key latex color
                                                 buffer start end &optional inline)
   "Queue BUFFER's START..END for KEY and start a compile if none is running.
 
-KEY identifies the equation; LATEX, COLOR, SCALE, and INLINE are
-forwarded to `agent-shell-markdown--math-compile' for the render.
-Multiple regions sharing KEY (the same equation rendered more than
-once) are coalesced onto a single in-flight compile; all are
-overlaid when it finishes."
+KEY identifies the equation; LATEX, COLOR, and INLINE are forwarded
+to `agent-shell-markdown--math-compile' for the render.  Multiple
+regions sharing KEY (the same equation rendered more than once) are
+coalesced onto a single in-flight compile; all are overlaid when it
+finishes."
   (let ((pending (gethash key agent-shell-markdown-math--pending)))
     (puthash key (cons (list buffer start end) pending)
              agent-shell-markdown-math--pending)
     (unless pending
-      (agent-shell-markdown--math-compile key latex color scale inline))))
+      (agent-shell-markdown--math-compile key latex color inline))))
 
-(defun agent-shell-markdown--math-compile (key latex color scale &optional inline)
-  "Asynchronously compile LATEX (in COLOR, at SCALE) to the cache SVG for KEY.
+(defun agent-shell-markdown--math-compile (key latex color &optional inline)
+  "Asynchronously compile LATEX (in COLOR) to the cache SVG for KEY.
 
 Writes a standalone LaTeX document, runs
 `agent-shell-markdown-math-latex-program' then
@@ -906,13 +897,16 @@ portable; it can slot in here without changing callers."
                       (if inline "" "\\displaystyle ")
                       latex)
               "\\end{document}\n"))
+    ;; Compile at dvisvgm scale 1: the SVG is vector (glyphs are outline
+    ;; paths via --no-fonts), so the scale doesn't affect quality, and the
+    ;; displayed size is set later by `--math-display-scale'.  Fixing it at 1
+    ;; means the SVG carries the equation's natural point dimensions.
     (let ((command
-           (format "cd %s && %s -interaction=nonstopmode -halt-on-error %s && %s --no-fonts --exact-bbox --scale=%s -o %s %s"
+           (format "cd %s && %s -interaction=nonstopmode -halt-on-error %s && %s --no-fonts --exact-bbox --scale=1 -o %s %s"
                    (shell-quote-argument dir)
                    (shell-quote-argument agent-shell-markdown-math-latex-program)
                    (shell-quote-argument tex)
                    (shell-quote-argument agent-shell-markdown-math-dvisvgm-program)
-                   scale
                    (shell-quote-argument svg)
                    (shell-quote-argument dvi))))
       (condition-case err

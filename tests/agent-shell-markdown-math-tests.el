@@ -341,20 +341,20 @@ E=mc^2
 
 (ert-deftest agent-shell-markdown-math-cache-key-distinguishes-inputs ()
   ;; The cache key must be stable for identical inputs and differ when the
-  ;; equation, colour, or scale changes — otherwise cached SVGs collide or
-  ;; never hit.  (Pure function; no TeX or graphical display needed.)
-  (let ((base (agent-shell-markdown--math-cache-key "E=mc^2" "#000000" 1.4)))
-    (should (equal base (agent-shell-markdown--math-cache-key "E=mc^2" "#000000" 1.4)))
-    (should-not (equal base (agent-shell-markdown--math-cache-key "E=mc^3" "#000000" 1.4)))
-    (should-not (equal base (agent-shell-markdown--math-cache-key "E=mc^2" "#ffffff" 1.4)))
-    (should-not (equal base (agent-shell-markdown--math-cache-key "E=mc^2" "#000000" 2.0)))))
+  ;; equation or colour changes — otherwise cached SVGs collide or never
+  ;; hit.  (Pure function; no TeX or graphical display needed.)  Display
+  ;; size is NOT part of this key (the on-disk SVG is font-independent).
+  (let ((base (agent-shell-markdown--math-cache-key "E=mc^2" "#000000")))
+    (should (equal base (agent-shell-markdown--math-cache-key "E=mc^2" "#000000")))
+    (should-not (equal base (agent-shell-markdown--math-cache-key "E=mc^3" "#000000")))
+    (should-not (equal base (agent-shell-markdown--math-cache-key "E=mc^2" "#ffffff")))))
 
 (ert-deftest agent-shell-markdown-math-cache-key-folds-in-preamble ()
   ;; Changing the preamble must invalidate the cache (different output).
-  (let ((base (agent-shell-markdown--math-cache-key "E=mc^2" "#000000" 1.4)))
+  (let ((base (agent-shell-markdown--math-cache-key "E=mc^2" "#000000")))
     (let ((agent-shell-markdown-math-preamble "\\documentclass{minimal}"))
       (should-not (equal base (agent-shell-markdown--math-cache-key
-                               "E=mc^2" "#000000" 1.4))))))
+                               "E=mc^2" "#000000"))))))
 
 (ert-deftest agent-shell-markdown-convert-inline-math-protects-markup ()
   ;; Inline `\\(...\\)' is matched anywhere on a line (not just block
@@ -460,11 +460,11 @@ x
 (ert-deftest agent-shell-markdown-math-cache-key-distinguishes-inline ()
   ;; Inline and display renders of the same source must not collide:
   ;; the inline flag changes the key, while the default (display) key is
-  ;; unchanged from the no-flag form (so existing caches stay valid).
-  (should (equal (agent-shell-markdown--math-cache-key "x" "#000000" 1.4)
-                 (agent-shell-markdown--math-cache-key "x" "#000000" 1.4 nil)))
-  (should-not (equal (agent-shell-markdown--math-cache-key "x" "#000000" 1.4)
-                     (agent-shell-markdown--math-cache-key "x" "#000000" 1.4 t))))
+  ;; unchanged from the no-flag form.
+  (should (equal (agent-shell-markdown--math-cache-key "x" "#000000")
+                 (agent-shell-markdown--math-cache-key "x" "#000000" nil)))
+  (should-not (equal (agent-shell-markdown--math-cache-key "x" "#000000")
+                     (agent-shell-markdown--math-cache-key "x" "#000000" t))))
 
 (ert-deftest agent-shell-markdown-math-cache-dir-uses-agent-shell-cache ()
   ;; By default the equation cache lives under agent-shell's shared cache
@@ -510,31 +510,21 @@ x
       (should-not agent-shell-markdown-math--svg-px-per-pt))))
 
 (ert-deftest agent-shell-markdown-math-display-scale-matches-font ()
-  ;; The display scale maps LaTeX's 10pt body font onto the buffer font
-  ;; height: scale = target * font-scale / (10 * math-scale * px-per-pt).
-  ;; Stub the graphical inputs so the arithmetic is checked deterministically.
+  ;; The display scale maps the LaTeX 10pt body font onto the buffer font
+  ;; height: scale = target * font-scale / (10 * px-per-pt).  Stub the
+  ;; graphical inputs so the arithmetic is checked deterministically.
   (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
             ((symbol-function 'default-font-height) (lambda (&rest _) 28))
             ((symbol-function 'agent-shell-markdown--math-svg-px-per-pt)
              (lambda () 2.0)))
-    (let ((agent-shell-markdown-math-scale 1.4)
-          (agent-shell-markdown-math-font-scale 1.0))
+    (let ((agent-shell-markdown-math-font-scale 1.0))
       (should (equal (agent-shell-markdown--math-display-scale)
-                     (/ 28.0 (* 10.0 1.4 2.0)))))
+                     (/ 28.0 (* 10.0 2.0)))))
     ;; Doubling font-scale doubles the displayed size.
-    (let* ((agent-shell-markdown-math-scale 1.4)
-           (agent-shell-markdown-math-font-scale 1.0)
+    (let* ((agent-shell-markdown-math-font-scale 1.0)
            (base (agent-shell-markdown--math-display-scale))
            (agent-shell-markdown-math-font-scale 2.0))
-      (should (equal (agent-shell-markdown--math-display-scale) (* 2 base))))
-    ;; The compile scale cancels: changing it leaves on-screen size unchanged.
-    (let ((agent-shell-markdown-math-font-scale 1.0))
-      (should (equal (let ((agent-shell-markdown-math-scale 1.4))
-                       (* agent-shell-markdown-math-scale
-                          (agent-shell-markdown--math-display-scale)))
-                     (let ((agent-shell-markdown-math-scale 3.0))
-                       (* agent-shell-markdown-math-scale
-                          (agent-shell-markdown--math-display-scale))))))))
+      (should (equal (agent-shell-markdown--math-display-scale) (* 2 base))))))
 
 (ert-deftest agent-shell-markdown-math-appearance-tracks-color-and-font ()
   ;; The appearance signature folds in both the colors and the buffer font
