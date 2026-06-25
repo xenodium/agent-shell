@@ -2665,58 +2665,86 @@ body is the buffer text in [S+O, E-C).
 
 Only the delimiter styles listed in
 `agent-shell-markdown-math-delimiters' are recognized (`$$...$$'
-and/or `\\[...\\]').  Scanning is a single left-to-right pass with
-one open delimiter at a time: while a block is open only its own
-closer ends it, so a `$$' inside a `\\[...\\]' block (or vice
-versa) is body, and the returned blocks never overlap each other.
+and/or `\\[...\\]').
+
+Scanning resolves each opener immediately: from just after an
+opener we look for the first of its matching closer or a blank
+line (a paragraph break, which LaTeX display math can't contain).
+
+  - Closer first: a valid block, recorded; scanning resumes after
+    the closer.
+  - Blank line first: the opener is a false positive, so scanning
+    resumes just after the OPENER (not past the blank line), so
+    real blocks sitting between a stray opener and the blank line
+    are still found.
+  - Neither yet (end of buffer): a still-streaming block extending
+    to `point-max' with :close 0, so a genuine equation stays
+    protected as the buffer grows — mirrors
+    `agent-shell-markdown--source-block-ranges'.
+
 A delimiter inside any of AVOID-RANGES (a sorted vector, typically
-fenced code) is ignored, so blocks never overlap AVOID-RANGES
-either.  A block whose closing delimiter has not streamed in yet
-extends to `point-max' with :close 0, so its contents stay
-protected as the buffer grows — mirrors
-`agent-shell-markdown--source-block-ranges'.
+fenced code) is ignored — both openers and closers — so blocks
+never overlap AVOID-RANGES.  Because openers are resolved one at a
+time and bodies never cross a blank line, returned blocks never
+overlap each other.
 
 For example, with `bracket' enabled and buffer \"\\=\\[E=mc^2\\]\",
-returns ((:start 1 :end 10 :open 2 :close 2))."
+returns ((:start 1 :end 11 :open 2 :close 2))."
   (let* ((specs (seq-keep (lambda (style)
                             (map-elt agent-shell-markdown--math-delimiters style))
                           agent-shell-markdown-math-delimiters))
-         (tokens (seq-uniq (append (mapcar #'car specs) (mapcar #'cdr specs))))
          (blocks '())
-         (open-start nil)
-         (open-len nil)
-         (open-close nil)
          (case-fold-search nil))
-    (when tokens
+    (when specs
       (save-excursion
         (goto-char (point-min))
-        (while (re-search-forward (regexp-opt tokens) nil t)
-          (let* ((token (match-string-no-properties 0))
-                 (token-start (match-beginning 0))
-                 (avoid (agent-shell-markdown--in-avoid-range-p
-                         token-start (point) avoid-ranges)))
-            (cond
-             (avoid (goto-char (cdr avoid)))
-             ;; Inside a block: only its own closer ends it.
-             (open-close
-              (when (string= token open-close)
-                (push (list :start open-start :end (point)
-                            :open open-len :close (length token))
-                      blocks)
-                (setq open-start nil open-len nil open-close nil)))
-             ;; Not in a block: an opener of some style starts one.  A
-             ;; stray closer (e.g. a lone `\\]') matches no opener and
-             ;; is skipped.
-             ((seq-find (lambda (spec) (string= token (car spec))) specs)
-              (setq open-start token-start
-                    open-len (length token)
-                    open-close (cdr (seq-find (lambda (spec)
-                                                (string= token (car spec)))
-                                              specs)))))))
-        (when open-start
-          (push (list :start open-start :end (point-max)
-                      :open open-len :close 0)
-                blocks))))
+        (let ((open-re (regexp-opt (mapcar #'car specs))))
+          (while (re-search-forward open-re nil t)
+            (let* ((open-token (match-string-no-properties 0))
+                   (open-start (match-beginning 0))
+                   (open-end (point))
+                   (avoid (agent-shell-markdown--in-avoid-range-p
+                           open-start open-end avoid-ranges)))
+              (if avoid
+                  (goto-char (cdr avoid))
+                (let* ((close-token (cdr (seq-find
+                                          (lambda (spec)
+                                            (string= open-token (car spec)))
+                                          specs)))
+                       ;; First closer or blank line at or after the body.
+                       ;; A closer inside an avoid-range isn't real — skip
+                       ;; past that range and keep looking.
+                       (hit (save-excursion
+                              (goto-char open-end)
+                              (let ((re (concat (regexp-quote close-token)
+                                                "\\|\n[ \t]*\n"))
+                                    (result nil))
+                                (while (and (not result)
+                                            (re-search-forward re nil t))
+                                  (if-let* ((av (agent-shell-markdown--in-avoid-range-p
+                                                 (match-beginning 0) (point)
+                                                 avoid-ranges)))
+                                      (goto-char (cdr av))
+                                    (setq result
+                                          (cons (match-string-no-properties 0)
+                                                (point)))))
+                                result))))
+                  (cond
+                   ;; Matching closer reached with no blank line before it.
+                   ((and hit (string= (car hit) close-token))
+                    (push (list :start open-start :end (cdr hit)
+                                :open (length open-token)
+                                :close (length close-token))
+                          blocks)
+                    (goto-char (cdr hit)))
+                   ;; Blank line first: false-positive opener.  Resume
+                   ;; right after the opener so inner real blocks are seen.
+                   (hit (goto-char open-end))
+                   ;; Neither yet: still-streaming open block.
+                   (t (push (list :start open-start :end (point-max)
+                                  :open (length open-token) :close 0)
+                            blocks)
+                      (goto-char (point-max)))))))))))
     (nreverse blocks)))
 
 (defun agent-shell-markdown--math-block-ranges (&optional avoid-ranges)
@@ -2727,7 +2755,7 @@ that only need the protected spans (avoid-ranges, watermark
 back-off).  AVOID-RANGES is forwarded.
 
 For example, with `bracket' enabled and buffer \"\\=\\[E=mc^2\\]\",
-returns ((1 . 10))."
+returns ((1 . 11))."
   (mapcar (lambda (block)
             (cons (plist-get block :start) (plist-get block :end)))
           (agent-shell-markdown--math-blocks avoid-ranges)))

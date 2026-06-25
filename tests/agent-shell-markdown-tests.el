@@ -297,6 +297,52 @@ $$ x $$
                    "\\[ a $$ b \\]"))
                  '(("\\[ a $$ b \\]" (agent-shell-markdown-math))))))
 
+(ert-deftest agent-shell-markdown-convert-math-multiline-body ()
+  ;; LaTeX allows newlines (but not blank lines) inside display math,
+  ;; so `\\[\\nE=mc^2\\n\\]' renders as one block.
+  (should (equal (agent-shell-markdown--deconstruct
+                  (agent-shell-markdown-convert
+                   "\\[
+E=mc^2
+\\]"))
+                 '(("\\[
+E=mc^2
+\\]" (agent-shell-markdown-math))))))
+
+(ert-deftest agent-shell-markdown-convert-math-blank-line-rejected ()
+  ;; A blank line can't appear inside LaTeX display math, so a block
+  ;; whose body would span one is rejected (left as plain text rather
+  ;; than mis-rendered as a single equation).
+  (should (equal (agent-shell-markdown--deconstruct
+                  (agent-shell-markdown-convert
+                   "\\[
+E=mc^2
+
+extra
+\\]"))
+                 '(("\\[
+E=mc^2
+
+extra
+\\]" nil)))))
+
+(ert-deftest agent-shell-markdown-convert-math-stray-opener-recovers-real-blocks ()
+  ;; A stray opener that never closes before a blank line is a false
+  ;; positive, but scanning resumes just after it — so a real block
+  ;; sitting between the stray opener and the blank line is still
+  ;; rendered (rather than swallowed and lost).
+  (let ((agent-shell-markdown-math-delimiters '(dollar bracket)))
+    (should (equal (agent-shell-markdown--deconstruct
+                    (agent-shell-markdown-convert
+                     "\\[ oops and $$E=mc^2$$ here
+
+next"))
+                   '(("\\[ oops and " nil)
+                     ("$$E=mc^2$$" (agent-shell-markdown-math))
+                     (" here
+
+next" nil))))))
+
 (ert-deftest agent-shell-markdown-convert-open-inline-code-protects-rest-of-line ()
   (should (equal (agent-shell-markdown--deconstruct
                   (agent-shell-markdown-convert
