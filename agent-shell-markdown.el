@@ -218,7 +218,7 @@ For example:
 
 (cl-defun agent-shell-markdown-replace-markup (&key force
                                                     (render-images t)
-                                                    (render-math t)
+                                                    (render-math agent-shell-markdown-render-math)
                                                     (highlight-blocks t)
                                                     image-cache-directory)
   "Replace Markdown markup in current buffer with propertized text.
@@ -254,12 +254,17 @@ markup with displayed images where the URL resolves to an image
 file; nil leaves the markup as-is.  IMAGE-CACHE-DIRECTORY is where
 remote (http) image URLs are downloaded and cached; when nil
 \(the default), remote images are not fetched and their markup is
-left as text.  RENDER-MATH, when non-nil (the
-default), overlays display-math blocks (`$$...$$' and / or
-`\\[...\\]', per `agent-shell-markdown-math-delimiters') with an
-equation image (compiled via latex / dvisvgm; see
-`agent-shell-markdown--style-math-blocks'); nil leaves the LaTeX
-source raw.  HIGHLIGHT-BLOCKS, when non-nil
+left as text.  RENDER-MATH (default
+`agent-shell-markdown-render-math', itself nil), when non-nil,
+overlays display math with an equation image compiled via latex /
+dvisvgm: the `\\[...\\]' / `$$...$$' delimiter styles in
+`agent-shell-markdown-math-delimiters' (see
+`agent-shell-markdown--style-math-blocks') and the
+`agent-shell-markdown-math-fence-languages' fenced blocks
+\(```math / ```latex, handled in
+`agent-shell-markdown--style-source-blocks').  Nil leaves the
+LaTeX source raw and such fences as ordinary code blocks.
+HIGHLIGHT-BLOCKS, when non-nil
 (the default), runs the fenced-block body through the language's
 major-mode font-lock to colour keywords / strings / etc.; nil
 strips the fences and inserts the action label but leaves the
@@ -313,8 +318,13 @@ body un-fontified."
              :avoid-ranges avoid-ranges))
           (agent-shell-markdown--style-dividers :avoid-ranges avoid-ranges)
           (agent-shell-markdown--style-blockquotes :avoid-ranges avoid-ranges)
+          ;; RENDER-MATH lets the source-block pass divert a
+          ;; `math'/`latex'/`tex' fence to the equation renderer instead
+          ;; of styling it as code (those fences are how several agents
+          ;; emit display math).
           (agent-shell-markdown--style-source-blocks
-           :highlight-blocks highlight-blocks)
+           :highlight-blocks highlight-blocks
+           :render-math render-math)
           ;; Math runs after source blocks (so a `$$' inside fenced code
           ;; stays literal) and before tables (so a frozen equation
           ;; isn't mis-parsed as table rows).  SOURCE-RANGES protects
@@ -814,8 +824,15 @@ characters when no usable window is available (e.g. batch)."
   (or (ignore-errors (window-body-width))
       80))
 
-(cl-defun agent-shell-markdown--style-source-blocks (&key (highlight-blocks t))
+(cl-defun agent-shell-markdown--style-source-blocks (&key (highlight-blocks t)
+                                                          render-math)
   "Strip fenced code block markup and syntax-highlight the body.
+
+When RENDER-MATH is non-nil, a fence whose language is a member of
+`agent-shell-markdown-math-fence-languages' (e.g. ```math) is not
+styled as code: its fences are stripped and the body is handed to
+`agent-shell-markdown--apply-math-region', so it renders as a
+display equation instead.
 
 For each complete `\\`\\`\\`LANG' / `\\`\\`\\`' fenced block,
 the opening and closing fence lines are deleted from the buffer.
@@ -873,7 +890,9 @@ with `emacs-lisp-mode' face properties on the body and a
              (body-end (copy-marker (match-end 4)))
              (close-start (match-beginning 5))
              (close-end (match-end 5))
-             (highlighted (when highlight-blocks
+             (math (and render-math
+                        (agent-shell-markdown--math-fence-language-p lang)))
+             (highlighted (when (and highlight-blocks (not math))
                             (agent-shell-markdown--highlight-code
                              (buffer-substring-no-properties body-start body-end)
                              lang))))
@@ -881,7 +900,23 @@ with `emacs-lisp-mode' face properties on the body and a
         ;; valid; body markers adjust automatically.
         (delete-region close-start close-end)
         (delete-region open-start open-end)
-        ;; Seed the bg panel on body chars first, then layer language
+        (if math
+            ;; A `math' / `latex' / `tex' fence: render the body as a
+            ;; display equation instead of a code panel.  Fences are
+            ;; stripped (like code blocks) so the block isn't re-detected
+            ;; as a fence on later streaming calls; the LaTeX body stays
+            ;; in place as the underlying text.
+            (let ((latex (string-trim
+                          (buffer-substring-no-properties
+                           (marker-position body-start)
+                           (marker-position body-end)))))
+              (unless (string-empty-p latex)
+                (agent-shell-markdown--apply-math-region
+                 (current-buffer)
+                 (marker-position body-start) (marker-position body-end)
+                 latex))
+              (goto-char (marker-position body-end)))
+          ;; Seed the bg panel on body chars first, then layer language
         ;; font-lock faces on top — the foreground colors take priority
         ;; per glyph while the `:extend t' background fills the gaps
         ;; and reaches the right edge of the window.  Include the
@@ -1009,7 +1044,7 @@ with `emacs-lisp-mode' face properties on the body and a
             ;; Move point past the body so the outer `re-search-forward'
             ;; loop doesn't backtrack into body content (e.g. shorter
             ;; inner fences inside a wider outer fence).
-            (goto-char (marker-position body-end))))))))
+            (goto-char (marker-position body-end)))))))))
 
 (defconst agent-shell-markdown--table-line-regexp
   (rx line-start

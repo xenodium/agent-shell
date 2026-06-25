@@ -94,6 +94,36 @@ $$$\".  Opt into `$$...$$' with:
 
   (setq agent-shell-markdown-math-delimiters \\='(bracket dollar))")
 
+(defvar agent-shell-markdown-render-math nil
+  "Master switch for rendering display math in agent responses.
+
+Nil (the default) disables math rendering entirely — delimiters
+and fenced math blocks are left as plain text / ordinary code
+blocks.  Set non-nil to opt in; what then gets recognized is
+controlled by `agent-shell-markdown-math-delimiters' (`\\[...\\]'
+on by default, `$$...$$' opt-in) and
+`agent-shell-markdown-math-fence-languages' (`math' / `latex' /
+`tex' fenced blocks, on by default).
+
+Consumed as the default of the `render-math' keyword of
+`agent-shell-markdown-replace-markup'.")
+
+(defvar agent-shell-markdown-math-fence-languages '("math" "latex" "tex")
+  "Fenced-code-block languages rendered as display math.
+
+A fenced block whose info string is one of these (compared
+case-insensitively), e.g.
+
+  ```math
+  E = mc^2
+  ```
+
+is typeset as an equation instead of shown as a code block — but
+only when `agent-shell-markdown-render-math' is non-nil.  Several
+agents emit `math'/`latex' fences (GitHub renders ```math as
+display math), so this complements the `\\[...\\]' / `$$...$$'
+delimiter styles.  Set to nil to leave such fences as code.")
+
 (defvar agent-shell-markdown-math-use-placeholder nil
   "When non-nil, draw the placeholder panel instead of typesetting LaTeX.
 Also used as the automatic fallback when the LaTeX toolchain
@@ -283,14 +313,39 @@ place, faced `agent-shell-markdown-math' and frozen."
                          (+ start (plist-get block :open))
                          (- end close))))
                 ((not (string-empty-p latex))))
-      (add-face-text-property start end 'agent-shell-markdown-math)
-      (add-text-properties
-       start end
-       `(help-echo ,latex
-         agent-shell-markdown-math-source ,latex
-         agent-shell-markdown-frozen t
-         rear-nonsticky (agent-shell-markdown-frozen)))
-      (agent-shell-markdown--math-render (current-buffer) start end latex))))
+      (agent-shell-markdown--apply-math-region (current-buffer) start end latex))))
+
+(defun agent-shell-markdown--math-fence-language-p (lang)
+  "Return non-nil if fenced-block language LANG renders as display math.
+Compares LANG case-insensitively against
+`agent-shell-markdown-math-fence-languages'.  LANG may be nil or
+empty (a fence with no info string), which is not a math language."
+  (and lang
+       (not (string-empty-p lang))
+       (member (downcase lang) agent-shell-markdown-math-fence-languages)
+       t))
+
+(defun agent-shell-markdown--apply-math-region (buffer start end latex)
+  "Mark BUFFER's START..END as display math with source LATEX and render it.
+
+Keeps the underlying text in place, faces the region
+`agent-shell-markdown-math', tags it `agent-shell-markdown-frozen'
+\(so later passes / streaming calls skip it) with LATEX stashed in
+`agent-shell-markdown-math-source', then hands off to
+`agent-shell-markdown--math-render' for the equation image.
+
+Shared by the delimiter pass (`--style-math-blocks') and the
+fenced-block path (`agent-shell-markdown--style-source-blocks',
+for ```math / ```latex)."
+  (with-current-buffer buffer
+    (add-face-text-property start end 'agent-shell-markdown-math)
+    (add-text-properties
+     start end
+     `(help-echo ,latex
+       agent-shell-markdown-math-source ,latex
+       agent-shell-markdown-frozen t
+       rear-nonsticky (agent-shell-markdown-frozen)))
+    (agent-shell-markdown--math-render buffer start end latex)))
 
 (defun agent-shell-markdown--svg-color (face attribute fallback)
   "Return FACE's ATTRIBUTE color as a `#rrggbb' string, or FALLBACK.
