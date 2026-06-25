@@ -322,6 +322,29 @@ E=mc^2
     (let ((agent-shell-markdown-math-render-on-non-graphic t))
       (should-not (agent-shell-markdown--math-renderable-p)))))
 
+(ert-deftest agent-shell-markdown-convert-math-degrades-without-svg ()
+  ;; On a build without SVG support, math rendering degrades gracefully:
+  ;; even on a graphical frame and with the feature on, equations are still
+  ;; recognized and faced (markup protected), but no image is overlaid and
+  ;; conversion never errors — the raw LaTeX simply shows as faced text.
+  ;; (A user who doesn't want even that sets `agent-shell-markdown-render-math'
+  ;; to nil; there is deliberately no PNG fallback.)
+  (agent-shell-markdown-math-tests--enabled
+    (cl-letf (((symbol-function 'image-type-available-p) (lambda (_) nil))
+              ((symbol-function 'display-graphic-p) (lambda (&rest _) t)))
+      ;; Block-level display math: faced, no image.
+      (should (equal (agent-shell-markdown--deconstruct
+                      (agent-shell-markdown-convert "\\[ E=mc^2 \\]"))
+                     '(("\\[ E=mc^2 \\]" (agent-shell-markdown-math)))))
+      ;; Inline math: faced, and crucially no `display' image property
+      ;; anywhere (nothing was overlaid).
+      (let ((out (agent-shell-markdown-convert "a \\(x^2\\) b")))
+        (should (equal (agent-shell-markdown--deconstruct out)
+                       '(("a " nil)
+                         ("\\(x^2\\)" (agent-shell-markdown-math))
+                         (" b" nil))))
+        (should-not (text-property-not-all 0 (length out) 'display nil out))))))
+
 (ert-deftest agent-shell-markdown-math-refresh-buffer-revisits-each-region ()
   ;; A refresh hands every `agent-shell-markdown-math-source' region
   ;; back to --math-render (with its own latex), so a theme change
