@@ -173,6 +173,63 @@ streaming **not bold**"))
 ```
 streaming **not bold**" nil)))))
 
+(ert-deftest agent-shell-markdown-convert-display-math-protects-markup ()
+  ;; A complete `$$...$$' block is faced `agent-shell-markdown-math'
+  ;; as a single run; the LaTeX source is kept literal (no bold /
+  ;; italic / subscript processing of its interior).  On the
+  ;; non-graphical batch display no equation image is overlaid, so
+  ;; `--deconstruct' sees only the math face.
+  (should (equal (agent-shell-markdown--deconstruct
+                  (agent-shell-markdown-convert
+                   "before $$ **x** $$ after"))
+                 '(("before " nil)
+                   ("$$ **x** $$" (agent-shell-markdown-math))
+                   (" after" nil)))))
+
+(ert-deftest agent-shell-markdown-convert-display-math-block ()
+  ;; Multi-line block form: the whole `$$\\n...\\n$$' region is one
+  ;; math-faced run.
+  (should (equal (agent-shell-markdown--deconstruct
+                  (agent-shell-markdown-convert
+                   "$$
+E=mc^2
+$$"))
+                 '(("$$
+E=mc^2
+$$" (agent-shell-markdown-math))))))
+
+(ert-deftest agent-shell-markdown-convert-open-math-protects-rest ()
+  ;; An unclosed `$$' protects the rest of the buffer as still
+  ;; streaming, just like an open fence: markup after it is left raw
+  ;; until the closing `$$' arrives.
+  (should (equal (agent-shell-markdown--deconstruct
+                  (agent-shell-markdown-convert
+                   "before **b**
+$$
+streaming **not bold**"))
+                 '(("before " nil)
+                   ("b" (agent-shell-markdown-bold))
+                   ("
+$$
+streaming **not bold**" nil)))))
+
+(ert-deftest agent-shell-markdown-convert-display-math-in-fenced-block-untouched ()
+  ;; A `$$' inside a fenced code block is body text, not display
+  ;; math: it must not get the math face.
+  (should (equal (agent-shell-markdown--deconstruct
+                  (agent-shell-markdown-convert
+                   "```
+$$ x $$
+```"))
+                 '(("
+" (agent-shell-markdown-source-block))
+                   ("snippet ⧉" (agent-shell-markdown-source-block-language))
+                   ("
+
+$$ x $$
+
+" (agent-shell-markdown-source-block))))))
+
 (ert-deftest agent-shell-markdown-convert-open-inline-code-protects-rest-of-line ()
   (should (equal (agent-shell-markdown--deconstruct
                   (agent-shell-markdown-convert

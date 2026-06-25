@@ -41,6 +41,8 @@
 ;;   image path  bare image path on a line  same as `![alt](url)' (no markup)
 ;;   divider     `---' / `***' / `___'    rendered as an underlined rule line
 ;;   fenced code ```LANG\nX\n```          body syntax-highlighted via LANG mode
+;;   display math `$$X$$'                  overlaid with an equation image
+;;                                         (placeholder; LaTeX source kept beneath)
 ;;   tables      `| A | B |' grid rows    rendered with aligned columns,
 ;;                                         unicode borders, header/zebra rows
 ;;                                         and wrap-to-window-width support
@@ -58,9 +60,11 @@
 
 (eval-when-compile
   (require 'cl-lib))
+(require 'color)
 (require 'map)
 (require 'seq)
 (require 'org-faces)
+(require 'svg)
 (require 'url)
 (require 'url-parse)
 (require 'url-util)
@@ -157,6 +161,14 @@ window edge."
   "Face for the language label shown above a fenced source block."
   :group 'agent-shell-markdown)
 
+(defface agent-shell-markdown-math
+  '((t :inherit font-lock-constant-face))
+  "Face applied to rendered `$$...$$' display-math source.
+On a graphical display the source is hidden behind an equation
+image; this face is the fallback styling for the raw LaTeX shown
+on a non-graphical display."
+  :group 'agent-shell-markdown)
+
 (defvar agent-shell-markdown-image-max-width 0.4
   "Maximum width for inline images rendered from `![alt](url)'.
 An integer is taken as pixels.  A float between 0 and 1 is a
@@ -209,6 +221,7 @@ For example:
 
 (cl-defun agent-shell-markdown-replace-markup (&key force
                                                     (render-images t)
+                                                    (render-math t)
                                                     (highlight-blocks t)
                                                     image-cache-directory)
   "Replace Markdown markup in current buffer with propertized text.
@@ -244,7 +257,11 @@ markup with displayed images where the URL resolves to an image
 file; nil leaves the markup as-is.  IMAGE-CACHE-DIRECTORY is where
 remote (http) image URLs are downloaded and cached; when nil
 \(the default), remote images are not fetched and their markup is
-left as text.  HIGHLIGHT-BLOCKS, when non-nil
+left as text.  RENDER-MATH, when non-nil (the
+default), overlays `$$...$$' display-math blocks with an equation
+image (currently a placeholder; see
+`agent-shell-markdown--style-math-blocks'); nil leaves the LaTeX
+source raw.  HIGHLIGHT-BLOCKS, when non-nil
 (the default), runs the fenced-block body through the language's
 major-mode font-lock to colour keywords / strings / etc.; nil
 strips the fences and inserts the action label but leaves the
@@ -260,14 +277,23 @@ body un-fontified."
         (let* ((source-ranges (agent-shell-markdown--sort-ranges
                                (agent-shell-markdown--make-markers
                                 (agent-shell-markdown--source-block-ranges))))
+               ;; `$$...$$' display-math regions, excluding any `$$' that
+               ;; lives inside a fenced code block.  Protected like
+               ;; source blocks so inline passes don't mangle the LaTeX
+               ;; interior (e.g. `a_b' subscripts, `**' superscripts).
+               (math-ranges (agent-shell-markdown--make-markers
+                             (agent-shell-markdown--math-block-ranges
+                              source-ranges)))
+               (protect-ranges (agent-shell-markdown--sort-ranges
+                                source-ranges math-ranges))
                (rendered-ranges (agent-shell-markdown--make-markers
                                  (agent-shell-markdown--frozen-ranges)))
                (inline-ranges (agent-shell-markdown--make-markers
                                (agent-shell-markdown--inline-code-ranges
                                 :avoid-ranges (agent-shell-markdown--sort-ranges
-                                               source-ranges rendered-ranges))))
+                                               protect-ranges rendered-ranges))))
                (avoid-ranges (agent-shell-markdown--sort-ranges
-                              source-ranges rendered-ranges inline-ranges)))
+                              protect-ranges rendered-ranges inline-ranges)))
           (while (let ((italic-changed (agent-shell-markdown--replace-italics
                                         :avoid-ranges avoid-ranges))
                        (bold-changed (agent-shell-markdown--replace-bolds
@@ -276,7 +302,7 @@ body un-fontified."
                                         :avoid-ranges avoid-ranges)))
                    (or italic-changed bold-changed strike-changed)))
           (agent-shell-markdown--replace-headers :avoid-ranges avoid-ranges)
-          (agent-shell-markdown--style-inline-code :avoid-ranges source-ranges)
+          (agent-shell-markdown--style-inline-code :avoid-ranges protect-ranges)
           (agent-shell-markdown--replace-links :avoid-ranges avoid-ranges)
           (when render-images
             (agent-shell-markdown--replace-images
@@ -288,6 +314,13 @@ body un-fontified."
           (agent-shell-markdown--style-blockquotes :avoid-ranges avoid-ranges)
           (agent-shell-markdown--style-source-blocks
            :highlight-blocks highlight-blocks)
+          ;; Math runs after source blocks (so a `$$' inside fenced code
+          ;; stays literal) and before tables (so a frozen equation
+          ;; isn't mis-parsed as table rows).  SOURCE-RANGES protects
+          ;; the still-open-fence case the same way the other passes do.
+          (when render-math
+            (agent-shell-markdown--style-math-blocks
+             :avoid-ranges source-ranges))
           ;; Tables run last so cell content has already been processed by
           ;; every other pass (bold, italic, links, inline code, etc.).
           ;; The cell parser respects face and `agent-shell-markdown-frozen'
@@ -301,7 +334,7 @@ body un-fontified."
           ;; `--set-watermark'), so `--find-tables' under the narrow
           ;; always sees the existing `agent-shell-markdown-table-source'
           ;; needed to fold new rows in.
-          (agent-shell-markdown--style-tables :avoid-ranges source-ranges)
+          (agent-shell-markdown--style-tables :avoid-ranges protect-ranges)
           ;; Mirror every `face' we composed onto `font-lock-face' so our
           ;; styling survives `font-lock-mode' re-fontification — comint
           ;; / shell-maker / agent-shell buffers fontify on every output
@@ -976,6 +1009,143 @@ with `emacs-lisp-mode' face properties on the body and a
             ;; loop doesn't backtrack into body content (e.g. shorter
             ;; inner fences inside a wider outer fence).
             (goto-char (marker-position body-end))))))))
+
+(cl-defun agent-shell-markdown--style-math-blocks (&key avoid-ranges)
+  "Overlay `$$...$$' display-math blocks with an equation image.
+
+For each complete `$$...$$' block with a non-empty body, the raw
+`$$...$$' text is left in the buffer (so copy / save round-trips
+the LaTeX source) and, on a graphical display, an image of the
+equation is layered over it via a `display' text property.  The
+whole region is faced with `agent-shell-markdown-math' and tagged
+`agent-shell-markdown-frozen' so later passes and subsequent
+streaming calls leave it alone.  Blocks inside any of AVOID-RANGES
+\(typically fenced code) are left untouched, as is an
+empty (`$$$$') block.
+
+Image rendering is currently a PLACEHOLDER: it boxes the raw
+LaTeX rather than typesetting it.  Real compilation is meant to
+slot into `agent-shell-markdown--latex-to-image' without touching
+this pass.
+
+For example, the buffer:
+
+  $$
+  E=mc^2
+  $$
+
+keeps the `$$\\nE=mc^2\\n$$' text but shows an equation image in
+its place, faced `agent-shell-markdown-math' and frozen."
+  (let ((case-fold-search nil))
+    (goto-char (point-min))
+    (while (re-search-forward
+            (rx "$$" (group (*? anychar)) "$$")
+            nil t)
+      (let* ((block-start (match-beginning 0))
+             (block-end (match-end 0))
+             (latex (string-trim
+                     (buffer-substring-no-properties
+                      (match-beginning 1) (match-end 1))))
+             (avoid (agent-shell-markdown--in-avoid-range-p
+                     block-start block-end avoid-ranges)))
+        (cond
+         (avoid (goto-char (cdr avoid)))
+         ((string-empty-p latex))
+         (t
+          (let ((image (agent-shell-markdown--latex-to-image latex))
+                (line-prefix (get-text-property block-start 'line-prefix))
+                (wrap-prefix (get-text-property block-start 'wrap-prefix)))
+            (add-face-text-property block-start block-end
+                                    'agent-shell-markdown-math)
+            (when image
+              (put-text-property block-start block-end 'display image)
+              (put-text-property block-start block-end 'mouse-face 'highlight)
+              (when line-prefix
+                (put-text-property block-start block-end
+                                   'line-prefix line-prefix))
+              (when wrap-prefix
+                (put-text-property block-start block-end
+                                   'wrap-prefix wrap-prefix)))
+            (add-text-properties
+             block-start block-end
+             `(help-echo ,latex
+               agent-shell-markdown-math-source ,latex
+               agent-shell-markdown-frozen t
+               rear-nonsticky (agent-shell-markdown-frozen)))
+            (goto-char block-end))))))))
+
+(defun agent-shell-markdown--svg-color (face attribute fallback)
+  "Return FACE's ATTRIBUTE color as a `#rrggbb' string, or FALLBACK.
+
+ATTRIBUTE is `:foreground' or `:background'.  FALLBACK is returned
+when the attribute is unspecified or can't be resolved to RGB
+\(e.g. on a terminal that reports symbolic colors).
+
+For example:
+
+  (agent-shell-markdown--svg-color \\='default :foreground \"#000000\")
+  => \"#ffffff\"  ; on a dark theme"
+  (let ((color (face-attribute face attribute nil 'default)))
+    ;; `color-name-to-rgb' both returns nil for unknown names and
+    ;; signals (e.g. on the "unspecified-fg" sentinel, or off a window
+    ;; system) — guard both so we always fall back cleanly.
+    (if-let* (((stringp color))
+              (rgb (ignore-errors (color-name-to-rgb color))))
+        (apply #'color-rgb-to-hex (append rgb '(2)))
+      fallback)))
+
+(defun agent-shell-markdown--latex-to-image (latex)
+  "Return a PLACEHOLDER SVG image for LATEX, or nil.
+
+This does NOT typeset LATEX.  It draws the raw source inside a
+bordered panel so the interception / overlay pipeline can be
+exercised ahead of real LaTeX compilation (which is meant to
+replace this function's body).  Returns nil when no graphical
+display is available, so callers fall back to the raw text.
+
+LATEX is the equation source with the surrounding `$$'
+delimiters already stripped, e.g. \"E=mc^2\"."
+  (when (display-graphic-p)
+    (let* ((lines (split-string latex "\n"))
+           ;; `frame-char-width' / `-height' give per-char pixel
+           ;; dimensions on a graphical frame and stay robust off it
+           ;; (unlike `default-font-width', which calls `font-info' and
+           ;; errors with no live font).  Good enough for placeholder
+           ;; sizing; real typesetting will set its own dimensions.
+           (char-w (frame-char-width))
+           (char-h (frame-char-height))
+           (pad char-h)
+           (badge-h char-h)
+           (text-w (* char-w (apply #'max 1 (mapcar #'length lines))))
+           (width (+ text-w (* 2 pad)))
+           (height (+ badge-h (* char-h (length lines)) (* 2 pad)))
+           (fg (agent-shell-markdown--svg-color 'default :foreground "#000000"))
+           (border (agent-shell-markdown--svg-color
+                    'font-lock-comment-face :foreground "#888888"))
+           (panel (agent-shell-markdown--svg-color
+                   'org-block :background "#f4f4f4"))
+           (svg (svg-create width height)))
+      (svg-rectangle svg 0 0 width height
+                     :rx (/ char-h 2)
+                     :fill panel
+                     :stroke border
+                     :stroke-width 1)
+      (svg-text svg "tex"
+                :x pad
+                :y (* badge-h 0.85)
+                :font-size (* badge-h 0.7)
+                :font-style "italic"
+                :fill border)
+      (seq-do-indexed
+       (lambda (line i)
+         (svg-text svg (if (string-empty-p line) " " line)
+                   :x pad
+                   :y (+ badge-h pad (* char-h (1+ i)) (- (/ char-h 4)))
+                   :font-family "monospace"
+                   :font-size char-h
+                   :fill fg))
+       lines)
+      (svg-image svg :scale 1.0 :ascent 'center))))
 
 (defconst agent-shell-markdown--table-line-regexp
   (rx line-start
@@ -2351,6 +2521,16 @@ only to end-of-line, so they're naturally within that zone."
             (let ((last (car (last source-ranges))))
               (when (and last (= (cdr last) (point-max)))
                 (car last))))
+           ;; An open (not yet closed) `$$' must hold the frontier back
+           ;; so the closing `$$' on a future chunk gets paired —
+           ;; otherwise the watermark slips past the equation body line
+           ;; by line and it never renders.  Mirrors OPEN-FENCE-START.
+           (open-math-start
+            (let ((last (car (last (agent-shell-markdown--math-block-ranges
+                                    (agent-shell-markdown--sort-ranges
+                                     source-ranges))))))
+              (when (and last (= (cdr last) (point-max)))
+                (car last))))
            (extending-table-start
             (agent-shell-markdown--extending-table-start))
            (last-line-start
@@ -2359,6 +2539,7 @@ only to end-of-line, so they're naturally within that zone."
            (frontier (apply #'min
                             (delq nil (list last-line-start
                                             open-fence-start
+                                            open-math-start
                                             extending-table-start)))))
       (with-silent-modifications
         (put-text-property (point-min) (1+ (point-min))
@@ -2445,6 +2626,44 @@ returns a list with one range covering the whole block."
             (setq open-start (match-beginning 0)
                   open-count count)))))
       (when open-count
+        (push (cons open-start (point-max)) ranges)))
+    (nreverse ranges)))
+
+(defun agent-shell-markdown--math-block-ranges (&optional avoid-ranges)
+  "Return list of (start . end) ranges covering `$$...$$' display math.
+
+Each range spans from the opening `$$' to the end of its matching
+closing `$$'.  An opening `$$' with no closing `$$' yet
+\(mid-stream) extends to `point-max', so its contents are
+protected as the buffer grows — mirrors
+`agent-shell-markdown--source-block-ranges'.
+
+A `$$' delimiter that falls inside any of AVOID-RANGES (a sorted
+vector, typically fenced code blocks) is ignored, so the returned
+ranges never overlap AVOID-RANGES.
+
+For example, given the buffer:
+
+  $$
+  E=mc^2
+  $$
+
+returns a list with one range covering the whole block."
+  (let ((ranges '())
+        (open-start nil)
+        (case-fold-search nil))
+    (save-excursion
+      (goto-char (point-min))
+      (while (search-forward "$$" nil t)
+        (let ((avoid (agent-shell-markdown--in-avoid-range-p
+                      (match-beginning 0) (point) avoid-ranges)))
+          (cond
+           (avoid (goto-char (cdr avoid)))
+           (open-start
+            (push (cons open-start (point)) ranges)
+            (setq open-start nil))
+           (t (setq open-start (match-beginning 0))))))
+      (when open-start
         (push (cons open-start (point-max)) ranges)))
     (nreverse ranges)))
 
