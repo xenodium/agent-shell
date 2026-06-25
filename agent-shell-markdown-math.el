@@ -40,9 +40,13 @@
 ;; `agent-shell-markdown-replace-markup'; the other functions support
 ;; it and the renderer's avoid-range / watermark bookkeeping.
 ;;
-;; Image rendering is currently a PLACEHOLDER (it boxes the raw LaTeX);
-;; `agent-shell-markdown--latex-to-image' is the seam for real LaTeX
-;; compilation.
+;; Equations are typeset by compiling a standalone LaTeX document to DVI
+;; (`latex') and converting it to SVG (`dvisvgm') — the same toolchain
+;; org-latex-preview uses.  Compilation is asynchronous and the SVG is
+;; cached on disk by content (so each unique equation compiles at most
+;; once); the image is overlaid when ready.  When the toolchain is
+;; absent or `agent-shell-markdown-math-use-placeholder' is set, a
+;; placeholder panel boxing the raw LaTeX is shown instead.
 
 ;;; Code:
 
@@ -89,6 +93,52 @@ Defaults to `bracket' only: `\\[...\\]' is unambiguous, whereas
 $$$\".  Opt into `$$...$$' with:
 
   (setq agent-shell-markdown-math-delimiters \\='(bracket dollar))")
+
+(defvar agent-shell-markdown-math-use-placeholder nil
+  "When non-nil, draw the placeholder panel instead of typesetting LaTeX.
+Also used as the automatic fallback when the LaTeX toolchain
+\(`agent-shell-markdown-math-latex-program' /
+`agent-shell-markdown-math-dvisvgm-program') is unavailable.")
+
+(defvar agent-shell-markdown-math-latex-program "latex"
+  "Program that compiles a LaTeX document to DVI.")
+
+(defvar agent-shell-markdown-math-dvisvgm-program "dvisvgm"
+  "Program that converts DVI to SVG.")
+
+(defvar agent-shell-markdown-math-scale 1.4
+  "`dvisvgm' output scale for rendered equations.
+Larger values produce bigger images.")
+
+(defvar agent-shell-markdown-math-preamble
+  "\\documentclass[border=2pt]{standalone}
+\\usepackage{amsmath}
+\\usepackage{amssymb}
+\\usepackage{xcolor}"
+  "LaTeX preamble (everything before `\\begin{document}') for equations.
+The `standalone' class crops the page tightly to the equation, so
+no `preview' package is required.  `xcolor' is used to tint the
+equation to match the buffer foreground.  Equations are typeset as
+`\\displaystyle' inline math inside the document body.")
+
+(defvar agent-shell-markdown-math-cache-directory nil
+  "Directory for cached equation SVGs and scratch compiles.
+When nil, a subdirectory of the variable `temporary-file-directory'
+is used.  Point this at a persistent location to keep the cache
+across sessions (each unique equation then compiles at most once
+ever).")
+
+;; key (sha1 of latex + color + scale + preamble) -> image object.  An
+;; equation is compiled at most once per key; subsequent renders (same
+;; session, or any buffer) reuse the cached image.
+(defvar agent-shell-markdown-math--image-cache (make-hash-table :test 'equal)
+  "In-memory map of cache key to rendered equation image.")
+
+;; key -> list of (BUFFER START-MARKER END-MARKER) awaiting one in-flight
+;; compile.  Dedupes concurrent compiles of the same equation and records
+;; every region to overlay once the SVG is ready.
+(defvar agent-shell-markdown-math--pending (make-hash-table :test 'equal)
+  "In-memory map of cache key to regions awaiting an in-flight compile.")
 
 (defun agent-shell-markdown--math-blocks (&optional avoid-ranges)
   "Return display-math blocks in the current buffer.
@@ -202,22 +252,18 @@ Recognizes the delimiter styles in
 `agent-shell-markdown-math-delimiters' (`$$...$$' and/or
 `\\[...\\]').  For each complete block with a non-empty body, the
 raw delimited text is left in the buffer (so copy / save
-round-trips the LaTeX source) and, on a graphical display, an
-image of the equation is layered over it via a `display' text
-property.  The whole region is faced with
+round-trips the LaTeX source) and the region is faced with
 `agent-shell-markdown-math' and tagged
 `agent-shell-markdown-frozen' so later passes and subsequent
-streaming calls leave it alone.  Blocks inside any of AVOID-RANGES
-\(typically fenced code) are left untouched, as is an empty block.
+streaming calls leave it alone.  The equation image is then
+applied by `agent-shell-markdown--math-render' (immediately when
+cached, otherwise once an async compile finishes).  Blocks inside
+any of AVOID-RANGES (typically fenced code) are left untouched, as
+is an empty block.
 
 Adds only text properties (no insert / delete), so the block
 positions returned by `agent-shell-markdown--math-blocks' stay
 valid while iterating.
-
-Image rendering is currently a PLACEHOLDER: it boxes the raw
-LaTeX rather than typesetting it.  Real compilation is meant to
-slot into `agent-shell-markdown--latex-to-image' without touching
-this pass.
 
 For example, with the buffer:
 
@@ -237,23 +283,14 @@ place, faced `agent-shell-markdown-math' and frozen."
                          (+ start (plist-get block :open))
                          (- end close))))
                 ((not (string-empty-p latex))))
-      (let ((image (agent-shell-markdown--latex-to-image latex))
-            (line-prefix (get-text-property start 'line-prefix))
-            (wrap-prefix (get-text-property start 'wrap-prefix)))
-        (add-face-text-property start end 'agent-shell-markdown-math)
-        (when image
-          (put-text-property start end 'display image)
-          (put-text-property start end 'mouse-face 'highlight)
-          (when line-prefix
-            (put-text-property start end 'line-prefix line-prefix))
-          (when wrap-prefix
-            (put-text-property start end 'wrap-prefix wrap-prefix)))
-        (add-text-properties
-         start end
-         `(help-echo ,latex
-           agent-shell-markdown-math-source ,latex
-           agent-shell-markdown-frozen t
-           rear-nonsticky (agent-shell-markdown-frozen)))))))
+      (add-face-text-property start end 'agent-shell-markdown-math)
+      (add-text-properties
+       start end
+       `(help-echo ,latex
+         agent-shell-markdown-math-source ,latex
+         agent-shell-markdown-frozen t
+         rear-nonsticky (agent-shell-markdown-frozen)))
+      (agent-shell-markdown--math-render (current-buffer) start end latex))))
 
 (defun agent-shell-markdown--svg-color (face attribute fallback)
   "Return FACE's ATTRIBUTE color as a `#rrggbb' string, or FALLBACK.
@@ -275,17 +312,17 @@ For example:
         (apply #'color-rgb-to-hex (append rgb '(2)))
       fallback)))
 
-(defun agent-shell-markdown--latex-to-image (latex)
-  "Return a PLACEHOLDER SVG image for LATEX, or nil.
+(defun agent-shell-markdown--latex-placeholder-image (latex)
+  "Return a placeholder SVG image boxing the raw LATEX, or nil.
 
-This does NOT typeset LATEX.  It draws the raw source inside a
-bordered panel so the interception / overlay pipeline can be
-exercised ahead of real LaTeX compilation (which is meant to
-replace this function's body).  Returns nil when no graphical
+This does NOT typeset LATEX — it draws the source inside a
+bordered panel.  Used when `agent-shell-markdown-math-use-placeholder'
+is set or the LaTeX toolchain is unavailable, so math still has a
+visible (if un-typeset) rendering.  Returns nil when no graphical
 display is available, so callers fall back to the raw text.
 
-LATEX is the equation source with the surrounding `$$'
-delimiters already stripped, e.g. \"E=mc^2\"."
+LATEX is the equation source with the surrounding delimiters
+already stripped, e.g. \"E=mc^2\"."
   (when (display-graphic-p)
     (let* ((lines (split-string latex "\n"))
            ;; `frame-char-width' / `-height' give per-char pixel
@@ -327,6 +364,171 @@ delimiters already stripped, e.g. \"E=mc^2\"."
                    :fill fg))
        lines)
       (svg-image svg :scale 1.0 :ascent 'center))))
+
+(defun agent-shell-markdown--math-tools-available-p ()
+  "Return non-nil when the LaTeX-to-SVG toolchain is on the variable `exec-path'."
+  (and (executable-find agent-shell-markdown-math-latex-program)
+       (executable-find agent-shell-markdown-math-dvisvgm-program)))
+
+(defun agent-shell-markdown--math-cache-dir ()
+  "Return the equation cache directory, creating it if needed.
+Honours `agent-shell-markdown-math-cache-directory', else a
+subdirectory of the variable `temporary-file-directory'."
+  (let ((dir (or agent-shell-markdown-math-cache-directory
+                 (expand-file-name "agent-shell-markdown-math"
+                                   temporary-file-directory))))
+    (unless (file-directory-p dir)
+      (make-directory dir t))
+    dir))
+
+(defun agent-shell-markdown--math-cache-key (latex color scale)
+  "Return a stable cache key for LATEX rendered in COLOR at SCALE.
+The preamble is folded in so changing it invalidates the cache."
+  (secure-hash 'sha1 (format "%s\0%s\0%s\0%s"
+                             latex color scale
+                             agent-shell-markdown-math-preamble)))
+
+(defun agent-shell-markdown--math-svg-file (key)
+  "Return the cache SVG path for KEY."
+  (expand-file-name (concat key ".svg")
+                    (agent-shell-markdown--math-cache-dir)))
+
+(defun agent-shell-markdown--math-load-svg-image (file)
+  "Return an SVG image created from FILE, centred for inline display."
+  (create-image file 'svg nil :scale 1.0 :ascent 'center))
+
+(defun agent-shell-markdown--math-cached-image (key)
+  "Return the rendered image for KEY from memory or disk, or nil.
+A disk hit is promoted into the in-memory cache."
+  (or (gethash key agent-shell-markdown-math--image-cache)
+      (let ((file (agent-shell-markdown--math-svg-file key)))
+        (when (file-exists-p file)
+          (puthash key (agent-shell-markdown--math-load-svg-image file)
+                   agent-shell-markdown-math--image-cache)))))
+
+(defun agent-shell-markdown--math-overlay-image (buffer start end image)
+  "Lay IMAGE over BUFFER's START..END as a `display' property.
+
+START / END may be markers (async case) or integers (sync case).
+No-ops when BUFFER is dead or the region is no longer valid (it
+was edited or killed away).  Runs with `with-silent-modifications'
+so an async overlay doesn't flag the buffer modified, and carries
+the region's existing `line-prefix' / `wrap-prefix' so indentation
+is preserved."
+  (when (and image (buffer-live-p buffer))
+    (with-current-buffer buffer
+      (let ((s (if (markerp start) (marker-position start) start))
+            (e (if (markerp end) (marker-position end) end)))
+        (when (and s e (<= (point-min) s) (< s e) (<= e (point-max)))
+          (with-silent-modifications
+            (let ((line-prefix (get-text-property s 'line-prefix))
+                  (wrap-prefix (get-text-property s 'wrap-prefix)))
+              (put-text-property s e 'display image)
+              (put-text-property s e 'mouse-face 'highlight)
+              (when line-prefix
+                (put-text-property s e 'line-prefix line-prefix))
+              (when wrap-prefix
+                (put-text-property s e 'wrap-prefix wrap-prefix)))))))))
+
+(defun agent-shell-markdown--math-render (buffer start end latex)
+  "Render LATEX over BUFFER's START..END as an equation image.
+
+On a non-graphical display, does nothing (the raw faced text
+stands in).  With `agent-shell-markdown-math-use-placeholder' set
+or no LaTeX toolchain, overlays the placeholder panel.  Otherwise
+overlays the cached SVG immediately when available, else schedules
+an async compile (see `agent-shell-markdown--math-compile') that
+overlays the result once ready — START / END are captured as
+markers so the overlay lands even after more output streams in."
+  (when (display-graphic-p)
+    (cond
+     ((or agent-shell-markdown-math-use-placeholder
+          (not (agent-shell-markdown--math-tools-available-p)))
+      (agent-shell-markdown--math-overlay-image
+       buffer start end
+       (agent-shell-markdown--latex-placeholder-image latex)))
+     (t
+      (let* ((color (agent-shell-markdown--svg-color 'default :foreground "#000000"))
+             (scale agent-shell-markdown-math-scale)
+             (key (agent-shell-markdown--math-cache-key latex color scale))
+             (image (agent-shell-markdown--math-cached-image key)))
+        (if image
+            (agent-shell-markdown--math-overlay-image buffer start end image)
+          (agent-shell-markdown--math-schedule
+           key latex color scale buffer
+           (copy-marker start) (copy-marker end))))))))
+
+(defun agent-shell-markdown--math-schedule (key latex color scale
+                                                buffer start end)
+  "Queue BUFFER's START..END for KEY and start a compile if none is running.
+
+KEY identifies the equation; LATEX, COLOR, and SCALE are forwarded
+to `agent-shell-markdown--math-compile' for the render.  Multiple
+regions sharing KEY (the same equation rendered more than once)
+are coalesced onto a single in-flight compile; all are overlaid
+when it finishes."
+  (let ((pending (gethash key agent-shell-markdown-math--pending)))
+    (puthash key (cons (list buffer start end) pending)
+             agent-shell-markdown-math--pending)
+    (unless pending
+      (agent-shell-markdown--math-compile key latex color scale))))
+
+(defun agent-shell-markdown--math-compile (key latex color scale)
+  "Asynchronously compile LATEX (in COLOR, at SCALE) to the cache SVG for KEY.
+
+Writes a standalone LaTeX document, runs
+`agent-shell-markdown-math-latex-program' then
+`agent-shell-markdown-math-dvisvgm-program' in a scratch
+directory, and on success caches the SVG and overlays it onto
+every region queued for KEY (see
+`agent-shell-markdown--math-schedule').  On failure the queued
+regions keep their raw faced text.  The scratch directory is
+removed when the process exits.
+
+Future optimization: a precompiled-preamble `.fmt' (mylatexformat)
+would cut per-equation latency, but plain compilation keeps this
+portable; it can slot in here without changing callers."
+  (let* ((dir (make-temp-file "agent-shell-markdown-math" t))
+         (tex (expand-file-name "equation.tex" dir))
+         (dvi (expand-file-name "equation.dvi" dir))
+         (svg (agent-shell-markdown--math-svg-file key))
+         (cleanup (lambda () (ignore-errors (delete-directory dir t)))))
+    (with-temp-file tex
+      (insert agent-shell-markdown-math-preamble "\n"
+              "\\begin{document}\n"
+              (format "{\\color[HTML]{%s}$\\displaystyle %s$}\n"
+                      (upcase (substring color 1)) latex)
+              "\\end{document}\n"))
+    (let ((command
+           (format "cd %s && %s -interaction=nonstopmode -halt-on-error %s && %s --no-fonts --exact-bbox --scale=%s -o %s %s"
+                   (shell-quote-argument dir)
+                   (shell-quote-argument agent-shell-markdown-math-latex-program)
+                   (shell-quote-argument tex)
+                   (shell-quote-argument agent-shell-markdown-math-dvisvgm-program)
+                   scale
+                   (shell-quote-argument svg)
+                   (shell-quote-argument dvi))))
+      (condition-case err
+          (set-process-sentinel
+           (start-process-shell-command "agent-shell-markdown-math" nil command)
+           (lambda (process _event)
+             (when (memq (process-status process) '(exit signal))
+               (let ((image (when (and (eq (process-status process) 'exit)
+                                       (zerop (process-exit-status process))
+                                       (file-exists-p svg))
+                              (agent-shell-markdown--math-load-svg-image svg))))
+                 (when image
+                   (puthash key image agent-shell-markdown-math--image-cache)
+                   (dolist (region (gethash key agent-shell-markdown-math--pending))
+                     (agent-shell-markdown--math-overlay-image
+                      (nth 0 region) (nth 1 region) (nth 2 region) image))))
+               (remhash key agent-shell-markdown-math--pending)
+               (funcall cleanup))))
+        (error
+         ;; Couldn't even spawn the process — drop the queue and clean up.
+         (remhash key agent-shell-markdown-math--pending)
+         (funcall cleanup)
+         (signal (car err) (cdr err)))))))
 
 (provide 'agent-shell-markdown-math)
 

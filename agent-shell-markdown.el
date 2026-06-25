@@ -42,7 +42,7 @@
 ;;   divider     `---' / `***' / `___'    rendered as an underlined rule line
 ;;   fenced code ```LANG\nX\n```          body syntax-highlighted via LANG mode
 ;;   display math `$$X$$' / `\[X\]'        overlaid with an equation image
-;;                                         (placeholder; LaTeX source kept beneath)
+;;                                         (latex+dvisvgm; LaTeX source kept beneath)
 ;;   tables      `| A | B |' grid rows    rendered with aligned columns,
 ;;                                         unicode borders, header/zebra rows
 ;;                                         and wrap-to-window-width support
@@ -257,7 +257,7 @@ remote (http) image URLs are downloaded and cached; when nil
 left as text.  RENDER-MATH, when non-nil (the
 default), overlays display-math blocks (`$$...$$' and / or
 `\\[...\\]', per `agent-shell-markdown-math-delimiters') with an
-equation image (currently a placeholder; see
+equation image (compiled via latex / dvisvgm; see
 `agent-shell-markdown--style-math-blocks'); nil leaves the LaTeX
 source raw.  HIGHLIGHT-BLOCKS, when non-nil
 (the default), runs the fenced-block body through the language's

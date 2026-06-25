@@ -195,6 +195,23 @@ next"))
 
 next" nil))))))
 
+(ert-deftest agent-shell-markdown-math-cache-key-distinguishes-inputs ()
+  ;; The cache key must be stable for identical inputs and differ when the
+  ;; equation, colour, or scale changes — otherwise cached SVGs collide or
+  ;; never hit.  (Pure function; no TeX or graphical display needed.)
+  (let ((base (agent-shell-markdown--math-cache-key "E=mc^2" "#000000" 1.4)))
+    (should (equal base (agent-shell-markdown--math-cache-key "E=mc^2" "#000000" 1.4)))
+    (should-not (equal base (agent-shell-markdown--math-cache-key "E=mc^3" "#000000" 1.4)))
+    (should-not (equal base (agent-shell-markdown--math-cache-key "E=mc^2" "#ffffff" 1.4)))
+    (should-not (equal base (agent-shell-markdown--math-cache-key "E=mc^2" "#000000" 2.0)))))
+
+(ert-deftest agent-shell-markdown-math-cache-key-folds-in-preamble ()
+  ;; Changing the preamble must invalidate the cache (different output).
+  (let ((base (agent-shell-markdown--math-cache-key "E=mc^2" "#000000" 1.4)))
+    (let ((agent-shell-markdown-math-preamble "\\documentclass{minimal}"))
+      (should-not (equal base (agent-shell-markdown--math-cache-key
+                               "E=mc^2" "#000000" 1.4))))))
+
 (provide 'agent-shell-markdown-math-tests)
 
 ;;; agent-shell-markdown-math-tests.el ends here
