@@ -52,10 +52,8 @@ so the dollar-delimited tests opt into `dollar' (and the master
   (agent-shell-markdown-math-tests--with-dollar
     (should (equal (agent-shell-markdown--deconstruct
                     (agent-shell-markdown-convert
-                     "before $$ **x** $$ after"))
-                   '(("before " nil)
-                     ("$$ **x** $$" (agent-shell-markdown-math))
-                     (" after" nil))))))
+                     "$$ **x** $$"))
+                   '(("$$ **x** $$" (agent-shell-markdown-math)))))))
 
 (ert-deftest agent-shell-markdown-convert-display-math-block ()
   ;; Multi-line block form: the whole `$$\\n...\\n$$' region is one
@@ -105,42 +103,44 @@ $$ x $$
 " (agent-shell-markdown-source-block)))))))
 
 (ert-deftest agent-shell-markdown-convert-bracket-math-protects-markup ()
-  ;; A complete `\\[...\\]' block is recognized as display math and
-  ;; faced `agent-shell-markdown-math', keeping its interior literal.
+  ;; A complete block-level `\\[...\\]' is recognized as display math
+  ;; and faced `agent-shell-markdown-math', keeping its interior literal.
   (agent-shell-markdown-math-tests--enabled
     (should (equal (agent-shell-markdown--deconstruct
                     (agent-shell-markdown-convert
-                     "before \\[ **x** \\] after"))
-                   '(("before " nil)
-                     ("\\[ **x** \\]" (agent-shell-markdown-math))
-                     (" after" nil))))))
+                     "\\[ **x** \\]"))
+                   '(("\\[ **x** \\]" (agent-shell-markdown-math)))))))
 
 (ert-deftest agent-shell-markdown-convert-open-bracket-math-protects-rest ()
-  ;; An unclosed `\\[' protects the rest of the buffer until the
-  ;; closing `\\]' arrives, mirroring open `$$' / open fences.
+  ;; A line-start `\\[' with no closer yet protects the rest of the
+  ;; buffer until the closing `\\]' arrives, mirroring open `$$' /
+  ;; open fences.
   (agent-shell-markdown-math-tests--enabled
     (should (equal (agent-shell-markdown--deconstruct
                     (agent-shell-markdown-convert
-                     "before **b** \\[ streaming **not bold**"))
+                     "before **b**
+\\[ streaming **not bold**"))
                    '(("before " nil)
                      ("b" (agent-shell-markdown-bold))
-                     (" \\[ streaming **not bold**" nil))))))
+                     ("
+\\[ streaming **not bold**" nil))))))
 
 (ert-deftest agent-shell-markdown-convert-math-delimiters-independent ()
   ;; `agent-shell-markdown-math-delimiters' toggles each style
-  ;; independently: with only `bracket' enabled, `\\[...\\]' renders
-  ;; while `$$...$$' is left as plain text (and its `**' inside is
-  ;; processed as ordinary markup).
+  ;; independently: with only `bracket' enabled, a block-level
+  ;; `\\[...\\]' renders while `$$...$$' is left as plain text (and its
+  ;; `**' inside is processed as ordinary markup).
   (let ((agent-shell-markdown-render-math t)
         (agent-shell-markdown-math-delimiters '(bracket)))
     (should (equal (agent-shell-markdown--deconstruct
                     (agent-shell-markdown-convert
-                     "a $$ **b** $$ c \\[ **d** \\] e"))
-                   '(("a $$ " nil)
+                     "$$ **b** $$
+\\[ **d** \\]"))
+                   '(("$$ " nil)
                      ("b" (agent-shell-markdown-bold))
-                     (" $$ c " nil)
-                     ("\\[ **d** \\]" (agent-shell-markdown-math))
-                     (" e" nil))))))
+                     (" $$
+" nil)
+                     ("\\[ **d** \\]" (agent-shell-markdown-math)))))))
 
 (ert-deftest agent-shell-markdown-convert-math-delimiters-disabled ()
   ;; An empty `agent-shell-markdown-math-delimiters' disables the
@@ -196,21 +196,48 @@ extra
 \\]" nil))))))
 
 (ert-deftest agent-shell-markdown-convert-math-stray-opener-recovers-real-blocks ()
-  ;; A stray opener that never closes before a blank line is a false
-  ;; positive, but scanning resumes just after it — so a real block
-  ;; sitting between the stray opener and the blank line is still
-  ;; rendered (rather than swallowed and lost).
-  (agent-shell-markdown-math-tests--with-dollar
+  ;; A stray line-start opener that never closes before a blank line is
+  ;; a false positive; scanning resumes just after it, so a real
+  ;; block-level equation on a later line is still rendered (rather than
+  ;; the stray opener swallowing it).
+  (agent-shell-markdown-math-tests--enabled
     (should (equal (agent-shell-markdown--deconstruct
                     (agent-shell-markdown-convert
-                     "\\[ oops and $$E=mc^2$$ here
+                     "\\[ stray opener
 
-next"))
-                   '(("\\[ oops and " nil)
-                     ("$$E=mc^2$$" (agent-shell-markdown-math))
-                     (" here
+\\[ E=mc^2 \\]"))
+                   '(("\\[ stray opener
 
-next" nil))))))
+" nil)
+                     ("\\[ E=mc^2 \\]" (agent-shell-markdown-math)))))))
+
+(ert-deftest agent-shell-markdown-convert-math-inline-opener-ignored ()
+  ;; An opener not at line start is inline, not block-level display
+  ;; math: it is left as plain text and inner markup is processed.
+  (agent-shell-markdown-math-tests--enabled
+    (should (equal (agent-shell-markdown--deconstruct
+                    (agent-shell-markdown-convert "see \\[ **x** \\] here"))
+                   '(("see \\[ " nil)
+                     ("x" (agent-shell-markdown-bold))
+                     (" \\] here" nil))))))
+
+(ert-deftest agent-shell-markdown-convert-math-non-flush-closer-rejected ()
+  ;; A line-start opener whose closer sits mid-line (text follows on the
+  ;; same line) is not a flush block; it is rejected and left as plain
+  ;; text rather than rendered.
+  (agent-shell-markdown-math-tests--enabled
+    (should (equal (agent-shell-markdown--deconstruct
+                    (agent-shell-markdown-convert "\\[ E=mc^2 \\] and text"))
+                   '(("\\[ E=mc^2 \\] and text" nil))))))
+
+(ert-deftest agent-shell-markdown-convert-math-dollar-on-by-default ()
+  ;; `dollar' is part of the default `agent-shell-markdown-math-delimiters'
+  ;; now that block-level anchoring makes it safe, so `$$...$$' renders
+  ;; without opting in (only the master switch need be on here).
+  (agent-shell-markdown-math-tests--enabled
+    (should (equal (agent-shell-markdown--deconstruct
+                    (agent-shell-markdown-convert "$$ E=mc^2 $$"))
+                   '(("$$ E=mc^2 $$" (agent-shell-markdown-math)))))))
 
 (ert-deftest agent-shell-markdown-convert-fenced-math-renders ()
   ;; A ```math fence renders as display math: the fences are stripped

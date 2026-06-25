@@ -75,7 +75,7 @@ on a non-graphical display."
 `dollar' is `$$...$$'; `bracket' is `\\[...\\]'.  The keys of this
 map are the values accepted in `agent-shell-markdown-math-delimiters'.")
 
-(defvar agent-shell-markdown-math-delimiters '(bracket)
+(defvar agent-shell-markdown-math-delimiters '(bracket dollar)
   "Display-math delimiter styles recognized when rendering markdown.
 
 A list whose members are keys of
@@ -85,14 +85,19 @@ A list whose members are keys of
   `dollar'   recognize `$$...$$'
 
 The two are independent — add or drop one to toggle it.  An empty
-list disables math rendering entirely (as does passing
-`:render-math nil' to `agent-shell-markdown-replace-markup').
+list disables the delimiter styles (fenced math via
+`agent-shell-markdown-math-fence-languages' is separate); the
+master switch `agent-shell-markdown-render-math' disables
+everything.
 
-Defaults to `bracket' only: `\\[...\\]' is unambiguous, whereas
-`dollar' can false-positive on prose or currency like \"it cost
-$$$\".  Opt into `$$...$$' with:
-
-  (setq agent-shell-markdown-math-delimiters \\='(bracket dollar))")
+Both styles are matched only as block-level equations: the opener
+must start its line (after optional indentation) and the closer
+must be flush — either start or end its line.  Genuinely inline
+display math is therefore not recognized (agents don't emit it,
+and truly inline math should use `\\(...\\)' / `$...$', which are
+left untouched).  That anchoring makes `$$' safe enough to enable
+by default; set to \\='(bracket) to drop it if `$$' still
+collides with your prose.")
 
 (defvar agent-shell-markdown-render-math nil
   "Master switch for rendering display math in agent responses.
@@ -170,6 +175,14 @@ ever).")
 (defvar agent-shell-markdown-math--pending (make-hash-table :test 'equal)
   "In-memory map of cache key to regions awaiting an in-flight compile.")
 
+(defun agent-shell-markdown--math-delimiter-flush-p (start end)
+  "Return non-nil if the delimiter spanning START..END is flush on its line.
+Flush means it begins the line (only whitespace before it) or ends
+the line (only whitespace after it) — the shape display-math
+delimiters take in practice."
+  (or (save-excursion (goto-char start) (skip-chars-backward " \t") (bolp))
+      (save-excursion (goto-char end) (skip-chars-forward " \t") (eolp))))
+
 (defun agent-shell-markdown--math-blocks (&optional avoid-ranges)
   "Return display-math blocks in the current buffer.
 
@@ -180,18 +193,25 @@ body is the buffer text in [S+O, E-C).
 
 Only the delimiter styles listed in
 `agent-shell-markdown-math-delimiters' are recognized (`$$...$$'
-and/or `\\[...\\]').
+and/or `\\[...\\]'), and only as BLOCK-LEVEL equations:
+
+  - the opener must start its line (after optional indentation), and
+  - the closer must be flush — start or end its line.
+
+Genuinely inline display math is thus not matched; this keeps
+prose / currency (`$$') from false-positiving.
 
 Scanning resolves each opener immediately: from just after an
-opener we look for the first of its matching closer or a blank
+opener, look for the first of its matching flush closer or a blank
 line (a paragraph break, which LaTeX display math can't contain).
+A closer that is not flush is treated as body and the search
+continues.
 
-  - Closer first: a valid block, recorded; scanning resumes after
-    the closer.
-  - Blank line first: the opener is a false positive, so scanning
-    resumes just after the OPENER (not past the blank line), so
-    real blocks sitting between a stray opener and the blank line
-    are still found.
+  - Flush closer first: a valid block, recorded; scanning resumes
+    after the closer.
+  - Blank line first (or no closer): the opener is a false
+    positive, so scanning resumes just after the OPENER, so a real
+    block on a later line is still found.
   - Neither yet (end of buffer): a still-streaming block extending
     to `point-max' with :close 0, so a genuine equation stays
     protected as the buffer grows — mirrors
@@ -213,11 +233,14 @@ returns ((:start 1 :end 11 :open 2 :close 2))."
     (when specs
       (save-excursion
         (goto-char (point-min))
-        (let ((open-re (regexp-opt (mapcar #'car specs))))
+        ;; Opener anchored at line start (after optional indentation);
+        ;; group 1 is the delimiter token itself.
+        (let ((open-re (concat "^[ \t]*\\(" (regexp-opt (mapcar #'car specs))
+                               "\\)")))
           (while (re-search-forward open-re nil t)
-            (let* ((open-token (match-string-no-properties 0))
-                   (open-start (match-beginning 0))
-                   (open-end (point))
+            (let* ((open-token (match-string-no-properties 1))
+                   (open-start (match-beginning 1))
+                   (open-end (match-end 1))
                    (avoid (agent-shell-markdown--in-avoid-range-p
                            open-start open-end avoid-ranges)))
               (if avoid
@@ -226,9 +249,9 @@ returns ((:start 1 :end 11 :open 2 :close 2))."
                                           (lambda (spec)
                                             (string= open-token (car spec)))
                                           specs)))
-                       ;; First closer or blank line at or after the body.
-                       ;; A closer inside an avoid-range isn't real — skip
-                       ;; past that range and keep looking.
+                       ;; First flush closer or blank line after the body.
+                       ;; A closer in an avoid-range (code) or not flush
+                       ;; on its line is body — skip it and keep looking.
                        (hit (save-excursion
                               (goto-char open-end)
                               (let ((re (concat (regexp-quote close-token)
@@ -236,16 +259,25 @@ returns ((:start 1 :end 11 :open 2 :close 2))."
                                     (result nil))
                                 (while (and (not result)
                                             (re-search-forward re nil t))
-                                  (if-let* ((av (agent-shell-markdown--in-avoid-range-p
-                                                 (match-beginning 0) (point)
-                                                 avoid-ranges)))
-                                      (goto-char (cdr av))
-                                    (setq result
-                                          (cons (match-string-no-properties 0)
-                                                (point)))))
+                                  (let ((mb (match-beginning 0))
+                                        (me (match-end 0))
+                                        (tok (match-string-no-properties 0)))
+                                    (cond
+                                     ((agent-shell-markdown--in-avoid-range-p
+                                       mb me avoid-ranges)
+                                      (goto-char
+                                       (cdr (agent-shell-markdown--in-avoid-range-p
+                                             mb me avoid-ranges))))
+                                     ;; Blank line: paragraph-break terminator.
+                                     ((string-match-p "\n" tok)
+                                      (setq result (cons tok me)))
+                                     ;; Flush closer: a real block end.
+                                     ((agent-shell-markdown--math-delimiter-flush-p
+                                       mb me)
+                                      (setq result (cons tok me))))))
                                 result))))
                   (cond
-                   ;; Matching closer reached with no blank line before it.
+                   ;; Flush closer reached with no blank line before it.
                    ((and hit (string= (car hit) close-token))
                     (push (list :start open-start :end (cdr hit)
                                 :open (length open-token)
@@ -253,7 +285,7 @@ returns ((:start 1 :end 11 :open 2 :close 2))."
                           blocks)
                     (goto-char (cdr hit)))
                    ;; Blank line first: false-positive opener.  Resume
-                   ;; right after the opener so inner real blocks are seen.
+                   ;; right after the opener so a later real block is seen.
                    (hit (goto-char open-end))
                    ;; Neither yet: still-streaming open block.
                    (t (push (list :start open-start :end (point-max)
