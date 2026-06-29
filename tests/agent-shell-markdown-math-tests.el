@@ -378,6 +378,12 @@ E=mc^2
     (let ((agent-shell-markdown-math-preamble "\\documentclass{minimal}"))
       (should-not (equal base (agent-shell-markdown--math-cache-key "E=mc^2"))))))
 
+(ert-deftest agent-shell-markdown-math-cache-key-folds-in-appended-preamble ()
+  ;; Changing the appended preamble must also invalidate the cache.
+  (let ((base (agent-shell-markdown--math-cache-key "E=mc^2")))
+    (let ((agent-shell-markdown-math-appended-preamble "\\usepackage{braket}"))
+      (should-not (equal base (agent-shell-markdown--math-cache-key "E=mc^2"))))))
+
 (ert-deftest agent-shell-markdown-convert-inline-math-protects-markup ()
   ;; Inline `\\(...\\)' is matched anywhere on a line (not just block
   ;; level) and faced `agent-shell-markdown-math', keeping its interior

@@ -213,7 +213,17 @@ scaling is captured exactly); nil until then.")
 The `standalone' class crops the page tightly to the equation, so
 no `preview' package is required.  `xcolor' is used to tint the
 equation to match the buffer foreground.  Equations are typeset as
-`\\displaystyle' inline math inside the document body.")
+`\\displaystyle' inline math inside the document body.
+
+See also `agent-shell-markdown-math-appended-preamble' for adding
+extra packages without replacing this base.")
+
+(defvar agent-shell-markdown-math-appended-preamble ""
+  "Extra LaTeX code appended after `agent-shell-markdown-math-preamble'.
+Use this to load additional packages (e.g. `\\\\usepackage{braket}',
+`\\\\usepackage{physics}') without replacing the base preamble.
+The value is folded into the cache key, so changing it
+automatically invalidates cached SVGs.")
 
 (defvar agent-shell-markdown-math-cache-directory nil
   "Directory for cached equation SVGs and scratch compiles.
@@ -706,9 +716,10 @@ which is both font- AND color-independent (equations are compiled
 with dvisvgm `--currentcolor', then sized and tinted at display
 time — see `agent-shell-markdown--math-image-cache-key'), so
 neither size nor color is part of this key."
-  (secure-hash 'sha1 (format "%s\0%s%s"
+  (secure-hash 'sha1 (format "%s\0%s%s%s"
                              latex
                              agent-shell-markdown-math-preamble
+                             agent-shell-markdown-math-appended-preamble
                              (if inline "\0inline" ""))))
 
 (defun agent-shell-markdown--math-svg-file (key)
@@ -906,6 +917,9 @@ portable; it can slot in here without changing callers."
          (cleanup (lambda () (ignore-errors (delete-directory dir t)))))
     (with-temp-file tex
       (insert agent-shell-markdown-math-preamble "\n"
+              (if (string-empty-p agent-shell-markdown-math-appended-preamble)
+                  ""
+                (concat agent-shell-markdown-math-appended-preamble "\n"))
               "\\begin{document}\n"
               ;; Display math is typeset `\displaystyle' (full-size sums /
               ;; fractions / integrals); inline `\(...\)' is left in text
