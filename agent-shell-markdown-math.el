@@ -889,6 +889,33 @@ finishes."
     (unless pending
       (agent-shell-markdown--math-compile key latex inline))))
 
+(defun agent-shell-markdown--math-compile-failed (key latex dir)
+  "Handle a failed LaTeX compile for KEY with source LATEX.
+DIR is the scratch directory containing the build log.  The log
+is copied to a persistent file in the math cache directory, and a
+warning is emitted with a clickable link to it."
+  (let* ((log-src (expand-file-name "equation.log" dir))
+         (log-dst (expand-file-name (concat key ".log")
+                                    (agent-shell-markdown--math-cache-dir)))
+         (snippet (truncate-string-to-width latex 60 nil nil t)))
+    (when (file-exists-p log-src)
+      (copy-file log-src log-dst t))
+    (display-warning
+     'agent-shell-markdown-math
+     (format "LaTeX compile failed for: %s\nSee log: %s"
+             snippet
+             (if (file-exists-p log-dst) log-dst "(no log available)"))
+     :warning)
+    (when (file-exists-p log-dst)
+      (with-current-buffer "*Warnings*"
+        (let ((inhibit-read-only t))
+          (goto-char (point-max))
+          (save-excursion
+            (when (search-backward log-dst nil t)
+              (make-text-button (point) (+ (point) (length log-dst))
+                                'action (lambda (_) (find-file log-dst))
+                                'help-echo "Open LaTeX log"))))))))
+
 (defun agent-shell-markdown--math-compile (key latex &optional inline)
   "Asynchronously compile LATEX to the color-independent cache SVG for KEY.
 
@@ -897,9 +924,11 @@ Writes a standalone LaTeX document, runs
 `agent-shell-markdown-math-dvisvgm-program' in a scratch
 directory, and on success caches the SVG and overlays it onto
 every region queued for KEY (see
-`agent-shell-markdown--math-schedule').  On failure the queued
-regions keep their raw faced text.  The scratch directory is
-removed when the process exits.
+`agent-shell-markdown--math-schedule').  On failure the log is
+saved and a warning emitted (see
+`agent-shell-markdown--math-compile-failed'); the queued regions
+keep their raw faced text.  The scratch directory is removed when
+the process exits.
 
 No color is baked in: the equation's default ink is emitted as the
 literal `currentColor' (dvisvgm `--currentcolor'), so the SVG is
@@ -949,21 +978,19 @@ portable; it can slot in here without changing callers."
            (start-process-shell-command "agent-shell-markdown-math" nil command)
            (lambda (process _event)
              (when (memq (process-status process) '(exit signal))
-               (when (and (eq (process-status process) 'exit)
-                          (zerop (process-exit-status process))
-                          (file-exists-p svg))
-                 ;; Overlay each queued region with an image scaled to its
-                 ;; own buffer's font (via `--math-cached-image', which now
-                 ;; keys per display scale and loads the just-written SVG).
-                 (dolist (region (gethash key agent-shell-markdown-math--pending))
-                   (let ((buffer (nth 0 region))
-                         (start (nth 1 region))
-                         (end (nth 2 region)))
-                     (when (buffer-live-p buffer)
-                       (with-current-buffer buffer
-                         (agent-shell-markdown--math-overlay-image
-                          buffer start end
-                          (agent-shell-markdown--math-cached-image key)))))))
+               (if (and (eq (process-status process) 'exit)
+                        (zerop (process-exit-status process))
+                        (file-exists-p svg))
+                   (dolist (region (gethash key agent-shell-markdown-math--pending))
+                     (let ((buffer (nth 0 region))
+                           (start (nth 1 region))
+                           (end (nth 2 region)))
+                       (when (buffer-live-p buffer)
+                         (with-current-buffer buffer
+                           (agent-shell-markdown--math-overlay-image
+                            buffer start end
+                            (agent-shell-markdown--math-cached-image key))))))
+                 (agent-shell-markdown--math-compile-failed key latex dir))
                (remhash key agent-shell-markdown-math--pending)
                (funcall cleanup))))
         (error
