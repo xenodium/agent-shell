@@ -3634,5 +3634,87 @@ with \"Method not found\"."
         (agent-shell--refresh-session-title)
         (should (equal sent-method "session/list"))))))
 
+(ert-deftest agent-shell-other-buffer-transfers-input-to-viewport-test ()
+  "Switching to viewport via `agent-shell-other-buffer' transfers shell input.
+
+When the user has typed un-submitted text at the `agent-shell-mode'
+prompt, `agent-shell-other-buffer' must port that text into the
+viewport compose buffer (via `agent-shell-viewport--show-buffer'
+with :override), mirroring `agent-shell-prompt-compose'."
+  (with-temp-buffer
+    (let ((override-captured nil)
+          (show-buffer-called nil)
+          (switched-to nil)
+          (agent-shell--state (list (cons :buffer (current-buffer))
+                                    (cons :event-subscriptions nil)
+                                    (cons :client 'test-client)
+                                    (cons :session (list (cons :id "test-session")
+                                                         (cons :title "a title")))
+                                    (cons :last-entry-type nil)
+                                    (cons :tool-calls nil)
+                                    (cons :idle-timer nil))))
+      ;; `agent-shell-other-buffer' clears the shell prompt via
+      ;; `delete-region' from `comint-accum-marker' to `point-max'.
+      ;; Give the temp buffer a real marker so that succeeds.
+      (setq-local comint-accum-marker (point-min-marker))
+      (cl-letf (((symbol-function 'agent-shell--state)
+                 (lambda () agent-shell--state))
+                ((symbol-function 'shell-maker-point-at-last-prompt-p)
+                 (lambda () t))
+                ((symbol-function 'agent-shell--input)
+                 (lambda () "my draft prompt"))
+                ((symbol-function 'agent-shell-viewport--show-buffer)
+                 (lambda (&rest args)
+                   (setq show-buffer-called t
+                         override-captured (plist-get args :override))))
+                ((symbol-function 'switch-to-buffer)
+                 (lambda (buf) (setq switched-to buf)))
+                ((symbol-function 'derived-mode-p)
+                 (lambda (&rest modes)
+                   (memq 'agent-shell-mode modes))))
+        (agent-shell-other-buffer)
+        (should show-buffer-called)
+        (should (equal override-captured "my draft prompt"))
+        (should-not switched-to)))))
+
+(ert-deftest agent-shell-other-buffer-no-input-switches-normally-test ()
+  "Switching to viewport via `agent-shell-other-buffer' without input.
+
+When there is no un-submitted text at the shell prompt,
+`agent-shell-other-buffer' should behave as before: switch to the
+viewport buffer directly without invoking `show-buffer'."
+  (with-temp-buffer
+    (let ((show-buffer-called nil)
+          (switched-to nil)
+          (viewport-buffer (generate-new-buffer " *test-viewport*"))
+          (agent-shell--state (list (cons :buffer (current-buffer))
+                                    (cons :event-subscriptions nil)
+                                    (cons :client 'test-client)
+                                    (cons :session (list (cons :id "test-session")
+                                                         (cons :title "a title")))
+                                    (cons :last-entry-type nil)
+                                    (cons :tool-calls nil)
+                                    (cons :idle-timer nil))))
+      (unwind-protect
+          (cl-letf (((symbol-function 'agent-shell--state)
+                     (lambda () agent-shell--state))
+                    ((symbol-function 'shell-maker-point-at-last-prompt-p)
+                     (lambda () t))
+                    ((symbol-function 'agent-shell--input)
+                     (lambda () nil))
+                    ((symbol-function 'agent-shell-viewport--buffer)
+                     (lambda (&rest _) viewport-buffer))
+                    ((symbol-function 'agent-shell-viewport--show-buffer)
+                     (lambda (&rest _) (setq show-buffer-called t)))
+                    ((symbol-function 'switch-to-buffer)
+                     (lambda (buf) (setq switched-to buf)))
+                    ((symbol-function 'derived-mode-p)
+                     (lambda (&rest modes)
+                       (memq 'agent-shell-mode modes))))
+            (agent-shell-other-buffer)
+            (should-not show-buffer-called)
+            (should (eq switched-to viewport-buffer)))
+        (kill-buffer viewport-buffer)))))
+
 (provide 'agent-shell-tests)
 ;;; agent-shell-tests.el ends here

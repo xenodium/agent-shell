@@ -1389,13 +1389,27 @@ Includes shells accessed via viewport buffers, preserving visited order."
                                 :no-create t)
                                "No shell available")))
         ((derived-mode-p 'agent-shell-mode)
-         (when-let* ((viewport-buffer (or (agent-shell-viewport--buffer
-                                           :shell-buffer (current-buffer))
-                                          "Not in a shell viewport buffer")))
-           (with-current-buffer viewport-buffer
-             (when (derived-mode-p 'agent-shell-viewport-view-mode)
-               (agent-shell-viewport-refresh)))
-           (switch-to-buffer viewport-buffer)))
+         (if-let* (((shell-maker-point-at-last-prompt-p))
+                   (input (agent-shell--input)))
+             ;; Transfer un-submitted shell input to the viewport
+             ;; compose buffer, mirroring `agent-shell-prompt-compose'.
+             ;; Use delete-region to point-max rather than comint-kill-input
+             ;; which only deletes to point.  Text appended after point
+             ;; (e.g. attachments inserted via save-excursion) would otherwise
+             ;; survive and get duplicated on viewport submission.
+             (progn
+               (delete-region
+                (or (marker-position comint-accum-marker)
+                    (process-mark (get-buffer-process (current-buffer))))
+                (point-max))
+               (agent-shell-viewport--show-buffer :override input))
+           (when-let* ((viewport-buffer (or (agent-shell-viewport--buffer
+                                              :shell-buffer (current-buffer))
+                                             "Not in a shell viewport buffer")))
+             (with-current-buffer viewport-buffer
+               (when (derived-mode-p 'agent-shell-viewport-view-mode)
+                 (agent-shell-viewport-refresh)))
+             (switch-to-buffer viewport-buffer))))
         (t
          (user-error "Not in an agent-shell buffer"))))
 
