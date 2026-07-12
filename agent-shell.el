@@ -357,6 +357,54 @@ Sources are checked in order until one returns non-nil."
                          (function :tag "Custom function")))
   :group 'agent-shell)
 
+(defcustom agent-shell-region-context-format-function nil
+  "Function to format a selected region before it is sent as context.
+
+Affects \\[agent-shell-send-region] and the `region' source of
+\\[agent-shell-send-dwim] (see `agent-shell-context-sources').
+
+When nil (the default), the region is sent as a clickable
+`path:line-range' header followed by a capped, line-numbered preview.
+
+When set to a function, it is called with a single plist argument and
+should return the string to send in place of the default formatting, or
+nil to fall back to it.  The plist has these keys:
+
+ :file        Absolute path of the source file, or nil for a buffer with
+              no file.
+ :language    `major-mode' name with the `-ts-mode'/`-mode' suffix stripped
+              (e.g. \"python\").  This is a raw hint, not a canonical
+              Markdown fence identifier -- for example `c++-mode' yields
+              \"c++\", not \"cpp\"; map it yourself if you need a fence tag.
+ :line-start  Line number of the first selected line (1-based).
+ :line-end    Line number of the last selected line (1-based).
+ :content     The selected text, verbatim.
+ :agent-cwd   The target agent's working directory.  Use it to derive a
+              path relative to the agent (as the default does for :file),
+              or nil if unavailable.
+ :agent       Identifier symbol of the target agent (e.g. `claude-code'),
+              or nil if unavailable.
+ :model       Current model id of the target agent (e.g.
+              \"claude-opus-4-8\"), or nil if unavailable.
+
+The keys above are what the function cannot otherwise reach: the target
+shell (:agent-cwd :agent :model) and the selection, which is already
+deactivated by the time the function runs (:content :line-start
+:line-end).  The source buffer itself is not passed because it is the
+current buffer while the function runs: reach it via `current-buffer'
+(and hence `buffer-name', `default-directory', buffer text, overlays,
+...).
+
+This is an escape hatch for tailoring region context to a particular
+agent, model, or workflow -- for example, sending only the
+`path:line-range' header without the line-numbered body, or wrapping the
+body in a fenced code block with a language tag.  The best shape can
+differ across agents and model versions, which is why :agent and :model
+are provided for the formatter to branch on."
+  :type '(choice (const :tag "Default formatting" nil)
+                 (function :tag "Custom formatter"))
+  :group 'agent-shell)
+
 (cl-defun agent-shell--make-acp-client (&key command
                                              command-params
                                              environment-variables
@@ -7829,6 +7877,7 @@ When PICK-SHELL is non-nil, prompt for which shell buffer to use."
                            (agent-shell--shell-buffer)))
          (text (agent-shell--get-region-context
                 :deactivate t
+                :shell-buffer shell-buffer
                 :agent-cwd (with-current-buffer shell-buffer
                              (agent-shell-cwd)))))
     (if (with-current-buffer shell-buffer (shell-maker-busy))
@@ -7866,73 +7915,91 @@ With \\[universal-argument] \\[universal-argument] prefix ARG, prompt to pick an
              (agent-shell--read-queue-prompt :initial (concat text "\n\n"))))
         (agent-shell-insert :text text :shell-buffer shell-buffer))))))
 
-(cl-defun agent-shell--get-region-context (&key deactivate no-error agent-cwd)
+(cl-defun agent-shell--get-region-context (&key deactivate no-error agent-cwd shell-buffer)
   "Get region as insertable text, ready for sending to agent.
 
 When DEACTIVATE is non-nil, deactivate region.
 
 When NO-ERROR is non-nil, return nil and continue without error.
 
-Uses AGENT-CWD to shorten file paths where necessary."
+Uses AGENT-CWD to shorten file paths where necessary.
+
+SHELL-BUFFER, when live, is the target shell; its agent identifier and
+current model are passed to `agent-shell-region-context-format-function'."
   (let* ((region (or (agent-shell--get-region :deactivate deactivate)
                      (unless no-error
                        (user-error "No region selected"))))
-         (processed-text (if (map-elt region :file)
-                             (let ((file-link (agent-shell-ui-add-action-to-text
-                                               (format "%s:%d-%d"
-                                                       (if (and agent-cwd (file-in-directory-p (map-elt region :file) agent-cwd))
-                                                           (file-relative-name (map-elt region :file) agent-cwd)
-                                                         (map-elt region :file))
-                                                       (map-elt region :line-start)
-                                                       (map-elt region :line-end))
-                                               (lambda ()
-                                                 (interactive)
-                                                 (if (and (map-elt region :file) (file-exists-p (map-elt region :file)))
-                                                     (if-let* ((window (when (get-file-buffer (map-elt region :file))
-                                                                         (get-buffer-window (get-file-buffer (map-elt region :file))))))
-                                                         (progn
-                                                           (select-window window)
-                                                           (goto-char (point-min))
-                                                           (forward-line (1- (map-elt region :line-start)))
-                                                           (beginning-of-line)
-                                                           (push-mark (save-excursion
-                                                                        (goto-char (point-min))
-                                                                        (forward-line (1- (map-elt region :line-end)))
-                                                                        (end-of-line)
-                                                                        (point))
-                                                                      t t))
-                                                       (find-file (map-elt region :file))
-                                                       (goto-char (point-min))
-                                                       (forward-line (1- (map-elt region :line-start)))
-                                                       (beginning-of-line)
-                                                       (push-mark (save-excursion
-                                                                    (goto-char (point-min))
-                                                                    (forward-line (1- (map-elt region :line-end)))
-                                                                    (end-of-line)
-                                                                    (point))
-                                                                  t t))
-                                                   (message "File not found")))
-                                               (lambda ()
-                                                 (message "Press RET to open file"))
-                                               'agent-shell-link))
-                                   (numbered-preview
-                                    (when-let* ((buffer (get-file-buffer (map-elt region :file))))
-                                      (let ((char-start (map-elt region :char-start))
-                                            (char-end (map-elt region :char-end))
-                                            (max-preview-lines 5))
-                                        (if (= (count-lines char-start char-end) 1)
-                                            ;; Same line region? Avoid numbering.
-                                            (agent-shell--buffer-substring-with-faces
-                                             char-start char-end)
-                                          (agent-shell--get-numbered-region
-                                           :buffer buffer
-                                           :from char-start
-                                           :to char-end
-                                           :cap max-preview-lines))))))
-                               (if numbered-preview
-                                   (concat file-link "\n\n" numbered-preview)
-                                 file-link))
-                           (map-elt region :content))))
+         (processed-text
+          (or (when (and region agent-shell-region-context-format-function)
+                (let ((state (when (buffer-live-p shell-buffer)
+                               (with-current-buffer shell-buffer
+                                 (ignore-errors (agent-shell--state))))))
+                  (funcall agent-shell-region-context-format-function
+                           (list :file (map-elt region :file)
+                                 :language (map-elt region :language)
+                                 :line-start (map-elt region :line-start)
+                                 :line-end (map-elt region :line-end)
+                                 :content (map-elt region :content)
+                                 :agent-cwd agent-cwd
+                                 :agent (map-nested-elt state '(:agent-config :identifier))
+                                 :model (when state
+                                          (agent-shell--current-model-id state))))))
+              (if (map-elt region :file)
+                  (let ((file-link (agent-shell-ui-add-action-to-text
+                                    (format "%s:%d-%d"
+                                            (if (and agent-cwd (file-in-directory-p (map-elt region :file) agent-cwd))
+                                                (file-relative-name (map-elt region :file) agent-cwd)
+                                              (map-elt region :file))
+                                            (map-elt region :line-start)
+                                            (map-elt region :line-end))
+                                    (lambda ()
+                                      (interactive)
+                                      (if (and (map-elt region :file) (file-exists-p (map-elt region :file)))
+                                          (if-let* ((window (when (get-file-buffer (map-elt region :file))
+                                                              (get-buffer-window (get-file-buffer (map-elt region :file))))))
+                                              (progn
+                                                (select-window window)
+                                                (goto-char (point-min))
+                                                (forward-line (1- (map-elt region :line-start)))
+                                                (beginning-of-line)
+                                                (push-mark (save-excursion
+                                                             (goto-char (point-min))
+                                                             (forward-line (1- (map-elt region :line-end)))
+                                                             (end-of-line)
+                                                             (point))
+                                                           t t))
+                                            (find-file (map-elt region :file))
+                                            (goto-char (point-min))
+                                            (forward-line (1- (map-elt region :line-start)))
+                                            (beginning-of-line)
+                                            (push-mark (save-excursion
+                                                         (goto-char (point-min))
+                                                         (forward-line (1- (map-elt region :line-end)))
+                                                         (end-of-line)
+                                                         (point))
+                                                       t t))
+                                        (message "File not found")))
+                                    (lambda ()
+                                      (message "Press RET to open file"))
+                                    'agent-shell-link))
+                        (numbered-preview
+                         (when-let* ((buffer (get-file-buffer (map-elt region :file))))
+                           (let ((char-start (map-elt region :char-start))
+                                 (char-end (map-elt region :char-end))
+                                 (max-preview-lines 5))
+                             (if (= (count-lines char-start char-end) 1)
+                                 ;; Same line region? Avoid numbering.
+                                 (agent-shell--buffer-substring-with-faces
+                                  char-start char-end)
+                               (agent-shell--get-numbered-region
+                                :buffer buffer
+                                :from char-start
+                                :to char-end
+                                :cap max-preview-lines))))))
+                    (if numbered-preview
+                        (concat file-link "\n\n" numbered-preview)
+                      file-link))
+                (map-elt region :content)))))
     processed-text))
 
 (defun agent-shell--buffer-substring-with-faces (start end)
@@ -8133,17 +8200,21 @@ Tries flymake first, then flycheck."
   (or (agent-shell--get-flymake-error-context)
       (agent-shell--get-flycheck-error-context)))
 
-(cl-defun agent-shell--get-current-line-context (&key agent-cwd)
+(cl-defun agent-shell--get-current-line-context (&key agent-cwd shell-buffer)
   "Get the current line as insertable text, ready for sending to agent.
 
-Uses AGENT-CWD to shorten file paths where necessary."
+Uses AGENT-CWD to shorten file paths where necessary.
+
+SHELL-BUFFER is the target shell, forwarded to
+`agent-shell--get-region-context'."
   (save-excursion
     (let ((start (line-beginning-position))
           (end (line-end-position)))
       (goto-char start)
       (set-mark end)
       (activate-mark)
-      (agent-shell--get-region-context :deactivate t :no-error t :agent-cwd agent-cwd))))
+      (agent-shell--get-region-context
+       :deactivate t :no-error t :agent-cwd agent-cwd :shell-buffer shell-buffer))))
 
 (cl-defun agent-shell--context (&key shell-buffer)
   "Return context (if available).  Nil otherwise.
@@ -8165,10 +8236,10 @@ The sources checked are controlled by `agent-shell-context-sources'."
                     :agent-cwd agent-cwd))
            ('region (agent-shell--get-region-context
                      :deactivate t :no-error t
-                     :agent-cwd agent-cwd))
+                     :agent-cwd agent-cwd :shell-buffer shell-buffer))
            ('error (agent-shell--get-error-context))
            ('line (agent-shell--get-current-line-context
-                   :agent-cwd agent-cwd))
+                   :agent-cwd agent-cwd :shell-buffer shell-buffer))
            ((pred functionp) (funcall source))))
        agent-shell-context-sources))))
 

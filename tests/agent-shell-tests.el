@@ -752,6 +752,64 @@ highlighting."
           (set-buffer-modified-p nil)))
       (ignore-errors (delete-file temp-file)))))
 
+(ert-deftest agent-shell--get-region-context-format-function-overrides ()
+  "A non-nil formatter replaces the default formatting and sees the region plist.
+
+Also checks that :agent and :model are populated from the target shell."
+  (let* ((temp-file (make-temp-file "agent-shell-region" nil ".py"))
+         (default-directory (file-name-directory temp-file))
+         (captured nil)
+         (state '((:agent-config . ((:identifier . claude-code)))
+                  (:session . ((:model-id . "claude-opus-4-8"))))))
+    (unwind-protect
+        (with-current-buffer (find-file-noselect temp-file)
+          (insert "def foo():\n    return 1\n")
+          (goto-char (point-min))
+          (set-mark (point-max))
+          (activate-mark)
+          (cl-letf (((symbol-function 'agent-shell--state) (lambda () state)))
+            (let* ((agent-shell-region-context-format-function
+                    (lambda (region)
+                      (setq captured region)
+                      (format "%s:%d-%d"
+                              (map-elt region :file)
+                              (map-elt region :line-start)
+                              (map-elt region :line-end))))
+                   (ctx (agent-shell--get-region-context
+                         :deactivate t :shell-buffer (current-buffer))))
+              (should (equal ctx (format "%s:1-2" temp-file)))
+              (should (equal (map-elt captured :file) temp-file))
+              (should (equal (map-elt captured :language) "python"))
+              (should (equal (map-elt captured :line-start) 1))
+              (should (equal (map-elt captured :line-end) 2))
+              (should (equal (map-elt captured :content)
+                             "def foo():\n    return 1\n"))
+              (should (equal (map-elt captured :agent) 'claude-code))
+              (should (equal (map-elt captured :model) "claude-opus-4-8")))))
+      (when (get-file-buffer temp-file)
+        (with-current-buffer (get-file-buffer temp-file)
+          (set-buffer-modified-p nil)))
+      (ignore-errors (delete-file temp-file)))))
+
+(ert-deftest agent-shell--get-region-context-format-function-nil-falls-back ()
+  "A formatter returning nil falls back to the default `path:line-range' header."
+  (let* ((temp-file (make-temp-file "agent-shell-region" nil ".txt"))
+         (default-directory (file-name-directory temp-file)))
+    (unwind-protect
+        (with-current-buffer (find-file-noselect temp-file)
+          (insert "one\ntwo\n")
+          (goto-char (point-min))
+          (set-mark (point-max))
+          (activate-mark)
+          (let* ((agent-shell-region-context-format-function (lambda (_region) nil))
+                 (ctx (agent-shell--get-region-context :deactivate t)))
+            (should (string-prefix-p (format "%s:1-2" temp-file)
+                                     (substring-no-properties ctx)))))
+      (when (get-file-buffer temp-file)
+        (with-current-buffer (get-file-buffer temp-file)
+          (set-buffer-modified-p nil)))
+      (ignore-errors (delete-file temp-file)))))
+
 (ert-deftest agent-shell--get-numbered-region-preserves-source-faces-only ()
   "Numbered region preview must keep faces but not source control properties.
 
