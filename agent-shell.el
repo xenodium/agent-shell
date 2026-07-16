@@ -763,6 +763,23 @@ Available values:
          (set-default sym value))
   :group 'agent-shell)
 
+(defcustom agent-shell-extra-shell-choices '(downloads-shell temp-shell other-shell)
+  "Extra choices offered when prompting to start a shell.
+
+Available choices:
+
+  `downloads-shell': Start a new shell in ~/Downloads.
+  `temp-shell': Start a new shell in a temporary directory.
+  `other-shell': Switch to an existing shell buffer.
+
+When starting a new shell is the only remaining choice (no extra
+choices and no existing sessions to resume), the prompt is skipped
+and a new shell is started."
+  :type '(set (const :tag "New Downloads shell" downloads-shell)
+              (const :tag "New temp shell" temp-shell)
+              (const :tag "Switch to shell buffer" other-shell))
+  :group 'agent-shell)
+
 (defvar agent-shell-idle-timeout 30
   "Seconds before an `idle' event is emitted.
 
@@ -5654,57 +5671,63 @@ Falls back to latest session in batch mode (e.g. tests)."
                                                               acp-sessions))))
                                    columns)))
              ;; TODO: Consolidate choices with `agent-shell--shell-buffer'.
-             (session-choices (append (list (cons new-session-choice nil)
-                                            (cons "New Downloads shell" :downloads-shell)
-                                            (cons "New temp shell" :temp-shell))
-                                      (when other-shells
+             (session-choices (append (list (cons new-session-choice nil))
+                                      (when (memq 'downloads-shell agent-shell-extra-shell-choices)
+                                        (list (cons "New Downloads shell" :downloads-shell)))
+                                      (when (memq 'temp-shell agent-shell-extra-shell-choices)
+                                        (list (cons "New temp shell" :temp-shell)))
+                                      (when (and other-shells
+                                                 (memq 'other-shell agent-shell-extra-shell-choices))
                                         (list (cons "Switch to shell buffer" :other-shell)))
                                       (mapcar (lambda (acp-session)
                                                 (cons (agent-shell--session-choice-label
                                                        :acp-session acp-session
                                                        :max-widths max-widths)
                                                       acp-session))
-                                              acp-sessions)))
-             (candidates (mapcar #'car session-choices))
-             ;; Some completion frameworks yielded appended (nil) to each line
-             ;; unless this-command was bound.
-             ;;
-             ;; For example:
-             ;;
-             ;; Let's build something                 Today, 16:25 (nil)
-             ;; Let's optimize the rocket engine      Feb 12, 21:02 (nil)
-             (this-command 'agent-shell))
-        (agent-shell--emit-event :event 'session-prompt)
-        (let ((selection (completing-read "Start shell (default: new): "
-                                          (lambda (string pred action)
-                                            (if (eq action 'metadata)
-                                                '(metadata
-                                                  (display-sort-function . identity)
-                                                  (eager-display . t)
-                                                  (eager-update . t))
-                                              (complete-with-action action candidates string pred)))
-                                          nil t nil nil
-                                          new-session-choice)))
-          (pcase (map-elt session-choices selection)
-            (:other-shell
-             (let ((other-shell (agent-shell--read-shell-buffer
-                                 :prompt "Switch to shell buffer: "
-                                 :buffers other-shells))
-                   (bootstrapping-shell (map-elt (agent-shell--state) :buffer)))
-               (agent-shell--display-buffer other-shell)
-               (kill-buffer bootstrapping-shell)
-               :other-shell))
-            (:downloads-shell
-             (let ((config (map-elt (agent-shell--state) :agent-config)))
-               (kill-buffer (map-elt (agent-shell--state) :buffer))
-               (agent-shell-new-downloads-shell :config config))
-             :other-shell)
-            (:temp-shell
-             (let ((config (map-elt (agent-shell--state) :agent-config)))
-               (kill-buffer (map-elt (agent-shell--state) :buffer))
-               (agent-shell-new-temp-shell :config config))
-             :other-shell)
-            (choice choice)))))))
+                                              acp-sessions))))
+        ;; Returning nil starts a new session, so when starting a new
+        ;; session is the only choice, skip the prompt entirely.
+        (when (length> session-choices 1)
+          (let ((candidates (mapcar #'car session-choices))
+                ;; Some completion frameworks yielded appended (nil) to each line
+                ;; unless this-command was bound.
+                ;;
+                ;; For example:
+                ;;
+                ;; Let's build something                 Today, 16:25 (nil)
+                ;; Let's optimize the rocket engine      Feb 12, 21:02 (nil)
+                (this-command 'agent-shell))
+            (agent-shell--emit-event :event 'session-prompt)
+            (let ((selection (completing-read "Start shell (default: new): "
+                                              (lambda (string pred action)
+                                                (if (eq action 'metadata)
+                                                    '(metadata
+                                                      (display-sort-function . identity)
+                                                      (eager-display . t)
+                                                      (eager-update . t))
+                                                  (complete-with-action action candidates string pred)))
+                                              nil t nil nil
+                                              new-session-choice)))
+              (pcase (map-elt session-choices selection)
+                (:other-shell
+                 (let ((other-shell (agent-shell--read-shell-buffer
+                                     :prompt "Switch to shell buffer: "
+                                     :buffers other-shells))
+                       (bootstrapping-shell (map-elt (agent-shell--state) :buffer)))
+                   (agent-shell--display-buffer other-shell)
+                   (kill-buffer bootstrapping-shell)
+                   :other-shell))
+                (:downloads-shell
+                 (let ((config (map-elt (agent-shell--state) :agent-config)))
+                   (kill-buffer (map-elt (agent-shell--state) :buffer))
+                   (agent-shell-new-downloads-shell :config config))
+                 :other-shell)
+                (:temp-shell
+                 (let ((config (map-elt (agent-shell--state) :agent-config)))
+                   (kill-buffer (map-elt (agent-shell--state) :buffer))
+                   (agent-shell-new-temp-shell :config config))
+                 :other-shell)
+                (choice choice)))))))))
 
 
 (cl-defun agent-shell--session-from-response (&key acp-response acp-session-id)
@@ -6865,8 +6888,18 @@ Returns a buffer object or nil."
                    (start-downloads "New Downloads shell")
                    (start-temp "New temp shell")
                    (open-existing "Switch to shell buffer")
-                   (choice (completing-read "Start shell (default: new): "
-                                            (list start-new start-downloads start-temp open-existing) nil t)))
+                   (choices (append (list start-new)
+                                    (when (memq 'downloads-shell agent-shell-extra-shell-choices)
+                                      (list start-downloads))
+                                    (when (memq 'temp-shell agent-shell-extra-shell-choices)
+                                      (list start-temp))
+                                    (when (memq 'other-shell agent-shell-extra-shell-choices)
+                                      (list open-existing))))
+                   ;; When starting a new shell is the only choice, skip
+                   ;; the prompt entirely.
+                   (choice (if (length> choices 1)
+                               (completing-read "Start shell (default: new): " choices nil t)
+                             start-new)))
               (cond
                ((equal choice open-existing)
                 (agent-shell--read-shell-buffer :prompt "Switch to shell buffer: "))
