@@ -577,6 +577,8 @@ block -- covering the dispatch path, not just the helper in isolation."
         (rendered nil))
     (cl-letf (((symbol-function 'agent-shell--active-requests-p)
                (lambda (_state) t))
+              ((symbol-function 'agent-shell--should-render-update-p)
+               (lambda (_state) t))
               ((symbol-function 'agent-shell--append-transcript)
                #'ignore)
               ((symbol-function 'agent-shell--update-fragment)

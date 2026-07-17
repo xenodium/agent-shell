@@ -2016,9 +2016,34 @@ COMMAND, when present, may be a shell command string or an argv vector."
         ((null command) nil)
         (t (error "Unexpected tool-call command type: %S" (type-of command)))))
 
+(defun agent-shell--should-render-update-p (state)
+  "Return non-nil if a session/update notification should render now.
+True when this client has an in-flight ACP request awaiting response, or
+when a session is established. The latter case covers shared sessions:
+when another client also attaches to the same agent, the agent's
+session/update notifications reach every attached frontend regardless
+of which one originated the prompt, so this client may have no
+`:active-requests' yet still receive renderable agent_message_chunks,
+agent_thought_chunks, tool_calls, and tool_call_updates that should
+appear in the buffer rather than being treated as stale."
+  (or (map-elt state :active-requests)
+      (map-nested-elt state '(:session :id))))
+
 (defun agent-shell--active-requests-p (state)
   "Return non-nil if STATE has in-flight requests awaiting responses."
   (map-elt state :active-requests))
+
+(defun agent-shell--session-bound-notification-p (acp-notification)
+  "Return non-nil if ACP-NOTIFICATION reports session request progress.
+
+These notifications must arrive while an agent request is in
+flight (`session/prompt', `session/load', or `session/push').
+A server emitting one with no request active is non-conformant."
+  (and (equal (map-elt acp-notification 'method) "session/update")
+       (member (map-nested-elt acp-notification '(params update sessionUpdate))
+               '("tool_call" "tool_call_update"
+                 "agent_thought_chunk" "agent_message_chunk"
+                 "user_message_chunk" "plan"))))
 
 (defun agent-shell--make-out-of-session-turn-notification-body (state acp-notification)
   "Build a fragment body for ACP-NOTIFICATION arriving out of turn using STATE."
@@ -2184,7 +2209,34 @@ No-op with no members yet."
 (cl-defun agent-shell--on-notification (&key state acp-notification)
   "Handle incoming ACP-NOTIFICATION using STATE."
   (map-put! state :last-activity-time (current-time))
-  (cond ((equal (map-elt acp-notification 'method) "session/update")
+  ;; Hydra-style daemons broadcast session/update to every attached
+  ;; client. Drop notifications whose sessionId doesn't match this
+  ;; buffer's session — they belong to another shell.
+  (let ((notif-session-id (map-nested-elt acp-notification '(params sessionId)))
+        (our-session-id (map-nested-elt state '(:session :id))))
+    (if (and notif-session-id
+             our-session-id
+             (not (equal notif-session-id our-session-id)))
+        nil
+  (cond ((and (not (agent-shell--should-render-update-p state))
+              (agent-shell--session-bound-notification-p acp-notification))
+         ;; Turn-bound notification arriving with no agent request in
+         ;; flight is a protocol violation: these notifications must
+         ;; accompany an active `session/prompt', `session/load', or
+         ;; `session/push'.  Show it visibly above the fresh prompt so
+         ;; users can report it.  Session-level updates (usage_update,
+         ;; current_mode_update, session_info_update, etc.) fall
+         ;; through to their normal handlers below — they're
+         ;; legitimate any time.
+         (agent-shell--update-fragment
+          :state state
+          :block-id "out-of-turn-acp-bug"
+          :label-left (propertize "Out of turn — ACP server bug"
+                                  'font-lock-face 'font-lock-doc-markup-face)
+          :body (agent-shell--make-out-of-session-turn-notification-body state acp-notification)
+          :append t
+          :above-last-prompt t))
+        ((equal (map-elt acp-notification 'method) "session/update")
          ;; Replayed user_message_chunks aren't followed by
          ;; shell-maker's end-of-prompt marker (no real
          ;; `comint-send-input').  Insert it on the first
@@ -2329,18 +2381,24 @@ No-op with no members yet."
               :render-body-images t
               :above-last-prompt (not (agent-shell--active-requests-p state))))
            (map-put! state :last-entry-type "agent_thought_chunk"))
-          ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "user_message_chunk")
-           ;; A user_message_chunk replays a user submission.  Render it
-           ;; while a `session/load' or `session/push' is active; with no
-           ;; request in flight at all it has nothing to attach to, so
-           ;; flag it as anomalous; during a live `session/prompt' it is
-           ;; a suppressed no-op.
+           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "user_message_chunk")
+           ;; A user_message_chunk replays a user submission or comes
+           ;; from another client sharing the session.  Render it
+           ;; while a `session/load' or `session/push' is active, or
+           ;; whenever the session is established and the chunk isn't
+           ;; an echo of our own in-flight prompt.  With no request in
+           ;; flight and no session at all it has nothing to attach
+           ;; to, so flag it as anomalous.
            (cond
-            ((seq-find (lambda (r)
-                         (member (map-elt r :method)
-                                 (append '("session/load")
-                                         (agent-shell-experimental--methods))))
-                       (map-elt state :active-requests))
+            ((or (seq-find (lambda (r)
+                             (member (map-elt r :method)
+                                     (append '("session/load")
+                                             (agent-shell-experimental--methods))))
+                           (map-elt state :active-requests))
+                 (and (agent-shell--should-render-update-p state)
+                      (not (seq-find (lambda (r)
+                                       (equal (map-elt r :method) "session/prompt"))
+                                     (map-elt state :active-requests)))))
              (let ((new-prompt-p (not (equal (map-elt state :last-entry-type)
                                              "user_message_chunk")))
                    (content-text (or (map-nested-elt acp-notification '(params update content text))
@@ -2375,8 +2433,8 @@ No-op with no members yet."
                                               'font-lock-face 'agent-shell-input))
                         (propertize content-text
                                     'font-lock-face 'agent-shell-input))
-                :create-new new-prompt-p
-                :append t))
+                 :create-new new-prompt-p
+                 :append t))
              (map-put! state :last-entry-type "user_message_chunk"))
             ((not (agent-shell--active-requests-p state))
              ;; No session/load or session/push to attach this echo to,
@@ -2391,6 +2449,39 @@ No-op with no members yet."
               :body (agent-shell--make-out-of-session-turn-notification-body state acp-notification)
               :append t
               :above-last-prompt t))))
+          ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "turn_complete")
+           ;; Synthesized by a session-sharing proxy when a session/prompt
+           ;; response arrives. Only the non-originating clients see this —
+           ;; the originator gets the response directly and finalizes via
+           ;; its :on-success callback. Without this arm, turns driven by
+           ;; another client leave the buffer with a read-only tail and no
+           ;; fresh prompt to type at.
+           (unless (seq-find (lambda (r)
+                               (equal (map-elt r :method) "session/prompt"))
+                             (map-elt state :active-requests))
+             (let* ((stop-reason (map-nested-elt acp-notification '(params update stopReason)))
+                    (success (equal stop-reason "end_turn")))
+               (when (equal (map-elt state :last-entry-type) "agent_message_chunk")
+                 (agent-shell--append-transcript
+                  :text "\n\n"
+                  :file-path agent-shell--transcript-file))
+               (map-put! state :tool-calls nil)
+               (unless success
+                 (agent-shell--update-fragment
+                  :state state
+                  :block-id (format "%s-stop-reason"
+                                    (map-elt state :request-count))
+                  :body (agent-shell--stop-reason-description stop-reason)
+                  :create-new t))
+               (when-let ((buf (map-elt state :buffer))
+                          ((buffer-live-p buf)))
+                 (with-current-buffer buf
+                   (shell-maker-finish-output :config shell-maker--config
+                                              :success t)))
+               (agent-shell--emit-event
+                :event 'turn-complete
+                :data (list (cons :stop-reason stop-reason)))
+                (map-put! state :last-entry-type nil))))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "plan")
            (agent-shell--update-fragment
             :state state
@@ -2608,8 +2699,8 @@ No-op with no members yet."
                                   'font-lock-face 'agent-shell-section-heading)
           :body (agent-shell--make-unhandled-notification-body acp-notification)
           :append t
-          :above-last-prompt (not (shell-maker-busy)))
-         (map-put! state :last-entry-type nil))))
+           :above-last-prompt (not (shell-maker-busy)))
+          (map-put! state :last-entry-type nil))))))
 
 (cl-defun agent-shell--on-request (&key state acp-request)
   "Handle incoming ACP-REQUEST using STATE."
