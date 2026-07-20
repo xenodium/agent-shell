@@ -2932,6 +2932,11 @@ No-op with no members yet."
          (agent-shell-experimental--on-session-push-request
           :state state
           :acp-request acp-request))
+        ((and (stringp (map-elt acp-request 'method))
+              (string-prefix-p "cursor/" (map-elt acp-request 'method))
+              (agent-shell-cursor--on-request
+               :state state
+               :acp-request acp-request)))
         (t
          (let ((method (map-elt acp-request 'method)))
            (agent-shell--update-fragment
