@@ -81,6 +81,7 @@
 (require 'agent-shell-pi)
 (require 'agent-shell-project)
 (require 'agent-shell-qwen)
+(require 'agent-shell-retry)
 (require 'agent-shell-styles)
 (require 'agent-shell-usage)
 (require 'agent-shell-worktree)
@@ -1058,6 +1059,10 @@ OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
         (cons :sleep-token nil)
         (cons :active-requests nil)
         (cons :pending-requests nil)
+        (cons :retry-timer nil)
+        (cons :retry-attempt 0)
+        (cons :last-user-prompt nil)
+        (cons :turn-agent-message "")
         (cons :usage (list (cons :total-tokens 0)
                            (cons :input-tokens 0)
                            (cons :output-tokens 0)
@@ -1829,6 +1834,7 @@ See also `agent-shell-confirm-interrupt'."
     (error "Not in a shell"))
   (cond ((map-nested-elt (agent-shell--state) '(:session :id))
          (when (or force (agent-shell-interrupt-confirmed-p))
+           (agent-shell--cancel-retry-timer (agent-shell--state))
            ;; First cancel all pending permission requests
            (map-do
             (lambda (tool-call-id tool-call-data)
@@ -2547,6 +2553,7 @@ No-op while that function has nothing to summarize (an empty group)."
              (agent-shell--append-transcript
               :text (agent-shell--indent-markdown-headers content)
               :file-path agent-shell--transcript-file)
+             (agent-shell--accumulate-turn-agent-message state content)
              (agent-shell--update-fragment
               :state state
               ;; Out of turn, key under a dedicated namespace so the
@@ -3727,6 +3734,7 @@ For example, shut down ACP client."
   "Shut down shell activity."
   (unless (derived-mode-p 'agent-shell-mode)
     (error "Not in a shell"))
+  (agent-shell--cancel-retry-timer (agent-shell--state))
   (when (map-elt (agent-shell--state) :client)
     (acp-shutdown :client (map-elt (agent-shell--state) :client))
     (map-put! (agent-shell--state) :client nil)
@@ -7163,8 +7171,12 @@ Each marked span is replaced by its `agent-shell-region-text' value."
           (insert full-text))))
     (buffer-string)))
 
-(cl-defun agent-shell--send-command (&key prompt shell-buffer)
-  "Send PROMPT to agent using SHELL-BUFFER."
+(cl-defun agent-shell--send-command (&key prompt shell-buffer retry)
+  "Send PROMPT to agent using SHELL-BUFFER.
+
+When RETRY is non-nil, PROMPT is an auto-retry turn (see
+`agent-shell--schedule-retry'): the per-turn retry counter is
+preserved rather than reset."
   (let* ((expanded-prompt (agent-shell--expand-truncated-regions prompt))
          (content-blocks (condition-case nil
                              (agent-shell--build-content-blocks expanded-prompt)
@@ -7179,6 +7191,13 @@ Each marked span is replaced by its `agent-shell-region-text' value."
 
     (agent-shell--cancel-idle-timer)
     (agent-shell--emit-event :event 'input-submitted)
+
+    (map-put! agent-shell--state :turn-agent-message "")
+    (unless retry
+      (agent-shell--cancel-retry-timer agent-shell--state)
+      (map-put! agent-shell--state :retry-attempt 0)
+      (map-put! agent-shell--state :last-user-prompt
+                (substring-no-properties expanded-prompt)))
 
     (map-put! agent-shell--state :last-entry-type nil)
 
@@ -7225,6 +7244,15 @@ Each marked span is replaced by its `agent-shell-region-text' value."
                      (agent-shell--save-usage :state (agent-shell--state) :acp-usage (map-elt acp-response 'usage)))
                    (let ((success (equal (map-elt acp-response 'stopReason)
                                          "end_turn")))
+                     (if-let* ((retry-tail (agent-shell--retry-completed-turn-p
+                                            :state (agent-shell--state)
+                                            :stop-reason (map-elt acp-response 'stopReason)
+                                            :message (map-elt (agent-shell--state) :turn-agent-message))))
+                         (agent-shell--schedule-retry
+                          :state agent-shell--state
+                          :shell-buffer shell-buffer
+                          :acp-error (list (cons 'message retry-tail)))
+                       (progn
                      ;; Display usage box at end of turn if enabled and data available
                      (when (and success
                                 agent-shell-show-usage-at-turn-end
@@ -7262,7 +7290,7 @@ Each marked span is replaced by its `agent-shell-region-text' value."
                        (with-current-buffer viewport-buffer
                          (agent-shell-viewport--update-header)))
                      (when success
-                       (agent-shell--process-pending-request))))
+                       (agent-shell--process-pending-request))))))
      :on-failure (lambda (acp-error raw-message)
                    ;; A failed/interrupted turn may have stopped mid
                    ;; agent_message_chunk, leaving the transcript body

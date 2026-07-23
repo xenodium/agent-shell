@@ -791,6 +791,23 @@ To turn it off:
 (setopt agent-shell-inhibit-system-sleep nil)
 #+end_src
 
+*** Auto-retrying turns that end with a transient error
+
+Some agents catch a transient error internally, print it as regular agent output (for example Cursor's =Error: RetriableError: [unavailable]=), and end the turn as if it had succeeded, leaving the task unfinished. When enabled, =agent-shell= detects such turns by their final output line and automatically sends a continue prompt after a short backoff, displaying a "Retrying" block in the shell. Interrupting the session cancels any pending retry.
+
+Off by default. To enable:
+
+#+begin_src emacs-lisp
+(setq agent-shell-auto-retry t)
+#+end_src
+
+Related variables:
+
+- =agent-shell-retry-max-retries=: retries per turn before giving up (default 2).
+- =agent-shell-retry-backoff-seconds=: seconds to wait before each retry (default =(2 5)=; the last entry repeats for further retries).
+- =agent-shell-retriable-turn-tail-regexps=: case-insensitive patterns a completed turn's final line must match to be considered retriable.
+- =agent-shell-retry-prompt=: the continue prompt sent to the agent on retry.
+
 All of the above settings can be applied on a per-project basis using [[https://www.gnu.org/software/emacs/manual/html_node/emacs/Directory-Variables.html][directory-local variables]].
 
 ** Key bindings
