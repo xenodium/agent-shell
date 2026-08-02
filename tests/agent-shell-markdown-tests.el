@@ -2351,6 +2351,43 @@ exercised by the editing in the -all-math-cases test.)"
                     (:body . "\\frac{a}{b}")
                     (:complete . t))))))
 
+(defun agent-shell-markdown-tests--ui-section (markdown &optional section)
+  "Return the `:ui-section' a renderer sees for MARKDOWN.
+When SECTION is non-nil, tag the whole inserted text with
+`agent-shell-ui-section' SECTION first, mimicking Agent Shell rendering
+a fragment section in its own narrowed pass."
+  (let (seen)
+    (with-temp-buffer
+      (let ((agent-shell-markdown-render-functions
+             (list (lambda (context)
+                     (setq seen (map-elt context :ui-section))
+                     nil))))
+        (insert markdown)
+        (when section
+          (put-text-property (point-min) (point-max)
+                             'agent-shell-ui-section section))
+        (agent-shell-markdown-replace-markup)))
+    seen))
+
+(ert-deftest agent-shell-markdown-render-functions-receives-ui-section ()
+  ;; Agent Shell tags each narrowed fragment section with
+  ;; `agent-shell-ui-section'; a renderer is handed that value as
+  ;; `:ui-section' so it can skip UI chrome (e.g. shell grouping in a
+  ;; `label-right' tool-command label) without touching body equations.
+  (should (eq (agent-shell-markdown-tests--ui-section
+               "find . \\( -name '*.nix' \\)" 'label-right)
+              'label-right))
+  (should (eq (agent-shell-markdown-tests--ui-section
+               "Result: \\(x^2\\)." 'body)
+              'body)))
+
+(ert-deftest agent-shell-markdown-render-functions-ui-section-nil-when-absent ()
+  ;; A section-less region (e.g. a static `agent-shell-markdown-convert'
+  ;; string) carries no property, so `:ui-section' is nil and a renderer
+  ;; treats it as ordinary body content.
+  (should (eq (agent-shell-markdown-tests--ui-section "plain \\(x\\) math")
+              nil)))
+
 (ert-deftest agent-shell-markdown-render-functions-source-blocks-incomplete ()
   ;; A still-streaming fence is reported with `:complete' nil and no
   ;; `:body', so a renderer knows the language but not to claim it yet.

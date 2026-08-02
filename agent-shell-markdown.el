@@ -263,6 +263,18 @@ CONTEXT keys:
                   delimiters that fall inside a verbatim span (e.g. a
                   literal `\\(x\\)' the agent meant as code, not math).
 
+  :ui-section  The `agent-shell-ui-section' text-property value at the
+                  start of the narrowed region, or nil.  Agent Shell
+                  renders each fragment section (`label-left', `body',
+                  `label-right', ...) in its own narrowed pass and tags
+                  the whole section with this property, so a renderer
+                  can skip UI chrome — e.g. a tool-command label in
+                  `label-right' whose `\\(...\\)' is shell grouping, not
+                  math.  nil when the narrowed region carries no section
+                  property (e.g. a static `agent-shell-markdown-convert'
+                  string), in which case a renderer should treat it as
+                  ordinary body content.
+
 Each function returns an alist (nil for no-op).  Recognised keys:
 
   :watermark  Buffer position the streaming frontier must not pass,
@@ -476,14 +488,17 @@ Builds the same CONTEXT alist that
 the buffer is narrowed to right now:
 
   ((:source-blocks . SOURCE-BLOCKS)
-   (:inline-code-ranges . INLINE-CODE-RANGES))
+   (:inline-code-ranges . INLINE-CODE-RANGES)
+   (:ui-section . UI-SECTION))
 
 SOURCE-BLOCKS are the fenced-block descriptors from
 `agent-shell-markdown--source-blocks'.  INLINE-CODE-RANGES are
 marker ranges covering inline `code' span bodies, computed with the
 fenced blocks as avoid-ranges so backticks inside a fenced block are
-not mistaken for an inline span.  See
-`agent-shell-markdown-render-functions' for the meaning of each key.
+not mistaken for an inline span.  UI-SECTION is the
+`agent-shell-ui-section' property value at the start of the narrowed
+region (or nil).  See `agent-shell-markdown-render-functions' for the
+meaning of each key.
 
 `agent-shell-markdown-replace-markup' builds its context through
 this function too, so code that renders a static (non-streamed)
@@ -496,7 +511,13 @@ path."
                          (agent-shell-markdown--inline-code-ranges
                           :avoid-ranges source-ranges))))
     (list (cons :source-blocks source-blocks)
-          (cons :inline-code-ranges inline-ranges))))
+          (cons :inline-code-ranges inline-ranges)
+          ;; The narrowed region is a single Agent Shell fragment section,
+          ;; tagged uniformly with `agent-shell-ui-section', so its value at
+          ;; `point-min' identifies the section (e.g. `label-right' for a
+          ;; tool-command label).  nil for a section-less region.
+          (cons :ui-section (get-text-property (point-min)
+                                               'agent-shell-ui-section)))))
 
 (defun agent-shell-markdown--run-render-functions (context)
   "Run `agent-shell-markdown-render-functions' with CONTEXT.
