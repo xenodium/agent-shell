@@ -31,5 +31,26 @@
     (let ((agent-shell-openai-default-session-mode-id "full-access"))
       (should (string= (funcall default-session-mode-id-fn) "full-access")))))
 
+(ert-deftest agent-shell-openai-codex-authenticate-request-login-test ()
+  "Test Codex login auth uses the current codex-acp method id."
+  (let* ((agent-shell-openai-authentication
+          (agent-shell-openai-make-authentication :login t))
+         (request (funcall (map-elt (agent-shell-openai-make-codex-config)
+                                    :authenticate-request-maker))))
+    (should (equal (map-elt request :method) "authenticate"))
+    (should (equal (map-nested-elt request '(:params methodId)) "chat-gpt"))))
+
+(ert-deftest agent-shell-openai-codex-authenticate-request-api-key-test ()
+  "Test Codex API key auth uses the current codex-acp method id."
+  (dolist (authentication (list (agent-shell-openai-make-authentication
+                                 :api-key "openai-key")
+                                (agent-shell-openai-make-authentication
+                                 :codex-api-key "codex-key")))
+    (let* ((agent-shell-openai-authentication authentication)
+           (request (funcall (map-elt (agent-shell-openai-make-codex-config)
+                                      :authenticate-request-maker))))
+      (should (equal (map-elt request :method) "authenticate"))
+      (should (equal (map-nested-elt request '(:params methodId)) "api-key")))))
+
 (provide 'agent-shell-openai-tests)
 ;;; agent-shell-openai-tests.el ends here

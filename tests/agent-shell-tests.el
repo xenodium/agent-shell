@@ -1224,6 +1224,19 @@ code block content
         (agent-shell--start-idle-timer :event 'permission-request)
         (should (timerp (map-elt agent-shell--state :idle-timer)))))))
 
+(ert-deftest agent-shell-idle-event-adds-missing-idle-timer-state-test ()
+  "Test idle timer works with legacy alist state lacking :idle-timer."
+  (with-temp-buffer
+    (let ((agent-shell--state (list (cons :buffer (current-buffer))
+                                    (cons :event-subscriptions nil)))
+          (agent-shell-idle-timeout 999))
+      (cl-letf (((symbol-function 'agent-shell--state)
+                 (lambda () agent-shell--state)))
+        (agent-shell--start-idle-timer :event 'permission-request)
+        (should (timerp (map-elt agent-shell--state :idle-timer)))
+        (agent-shell--cancel-idle-timer)
+        (should-not (map-elt agent-shell--state :idle-timer))))))
+
 (ert-deftest agent-shell-idle-event-per-event-timeout-test ()
   "Test that idle timer uses per-event timeout from alist."
   (with-temp-buffer
@@ -1725,6 +1738,23 @@ code block content
     (should (string-match-p "\\*\\*Parameters:\\*\\*" entry))
     (should (string-match-p "filePath: /home/user/test.txt" entry))
     (should (string-match-p "offset: 100" entry))))
+
+(ert-deftest agent-shell--tool-call-output-text-test ()
+  "Test tool call output extraction from ACP updates."
+  (should (equal
+           (agent-shell--tool-call-output-text
+            '((rawOutput . ((formatted_output . "stdout\nstderr\n")))
+              (content . [((type . "content")
+                           (content . ((text . "legacy content"))))])))
+           "stdout\nstderr\n"))
+  (should (equal
+           (agent-shell--tool-call-output-text
+            '((content . [((type . "content")
+                           (content . ((text . "first"))))
+                          ((type . "content")
+                           (content . ((text . "second"))))])))
+           "first\n\nsecond"))
+  (should (equal (agent-shell--tool-call-output-text nil) "")))
 
 (ert-deftest agent-shell--session-column-value-test ()
   "Test `agent-shell--session-column-value' extracts correct values."

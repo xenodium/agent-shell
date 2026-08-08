@@ -770,6 +770,17 @@ OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
 
 (defvar agent-shell--shell-maker-config nil)
 
+(defun agent-shell--state-put! (key value)
+  "Set KEY to VALUE in `agent-shell--state'.
+This handles legacy alist state where `map-put!' cannot add new keys."
+  (let ((state (agent-shell--state)))
+    (if (listp state)
+        (if-let ((cell (assq key state)))
+            (setcdr cell value)
+          (nconc state (list (cons key value))))
+      (map-put! state key value))
+    value))
+
 ;;;###autoload
 (defun agent-shell (&optional arg)
   "Start or reuse an existing agent shell.
@@ -1712,12 +1723,8 @@ COMMAND, when present, may be a shell command string or an argv vector."
              (let* ((diff (map-nested-elt state `(:tool-calls ,(map-nested-elt acp-notification '(params update toolCallId)) :diff)))
                     (output (concat
                              "\n\n"
-                             ;; TODO: Consider if there are other
-                             ;; types of content to display.
-                             (mapconcat (lambda (item)
-                                          (map-nested-elt item '(content text)))
-                                        (map-nested-elt acp-notification '(params update content))
-                                        "\n\n")
+                             (agent-shell--tool-call-output-text
+                              (map-nested-elt acp-notification '(params update)))
                              "\n\n"))
                     (diff-text (agent-shell--format-diff-as-text diff))
                     (body-text (if diff-text
@@ -2355,6 +2362,16 @@ DIFF should be in the form returned by `agent-shell--make-diff-info':
               (map-merge 'alist old-tool-call tool-call-overrides)
             tool-call-overrides))
     (map-put! state :tool-calls updated-tools)))
+
+(defun agent-shell--tool-call-output-text (acp-update)
+  "Return displayable output text from ACP tool call ACP-UPDATE."
+  (or (map-nested-elt acp-update '(rawOutput formatted_output))
+      (when-let ((content (map-elt acp-update 'content)))
+        (mapconcat (lambda (item)
+                     (map-nested-elt item '(content text)))
+                   content
+                   "\n\n"))
+      ""))
 
 (cl-defun agent-shell--make-error-dialog-text (&key code message raw-message)
   "Create formatted error dialog text with CODE, MESSAGE, and RAW-MESSAGE."
@@ -3816,24 +3833,25 @@ Cancels any existing idle timer first.  After
 the original EVENT as :idle-event."
   (agent-shell--cancel-idle-timer)
   (when-let ((buffer (map-elt (agent-shell--state) :buffer)))
-    (map-put! (agent-shell--state) :idle-timer
-              (run-at-time (agent-shell-idle-timeout :event event) nil
-                           (lambda ()
-                             (when (buffer-live-p buffer)
-                               (with-current-buffer buffer
-                                 (map-put! (agent-shell--state) :idle-timer nil)
-                                 (agent-shell--emit-event
-                                  :event 'idle
-                                  :data (append (list (cons :idle-event event)
-                                                      (cons :buffer buffer))
-                                                data)))))))))
+    (agent-shell--state-put!
+     :idle-timer
+     (run-at-time (agent-shell-idle-timeout :event event) nil
+                  (lambda ()
+                    (when (buffer-live-p buffer)
+                      (with-current-buffer buffer
+                        (agent-shell--state-put! :idle-timer nil)
+                        (agent-shell--emit-event
+                         :event 'idle
+                         :data (append (list (cons :idle-event event)
+                                             (cons :buffer buffer))
+                                       data)))))))))
 
 (defun agent-shell--cancel-idle-timer ()
   "Cancel any pending idle timer."
   (when-let ((timer (map-elt (agent-shell--state) :idle-timer))
              ((timerp timer)))
     (cancel-timer timer))
-  (map-put! (agent-shell--state) :idle-timer nil))
+  (agent-shell--state-put! :idle-timer nil))
 
 ;;; Initialization
 
