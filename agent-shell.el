@@ -2296,8 +2296,20 @@ COMMAND, when present, may be a shell command string or an argv vector."
         (t (error "Unexpected tool-call command type: %S" (type-of command)))))
 
 (defun agent-shell--active-requests-p (state)
-  "Return non-nil if STATE has in-flight requests awaiting responses."
-  (map-elt state :active-requests))
+  "Return non-nil if STATE has an in-flight request running a prompt turn.
+
+Only turn-running requests count. Non-turn requests
+like `session/set_model' must not mark the shell as in-turn:
+notifications arriving while they are in flight (e.g. an agent
+greeting) render above the live prompt, not after it."
+  (seq-find (lambda (request)
+              (member (map-elt request :method)
+                      (append '("session/prompt"
+                                "session/load"
+                                "session/resume"
+                                "session/fork")
+                              (agent-shell-experimental--methods))))
+            (map-elt state :active-requests)))
 
 (defun agent-shell--make-out-of-session-turn-notification-body (state acp-notification)
   "Build a fragment body for ACP-NOTIFICATION arriving out of turn using STATE."
