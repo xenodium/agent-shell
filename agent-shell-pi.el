@@ -67,6 +67,26 @@ Example usage to set custom environment variables:
   :type '(repeat string)
   :group 'agent-shell)
 
+(defcustom agent-shell-pi-default-model-id
+  nil
+  "Default Pi model ID.
+
+Must be one of the model ID's displayed under \"Available models\"
+when starting a new shell.
+
+Can be set to either a string or a function that returns a string."
+  :type '(choice (const nil) string function)
+  :group 'agent-shell)
+
+(defcustom agent-shell-pi-default-session-mode-id
+  nil
+  "Default Pi session mode ID.
+
+Must be one of the mode ID's displayed under \"Available modes\"
+when starting a new shell."
+  :type '(choice (const nil) string)
+  :group 'agent-shell)
+
 (defun agent-shell-pi-make-agent-config ()
   "Create a Pi coding agent configuration.
 
@@ -81,6 +101,10 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :welcome-function #'agent-shell-pi--welcome-message
    :client-maker (lambda (buffer)
                    (agent-shell-pi-make-client :buffer buffer))
+   :default-model-id (lambda () (if (functionp agent-shell-pi-default-model-id)
+                                    (funcall agent-shell-pi-default-model-id)
+                                  agent-shell-pi-default-model-id))
+   :default-session-mode-id (lambda () agent-shell-pi-default-session-mode-id)
    :install-instructions "See https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent for Pi installation.
 Requires pi-acp adapter for ACP integration."))
 

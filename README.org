@@ -966,6 +966,8 @@ always go to Evil modes if you need to with ~C-z~).
 | agent-shell-path-resolver-function            | Function for resolving remote paths on the local file-system, and vice versa.   |
 | agent-shell-permission-icon                   | Icon displayed when shell commands require permission to execute.               |
 | agent-shell-pi-acp-command                    | Command and parameters for the Pi ACP client.                                   |
+| agent-shell-pi-default-model-id               | Default Pi model ID.                                                            |
+| agent-shell-pi-default-session-mode-id        | Default Pi session mode ID.                                                     |
 | agent-shell-pi-environment                    | Environment variables for the Pi client.                                        |
 | agent-shell-prefer-viewport-interaction       | Non-nil makes ‘agent-shell’ prefer viewport interaction over shell interaction. |
 | agent-shell-preferred-agent-config            | Default agent to use for all new shells.                                        |
