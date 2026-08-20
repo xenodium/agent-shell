@@ -425,6 +425,10 @@ body un-fontified."
         ;; After the markup passes, so a URL already consumed as a
         ;; `[title](url)' destination or an image's is not seen again.
         (agent-shell-markdown--linkify-urls :avoid-ranges avoid-ranges)
+        ;; Fenced blocks alone, not AVOID-RANGES: a citation is nearly
+        ;; always inside an inline `code' span, which those would skip.
+        (agent-shell-markdown--linkify-file-references
+         :avoid-ranges source-ranges)
         (agent-shell-markdown--style-dividers :avoid-ranges avoid-ranges)
         (agent-shell-markdown--style-blockquotes :avoid-ranges avoid-ranges)
         (agent-shell-markdown--style-lists :avoid-ranges avoid-ranges)
@@ -1064,6 +1068,69 @@ there opens it in the browser."
     (agent-shell-markdown--apply-link-properties
      :start start :end end
      :url (buffer-substring-no-properties start end))))
+
+(defconst agent-shell-markdown--file-reference-regexp
+  (rx (one-or-more (any alnum "_./+~-"))
+      ":" (one-or-more digit)
+      (optional "-" (optional "L") (one-or-more digit)))
+  "Regexp matching a file reference as an agent cites one in prose.
+
+A path followed by a line, optionally a line range: \"foo.el:12\" or
+\"foo.el:12-20\".  A cited column is left out of the match, so
+\"foo.el:12:5\" links its line and leaves \":5\" as text.  Deliberately loose
+about what a path looks like -- what makes a match a reference is that
+it resolves to a file that exists, which
+`agent-shell-markdown--linkify-file-reference' checks.")
+
+(cl-defun agent-shell-markdown--linkify-file-references (&key avoid-ranges)
+  "Face the file references in prose as links, openable from the buffer.
+
+Agents cite their sources as `docs/audit.md:500' rather than as
+markdown links, so the citation renders as plain text and there is no
+way to reach the file it names.  Each one gains what any rendered link
+carries (see `agent-shell-markdown--apply-link-properties'), including
+a target `agent-shell-markdown--open-local-link' resolves, so RET opens
+the file on that line and item navigation stops there.
+
+References inside any of AVOID-RANGES are left alone, which callers
+pass as the fenced blocks alone: a path inside one is sample content or
+command output rather than a citation.  Inline `code' spans are
+deliberately not avoided -- backticks are how agents write these
+references, so skipping them would skip nearly every reference there
+is.
+
+For example, the buffer \"see `foo.el:12` now\" keeps its text, with
+\"foo.el:12\" faced and openable."
+  (let ((case-fold-search nil))
+    (goto-char (point-min))
+    (while (re-search-forward agent-shell-markdown--file-reference-regexp nil t)
+      (let ((start (match-beginning 0))
+            (end (match-end 0)))
+        (if-let* ((avoid (agent-shell-markdown-in-avoid-range-p
+                          start end avoid-ranges)))
+            (goto-char (cdr avoid))
+          (agent-shell-markdown--linkify-file-reference start end))))))
+
+(defun agent-shell-markdown--linkify-file-reference (start end)
+  "Give the reference on [START, END) the properties a rendered link carries.
+
+A no-op when the text already carries a link\='s target, which is where
+an earlier pass rendered a `[title](foo.el:12)' destination, or when
+the path names no file that exists.
+
+The body of an inline `code' span is tagged
+`agent-shell-markdown-frozen', and a reference is usually inside one.
+That tag keeps later passes from re-parsing text whose markup has
+already been resolved; adding properties re-parses nothing, so it
+doesn\='t apply here.
+
+For example, over the reference in \"see foo.el:12 now\", RET opens
+`foo.el' on line 12."
+  (let ((reference (buffer-substring-no-properties start end)))
+    (when (and (not (get-text-property start 'agent-shell-markdown-url))
+               (agent-shell-markdown--parse-local-link reference))
+      (agent-shell-markdown--apply-link-properties
+       :start start :end end :url reference))))
 
 (defun agent-shell-markdown--image-attributes-pending-p (pos)
   "Return non-nil when an image ending at POS may still gain `{...}' attributes.

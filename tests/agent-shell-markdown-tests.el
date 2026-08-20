@@ -4278,3 +4278,67 @@ for a fully-selected buffer."
 (provide 'agent-shell-markdown-tests)
 
 ;;; agent-shell-markdown-tests.el ends here
+
+(ert-deftest agent-shell-markdown-linkify-file-reference-in-inline-code-test ()
+  "Test a cited `FILE:LINE' is linked, inside backticks or in prose.
+
+Agents nearly always wrap a citation in backticks, and an inline `code'
+body is tagged `agent-shell-markdown-frozen', so a pass honouring that
+tag would leave almost every reference plain."
+  (let* ((directory (make-temp-file "agent-shell-refs" t))
+         (default-directory directory)
+         (file (expand-file-name "foo.el" directory)))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "one\ntwo\nthree\n"))
+          (with-temp-buffer
+            (insert "see `foo.el:2` and foo.el:3 here\n")
+            (agent-shell-markdown-replace-markup :force t :complete t)
+            (goto-char (point-min))
+            (search-forward "foo.el:2")
+            (should (equal "foo.el:2"
+                           (get-text-property (match-beginning 0)
+                                              'agent-shell-markdown-url)))
+            (search-forward "foo.el:3")
+            (should (equal "foo.el:3"
+                           (get-text-property (match-beginning 0)
+                                              'agent-shell-markdown-url)))))
+      (delete-directory directory t))))
+
+(ert-deftest agent-shell-markdown-linkify-file-reference-needs-a-file-test ()
+  "Test prose that merely reads like a citation stays prose.
+
+The path is what decides: matching the shape is not enough, since
+ordinary text and version numbers land on it too."
+  (let* ((directory (make-temp-file "agent-shell-refs" t))
+         (default-directory directory))
+    (unwind-protect
+        (with-temp-buffer
+          (insert "absent.el:2 and `nope/missing.txt:10-20` stay text\n")
+          (agent-shell-markdown-replace-markup :force t :complete t)
+          (should-not (text-property-not-all (point-min) (point-max)
+                                             'agent-shell-markdown-url nil)))
+      (delete-directory directory t))))
+
+(ert-deftest agent-shell-markdown-linkify-file-reference-skips-fenced-blocks-test ()
+  "Test a path inside a fenced block is left alone.
+
+There it is sample content or command output rather than a citation,
+while the same path in prose alongside it is linked."
+  (let* ((directory (make-temp-file "agent-shell-refs" t))
+         (default-directory directory)
+         (file (expand-file-name "foo.el" directory)))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "one\ntwo\nthree\n"))
+          (with-temp-buffer
+            (insert "cited foo.el:2 here\n\n```console\nfoo.el:3: matched\n```\n")
+            (agent-shell-markdown-replace-markup :force t :complete t)
+            (goto-char (point-min))
+            (search-forward "foo.el:2")
+            (should (get-text-property (match-beginning 0)
+                                       'agent-shell-markdown-url))
+            (search-forward "foo.el:3")
+            (should-not (get-text-property (match-beginning 0)
+                                           'agent-shell-markdown-url))))
+      (delete-directory directory t))))
