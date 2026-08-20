@@ -8423,7 +8423,18 @@ Buffer filename is OBVIOUS if its an image."
       (list (buffer-file-name))
     (or
      (agent-shell--dired-paths-in-region)
-     (dired-get-marked-files))))
+     (when (and obvious (equal major-mode 'dired-mode))
+       (agent-shell--dired-marked-files))
+     (unless obvious
+       (dired-get-marked-files)))))
+
+(defun agent-shell--dired-marked-files ()
+  "Return Dired marked files, or nil when no files are explicitly marked."
+  (when (equal major-mode 'dired-mode)
+    (let ((files (dired-get-marked-files nil nil nil t)))
+      (cond
+       ((eq (car-safe files) t) (cdr files))
+       ((cdr files) files)))))
 
 (defun agent-shell--dired-paths-in-region ()
   "If `dired' buffer, return region files.  nil otherwise."
@@ -9522,13 +9533,14 @@ Tries flymake first, then flycheck."
   "Get the current line as insertable text, ready for sending to agent.
 
 Uses AGENT-CWD to shorten file paths where necessary."
-  (save-excursion
-    (let ((start (line-beginning-position))
-          (end (line-end-position)))
-      (goto-char start)
-      (set-mark end)
-      (activate-mark)
-      (agent-shell--get-region-context :deactivate t :no-error t :agent-cwd agent-cwd))))
+  (unless (equal major-mode 'dired-mode)
+    (save-excursion
+      (let ((start (line-beginning-position))
+            (end (line-end-position)))
+        (goto-char start)
+        (set-mark end)
+        (activate-mark)
+        (agent-shell--get-region-context :deactivate t :no-error t :agent-cwd agent-cwd)))))
 
 (cl-defun agent-shell--context (&key shell-buffer)
   "Return context (if available).  Nil otherwise.
