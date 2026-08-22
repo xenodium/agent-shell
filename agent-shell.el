@@ -64,6 +64,7 @@
 (require 'agent-shell-cursor)
 (require 'agent-shell-devcontainer)
 (require 'agent-shell-diff)
+(require 'agent-shell-elicitation)
 (require 'agent-shell-experimental)
 (require 'agent-shell-droid)
 (require 'agent-shell-github)
@@ -1192,6 +1193,7 @@ OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
         (cons :request-count 0)
         (cons :last-activity-time nil)
         (cons :tool-calls nil)
+        (cons :elicitations nil)
         (cons :available-commands nil)
         (cons :available-modes nil)
         (cons :supports-session-list nil)
@@ -2135,7 +2137,8 @@ Returns one of:
   (with-current-buffer (or shell-buffer (current-buffer))
     (cond
      ((and (shell-maker-busy)
-           (agent-shell--permission-pending-p)) 'blocked)
+           (or (agent-shell--permission-pending-p)
+               (agent-shell-elicitation--pending-p))) 'blocked)
      (t
       (if (shell-maker-busy)
           'busy
@@ -2172,6 +2175,9 @@ See also `agent-shell-confirm-interrupt'."
                  :state (agent-shell--state)
                  :tool-call-id tool-call-id)))
             (map-elt (agent-shell--state) :tool-calls))
+           ;; Then cancel any form still waiting on an answer, or the
+           ;; agent keeps waiting for one that is never coming.
+           (agent-shell-elicitation--cancel-pending :state (agent-shell--state))
            ;; Then send the cancel notification
            (acp-send-notification
             :client (map-elt (agent-shell--state) :client)
@@ -3329,9 +3335,14 @@ Clears STATE's `:expanded-activity-group'."
                     ;; like MCP calls.
                     (tool-call-kind (map-nested-elt state `(:tool-calls ,tool-call-id :kind)))
                     (saved-input (map-nested-elt state `(:tool-calls ,tool-call-id :raw-input)))
+                    ;; A questionnaire's input is the questions themselves,
+                    ;; which the tool call's own `content' already spells out
+                    ;; in prose, so dumping it as JSON only repeats it.
                     (input-block (when (and (member tool-call-kind '(nil "other"))
                                             saved-input
-                                            (not saved-command))
+                                            (not saved-command)
+                                            (not (agent-shell-elicitation--questionnaire-p
+                                                  saved-input)))
                                    (agent-shell--format-tool-call-input saved-input))))
                (agent-shell--update-fragment
                 :state state
@@ -3342,6 +3353,11 @@ Clears STATE's `:expanded-activity-group'."
                 :group-label agent-shell--activity-group-label
                 :group-expanded (agent-shell--activity-group-initial-expanded-p)
                 :body (cond
+                       ;; A form is showing these questions interactively
+                       ;; just below, so repeating them here would ask twice.
+                       ((agent-shell-elicitation--pending-for-tool-call-p
+                         :state state :tool-call-id tool-call-id)
+                        "")
                        (command-block
                         (concat command-block "\n\n" (string-trim body-text)))
                        (input-block
@@ -3512,6 +3528,10 @@ Clears STATE's `:expanded-activity-group'."
           :acp-request acp-request))
         ((equal (map-elt acp-request 'method) "session/push")
          (agent-shell-experimental--on-session-push-request
+          :state state
+          :acp-request acp-request))
+        ((equal (map-elt acp-request 'method) "elicitation/create")
+         (agent-shell-elicitation--on-create-request
           :state state
           :acp-request acp-request))
         (t
@@ -4390,7 +4410,11 @@ STATUS is one of: \"pending\", \"in_progress\", \"completed\", \"failed\".
 See URL `https://agentclientprotocol.com/protocol/schema#toolcallstatus'.
 
 KIND is the tool call kind string (e.g. \"read\", \"edit\", \"execute\") or nil.
-See URL `https://agentclientprotocol.com/protocol/tool-calls'."
+See URL `https://agentclientprotocol.com/protocol/tool-calls'.
+
+KIND is not limited to the kinds ACP defines.  A tool call carrying a
+questionnaire is passed as \"question\" whatever kind the agent gave it,
+so handle an unrecognised KIND rather than assuming the enum."
   :type 'function
   :group 'agent-shell)
 
@@ -4469,7 +4493,13 @@ Returns propertized labels in :status and :title propertized."
                          (propertize description 'font-lock-face 'default)))))
       `((:status . ,(agent-shell--make-status-kind-label
                      :status (map-elt tool-call :status)
-                     :kind (map-elt tool-call :kind)))
+                     ;; A call carrying a questionnaire is a question,
+                     ;; whatever kind the agent gave it: those bridged from
+                     ;; an ask-the-user tool arrive as the catch-all "other".
+                     :kind (if (agent-shell-elicitation--questionnaire-p
+                                (map-elt tool-call :raw-input))
+                               "question"
+                             (map-elt tool-call :kind))))
         (:title . ,(if (and label stats)
                        (concat label " " stats)
                      (or label stats)))))))
@@ -5275,6 +5305,8 @@ insert the character instead."
                         (agent-shell-ui-forward-block)))
            (button-pos (save-mark-and-excursion
                          (agent-shell-next-permission-button)))
+           (field-pos (save-mark-and-excursion
+                        (agent-shell-elicitation-next-field)))
            (image-pos (save-mark-and-excursion
                         (agent-shell-markdown--next-visible-image)))
            (link-pos (save-mark-and-excursion
@@ -5292,6 +5324,7 @@ insert the character instead."
                                            (delq nil (list prompt-pos
                                                            block-pos
                                                            button-pos
+                                                           field-pos
                                                            image-pos
                                                            link-pos
                                                            source-block-pos
@@ -5342,6 +5375,8 @@ insert the character instead."
                         (agent-shell-ui-backward-block)))
            (button-pos (save-mark-and-excursion
                          (agent-shell-previous-permission-button)))
+           (field-pos (save-mark-and-excursion
+                        (agent-shell-elicitation-previous-field)))
            (image-pos (save-mark-and-excursion
                         (agent-shell-markdown--previous-visible-image)))
            (link-pos (save-mark-and-excursion
@@ -5361,6 +5396,7 @@ insert the character instead."
                                            (delq nil (list prompt-pos
                                                            block-pos
                                                            button-pos
+                                                           field-pos
                                                            image-pos
                                                            link-pos
                                                            source-block-pos
@@ -6543,6 +6579,38 @@ through to `acp-send-request'."
                    (funcall on-failure acp-error raw-message)))
    :sync sync))
 
+(defun agent-shell--make-initialize-request ()
+  "Instantiate the \"initialize\" request this client sends on startup.
+
+Built here rather than taken wholesale from `acp-make-initialize-request\='
+because that helper hardcodes `clientCapabilities\=' to the `fs\=' pair and
+has no way to advertise elicitation support.
+
+`elicitation\=' names the modes we can render.  An empty object there
+would mean zero modes, so the `form\=' key must be present for the
+capability to say anything.  `url\=' is deliberately absent: an agent
+must not send a mode the client did not advertise, and directing the
+user to a URL is a separate feature we do not implement.
+
+For example:
+
+  (agent-shell--make-initialize-request)
+  => ((:method . \"initialize\")
+      (:params . ((clientInfo . ((name . \"agent-shell\") ...))
+                  (protocolVersion . 1)
+                  (clientCapabilities
+                   . ((fs . ((readTextFile . t) (writeTextFile . t)))
+                      (elicitation . ((form . nil))))))))"
+  `((:method . "initialize")
+    (:params . ((clientInfo . ((name . "agent-shell")
+                               (title . "Emacs Agent Shell")
+                               (version . ,agent-shell--version)))
+                (protocolVersion . 1)
+                (clientCapabilities
+                 . ((fs . ((readTextFile . ,(if agent-shell-text-file-capabilities t :false))
+                           (writeTextFile . ,(if agent-shell-text-file-capabilities t :false))))
+                    (elicitation . ((form . nil)))))))))
+
 (cl-defun agent-shell--initiate-handshake (&key shell-buffer on-initiated)
   "Initiate ACP handshake with SHELL-BUFFER.
 
@@ -6558,13 +6626,7 @@ Must provide ON-INITIATED (lambda ())."
   (agent-shell--send-request
    :state agent-shell--state
    :client (map-elt agent-shell--state :client)
-   :request (acp-make-initialize-request
-             :protocol-version 1
-             :client-info `((name . "agent-shell")
-                            (title . "Emacs Agent Shell")
-                            (version . ,agent-shell--version))
-             :read-text-file-capability agent-shell-text-file-capabilities
-             :write-text-file-capability agent-shell-text-file-capabilities)
+   :request (agent-shell--make-initialize-request)
    :on-success (lambda (acp-response)
                  (with-current-buffer shell-buffer
                    (let ((acp-session-capabilities (or (map-elt acp-response 'sessionCapabilities)
@@ -8454,6 +8516,7 @@ reads the buffer's prompt capabilities."
                    ;; a session prompt request is finished.
                    ;; Avoid accumulating them unnecessarily.
                    (map-put! (agent-shell--state) :tool-calls nil)
+                   (agent-shell-elicitation--clear :state (agent-shell--state))
                    ;; The turn is over, so nothing is active any more: fold
                    ;; the last activity group `latest' left expanded.
                    (agent-shell--collapse-expanded-activity-group (agent-shell--state))
