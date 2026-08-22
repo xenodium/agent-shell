@@ -170,8 +170,32 @@ For example:
              (list (cons :value (map-elt option 'const))
                    (cons :title (or (map-elt option 'title)
                                     (map-elt option 'const)))
-                   (cons :description (map-elt option 'description))))
+                   (cons :description (map-elt option 'description))
+                   (cons :preview (agent-shell-elicitation--option-preview option))))
            (append options nil)))
+
+(defconst agent-shell-elicitation--option-meta-key '_claude/askUserQuestionOption
+  "`_meta\=' key an option's preview travels under.
+
+Unlike the free-text companion marker, this one is namespaced to the
+agent that sends it, so only Claude sends a preview today.  An option
+without it renders without a preview to open.")
+
+(defun agent-shell-elicitation--option-preview (option)
+  "Return OPTION's preview text, or nil when there is none.
+
+A preview is the longer form of an answer -- a mockup, a snippet, an
+outline of what picking it would do -- that an agent attaches for the
+client to show on demand.
+
+For example:
+
+  (agent-shell-elicitation--option-preview
+   \='((const . \"a\") (_meta (_claude/askUserQuestionOption (preview . \"…\")))))
+  => \"…\""
+  (map-nested-elt option (list '_meta
+                               agent-shell-elicitation--option-meta-key
+                               'preview)))
 
 (defun agent-shell-elicitation--field-options (schema)
   "Return SCHEMA's selectable options, or nil when it has none.
@@ -538,6 +562,15 @@ answer, so there is nothing left to look up."
                           (equal (map-elt request :method) "elicitation/create"))
                         (map-elt state :active-requests))))
 
+(defun agent-shell-elicitation--preview-open-p (elicitation key value)
+  "Return non-nil when the preview for KEY's VALUE option is open in ELICITATION.
+
+Kept in the elicitation rather than in the rendered text for the same
+reason field values are: the form is drawn into the shell buffer and the
+viewport buffer both, so text-local state would exist in two copies that
+could disagree."
+  (member (cons key value) (map-elt elicitation :previews)))
+
 (defun agent-shell-elicitation--field (elicitation key)
   "Return ELICITATION's field named KEY, or nil when it has none."
   (seq-find (lambda (field) (equal (map-elt field :key) key))
@@ -596,25 +629,58 @@ is read-only.
 Rebind with `define-key' rather than `setq': already rendered forms hold
 on to this keymap object.")
 
+(defvar agent-shell-elicitation-preview-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map agent-shell-elicitation-map)
+    (define-key map (kbd "?") #'agent-shell-elicitation-toggle-preview)
+    map)
+  "Keymap active on a control whose answer carries a preview.
+
+Everything `agent-shell-elicitation-map' binds, plus \\`?' to open the
+preview.  Applied only where there is one to open, so on every other
+control \\`?' is left to whatever the buffer already binds it to -- the
+viewport, for one, opens its help menu with it.
+
+Only \\`?' lives here; RET and the rest are looked up in the parent, so
+rebinding them there still reaches these controls.  That is what
+`agent-shell--make-button' cannot do (see
+`agent-shell-elicitation--box'): it binds RET in the child itself, where
+it shadows the parent.
+
+Rebind with `define-key' rather than `setq': already rendered forms hold
+on to this keymap object.")
+
 (defconst agent-shell-elicitation--indent "    "
   "Indentation shared by every line of a rendered form.")
 
 (defconst agent-shell-elicitation--empty-value "(empty)"
   "Placeholder shown in place of a text field with no value yet.")
 
-(cl-defun agent-shell-elicitation--make-control (&key text id key value action hint)
+(cl-defun agent-shell-elicitation--make-control (&key text id key value action hint help
+                                                     (navigable t)
+                                                     (keymap agent-shell-elicitation-map))
   "Return TEXT propertized as an elicitation control.
 
 ID identifies the elicitation, KEY the field within it and VALUE the
 option within that field, so `agent-shell-elicitation-act' can look the
 authoritative entry up rather than close over it.  ACTION names what
 invoking the control does: `select', `toggle', `read', `custom',
-`submit' or `decline'.  HINT is a verb echoed when the cursor enters
+`preview', `submit' or `decline'.  HINT is a verb echoed when the cursor enters
 TEXT.
+
+HELP is offered as `help-echo', which `display-local-help' reads out, so
+a preview can be read with \\[display-local-help] without expanding it.
 
 The first character carries `agent-shell-elicitation-navigable', which
 is what TAB stops on, putting point at the start of the control where a
-screen reader reads the whole line from."
+screen reader reads the whole line from.  Pass NAVIGABLE nil for chrome
+that acts but should not be a stop of its own, so a question with a
+preview to open still takes one TAB rather than two.
+
+KEYMAP is applied as the `keymap' property and defaults to
+`agent-shell-elicitation-map'.  Pass
+`agent-shell-elicitation-preview-map' for a control that has a preview,
+which is the only place \\`?' should be taken over."
   (let ((control (apply #'agent-shell--add-text-properties
                         text
                         (append
@@ -623,17 +689,20 @@ screen reader reads the whole line from."
                                      (cons :key key)
                                      (cons :value value)
                                      (cons :action action))
-                               'keymap agent-shell-elicitation-map
+                               'keymap keymap
                                'pointer 'hand
                                'rear-nonsticky t)
+                         (when help
+                           (list 'help-echo help))
                          (when hint
                            (list 'cursor-sensor-functions
                                  (list (lambda (_window _old-pos sensor-action)
                                          (when (eq sensor-action 'entered)
                                            (agent-shell-ui--echo-action-hint
                                             hint #'agent-shell-elicitation-act
-                                            agent-shell-elicitation-map))))))))))
-    (put-text-property 0 1 'agent-shell-elicitation-navigable t control)
+                                            keymap))))))))))
+    (when navigable
+      (put-text-property 0 1 'agent-shell-elicitation-navigable t control))
     control))
 
 (defun agent-shell-elicitation--box (text)
@@ -697,12 +766,19 @@ Checkboxes for a multi-select, radio buttons otherwise."
         (t "( )")))
 
 (cl-defun agent-shell-elicitation--make-option-line (&key id field value title description
-                                                         action multi selected)
+                                                         action multi selected preview
+                                                         preview-open)
   "Return one marked option line of FIELD in elicitation ID.
 
 TITLE and DESCRIPTION label it, VALUE identifies which option it is (nil
 for the free-text companion, which has no option value of its own),
-ACTION is what invoking it does, and MULTI and SELECTED pick the marker."
+ACTION is what invoking it does, and MULTI and SELECTED pick the marker.
+
+PREVIEW is the longer form of the answer, when the agent sent one.  It
+hangs off this option rather than becoming a control of its own: the
+disclosure glyph opens it, so the option is still a single TAB stop, and
+`display-local-help' reads the preview out without opening it.
+PREVIEW-OPEN says whether it is currently open."
   (concat
    agent-shell-elicitation--indent
    (agent-shell-elicitation--make-control
@@ -711,14 +787,38 @@ ACTION is what invoking it does, and MULTI and SELECTED pick the marker."
     :key (map-elt field :key)
     :value value
     :action action
+    :help preview
+    :keymap (if preview
+                agent-shell-elicitation-preview-map
+              agent-shell-elicitation-map)
     :hint (pcase action
             ('custom "type your own answer")
             ('toggle "toggle this option")
             (_ "pick this option")))
+   (when preview
+     ;; The same glyph every fold in the buffer uses, and no navigable
+     ;; property, so TAB passes over it to the next option.
+     (concat " " (agent-shell-elicitation--make-control
+                  :text (if preview-open "▼" "▶")
+                  :id id :key (map-elt field :key) :value value
+                  :action 'preview :navigable nil
+                  :help preview
+                  :keymap agent-shell-elicitation-preview-map
+                  :hint (if preview-open "hide this preview" "show this preview"))))
    (when description
-     (format "\n%s    %s" agent-shell-elicitation--indent description))))
+     (format "\n%s    %s" agent-shell-elicitation--indent description))
+   (when (and preview preview-open)
+     (concat "\n" (agent-shell-elicitation--indent-block preview)))))
 
-(cl-defun agent-shell-elicitation--make-select-lines (&key id field value multi custom custom-value)
+(defun agent-shell-elicitation--indent-block (text)
+  "Return TEXT with every line indented to sit under an option."
+  (mapconcat (lambda (line)
+               (concat agent-shell-elicitation--indent "    " line))
+             (split-string text "\n")
+             "\n"))
+
+(cl-defun agent-shell-elicitation--make-select-lines (&key id field value multi custom custom-value
+                                                          elicitation)
   "Return FIELD's option lines for elicitation ID given its current VALUE.
 
 With MULTI, options are checkboxes toggled independently and VALUE is a
@@ -739,7 +839,10 @@ for that option the answer is the option."
                :multi multi
                :selected (if multi
                              (and (member (map-elt option :value) value) t)
-                           (equal (map-elt option :value) value))))
+                           (equal (map-elt option :value) value))
+               :preview (map-elt option :preview)
+               :preview-open (agent-shell-elicitation--preview-open-p
+                              elicitation (map-elt field :key) (map-elt option :value))))
             (map-elt field :options))
    (when custom
      (list (agent-shell-elicitation--make-option-line
@@ -754,7 +857,8 @@ for that option the answer is the option."
             :multi multi
             :selected (and custom-value t))))))
 
-(cl-defun agent-shell-elicitation--make-field-text (&key id field value custom custom-value)
+(cl-defun agent-shell-elicitation--make-field-text (&key id field value custom custom-value
+                                                        elicitation)
   "Return FIELD's rendered lines for elicitation ID given its current VALUE.
 
 Selects render as a heading, an optional description, then one marked
@@ -784,7 +888,8 @@ For example, a single-select renders as:
                       (agent-shell-elicitation--make-select-lines
                        :id id :field field :value value
                        :multi (eq (map-elt field :type) 'multi-select)
-                       :custom custom :custom-value custom-value)))
+                       :custom custom :custom-value custom-value
+                       :elicitation elicitation)))
              ('boolean
               (list (concat agent-shell-elicitation--indent
                             (agent-shell-elicitation--make-control
@@ -916,7 +1021,8 @@ so walking both would render one question twice."
               :custom (agent-shell-elicitation--field
                        elicitation (map-elt field :custom-key))
               :custom-value (map-nested-elt
-                             elicitation (list :values (map-elt field :custom-key)))))
+                             elicitation (list :values (map-elt field :custom-key)))
+              :elicitation elicitation))
            (agent-shell-elicitation--answerable (map-elt elicitation :fields))))
 
 (defun agent-shell-elicitation--mark-form-start (text)
@@ -1293,6 +1399,63 @@ For example, given a select `question_0\=' whose free-text companion is
                       (list (map-elt field :custom-key)
                             (map-elt field :folded-into)))))))
 
+(defun agent-shell-elicitation--option-preview-at (elicitation key value)
+  "Return the preview KEY's VALUE option carries in ELICITATION, or nil.
+
+Reads the parsed option rather than the raw schema, so it answers the
+same question the renderer asked when it decided whether to draw a
+disclosure glyph."
+  (map-elt (seq-find (lambda (option)
+                       (equal (map-elt option :value) value))
+                     (map-elt (agent-shell-elicitation--field elicitation key) :options))
+           :preview))
+
+(cl-defun agent-shell-elicitation--toggle-preview (&key state id key value)
+  "Open or close the preview of KEY's VALUE option of elicitation ID in STATE."
+  (when-let* ((elicitation (agent-shell-elicitation--get state id))
+              (preview (cons key value)))
+    (agent-shell-elicitation--put
+     state id
+     (agent-shell-elicitation--assoc-put
+      elicitation :previews
+      (if (member preview (map-elt elicitation :previews))
+          (remove preview (map-elt elicitation :previews))
+        (cons preview (map-elt elicitation :previews)))))
+    (agent-shell-elicitation--render :state state :id id)))
+
+(defun agent-shell-elicitation-toggle-preview ()
+  "Open or close the preview of the option at point.
+
+Reached through `agent-shell-elicitation-preview-map', which covers the
+option itself as well as its disclosure glyph, so an answer offering a
+preview can be opened without first moving onto the glyph.
+`end-of-line' lands after the glyph rather than on it, and RET past the
+end of a line keeps its usual meaning.
+
+That map is applied only where there is a preview, so a control without
+one never binds the key.  Reaching this command anyway -- through
+\\[execute-extended-command], or a binding of your own -- signals a
+`user-error' rather than redrawing an identical form."
+  (declare (modes agent-shell-mode))
+  (interactive)
+  (let ((control (agent-shell-elicitation--control-at-point))
+        (acted-in (current-buffer)))
+    (unless control
+      (user-error "No question control at point"))
+    (with-current-buffer (agent-shell-elicitation--shell-buffer)
+      (let ((state (agent-shell--state)))
+        (unless (agent-shell-elicitation--option-preview-at
+                 (agent-shell-elicitation--get state (map-elt control :id))
+                 (map-elt control :key) (map-elt control :value))
+          (user-error "No preview for this answer"))
+        (agent-shell-elicitation--toggle-preview
+         :state state
+         :id (map-elt control :id)
+         :key (map-elt control :key)
+         :value (map-elt control :value))))
+    (with-current-buffer acted-in
+      (agent-shell-elicitation--goto-control control))))
+
 (defun agent-shell-elicitation-act ()
   "Act on the elicitation control at point.
 
@@ -1341,6 +1504,9 @@ closure so it stays rebindable (see issue #759)."
               :field (agent-shell-elicitation--field elicitation (map-elt control :key))
               :value (map-nested-elt elicitation
                                      (list :values (map-elt control :key)))))))
+          ('preview (agent-shell-elicitation--toggle-preview
+                     :state state :id id :key (map-elt control :key)
+                     :value (map-elt control :value)))
           ('submit (agent-shell-elicitation--submit :state state :id id))
           ('decline
            (agent-shell-elicitation--respond :state state :id id :action 'decline)
