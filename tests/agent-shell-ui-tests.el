@@ -977,6 +977,20 @@ it lying.  Mouse bindings are skipped so the hint stays pressable."
       (agent-shell-ui--echo-action-hint "toggle")
       (should (equal "Press TAB to toggle" echoed)))))
 
+(ert-deftest agent-shell-ui-action-hint-names-the-supplied-keymap-test ()
+  "The hint describes the command and keymap it was handed.
+
+Chrome bound to its own shared map needs the same \"Press KEY to VERB\"
+hint pointing at its own binding, rather than at whichever key folds a
+fragment."
+  (let ((map (make-sparse-keymap))
+        (echoed nil))
+    (define-key map (kbd "C-c C-e") #'ignore)
+    (cl-letf (((symbol-function 'message)
+               (lambda (fmt &rest args) (setq echoed (apply #'format fmt args)))))
+      (agent-shell-ui--echo-action-hint "act on this" #'ignore map)
+      (should (equal "Press C-c C-e to act on this" echoed)))))
+
 (ert-deftest agent-shell-ui-keys-reach-fragment-chrome-only-test ()
   "The fold keys sit on the chrome, leaving the rest of the buffer alone.
 
