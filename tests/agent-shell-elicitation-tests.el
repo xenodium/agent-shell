@@ -635,6 +635,111 @@ so the question is on screen before the form is."
     (should (assq :active-requests state))))
 
 
+;;; Option previews
+
+(defconst agent-shell-elicitation-tests--preview-schema
+  '((type . "object")
+    (properties
+     (q (type . "string") (title . "Approach")
+        (oneOf . [((const . "a") (title . "Refactor first")
+                   (description . "Clean up before adding.")
+                   (_meta (_claude/askUserQuestionOption (preview . "mockup one\nmockup two"))))
+                  ((const . "b") (title . "Add first"))]))))
+  "A question whose first option carries a preview, as Claude sends it.")
+
+(ert-deftest agent-shell-elicitation-parses-an-option-preview-test ()
+  "A preview is read off the option, and its absence is not an error."
+  (let ((options (agent-shell-elicitation--titled-options
+                  (map-nested-elt agent-shell-elicitation-tests--preview-schema
+                                  '(properties q oneOf)))))
+    (should (equal (map-elt (seq-first options) :preview) "mockup one\nmockup two"))
+    (should-not (map-elt (seq-elt options 1) :preview))))
+
+(ert-deftest agent-shell-elicitation-preview-costs-no-extra-tab-stop-test ()
+  "An option with a preview is still one TAB stop, glyph and all.
+
+The disclosure glyph acts but is not navigable, so walking the form
+stops once per option rather than twice for the ones offering a
+preview."
+  (agent-shell-elicitation-tests--with-shell (state sent bodies)
+    (agent-shell--on-request
+     :state state
+     :acp-request (agent-shell-elicitation-tests--request
+                   :id 5 :schema agent-shell-elicitation-tests--preview-schema))
+    (with-temp-buffer
+      (insert (car bodies))
+      (goto-char (point-min))
+      (let (stops)
+        (while (agent-shell-elicitation-next-field)
+          (push (map-elt (get-text-property (point) 'agent-shell-elicitation-control) :action)
+                stops))
+        ;; Two options and the two buttons; no stop for the glyph.
+        (should (equal (nreverse stops) '(select select submit decline)))))))
+
+(ert-deftest agent-shell-elicitation-preview-opens-and-closes-test ()
+  "The preview opens and closes, from the option as well as from its glyph.
+
+`end-of-line' lands after the glyph rather than on it, so requiring the
+glyph would mean stepping back a character first, and RET past the end
+of a line would stop meaning what it means elsewhere.
+
+Which previews are open is kept in the elicitation, not in the rendered
+text, so the shell buffer and the viewport cannot disagree about it."
+  (agent-shell-elicitation-tests--with-shell (state sent bodies)
+    (agent-shell--on-request
+     :state state
+     :acp-request (agent-shell-elicitation-tests--request
+                   :id 5 :schema agent-shell-elicitation-tests--preview-schema))
+    (should (string-match-p "Refactor first \u25b6" (substring-no-properties (car bodies))))
+    (should-not (string-match-p "mockup" (substring-no-properties (car bodies))))
+    (with-temp-buffer
+      (insert (car bodies))
+      (goto-char (point-min))
+      (should (agent-shell-elicitation-next-field))
+      ;; Point is on the option itself, not on the glyph.
+      (should (eq (map-elt (get-text-property (point) 'agent-shell-elicitation-control) :action)
+                  'select))
+      (should (eq agent-shell-elicitation-preview-map
+                  (get-text-property (point) 'keymap)))
+      (should (eq #'agent-shell-elicitation-toggle-preview (key-binding (kbd "?")))))
+    (agent-shell-elicitation--toggle-preview :state state :id 5 :key "q" :value "a")
+    (let ((body (substring-no-properties (car bodies))))
+      (should (string-match-p "Refactor first \u25bc" body))
+      (should (string-match-p "mockup one" body))
+      (should (string-match-p "mockup two" body)))
+    (agent-shell-elicitation--toggle-preview :state state :id 5 :key "q" :value "a")
+    (should (string-match-p "Refactor first \u25b6" (substring-no-properties (car bodies))))
+    (should-not (string-match-p "mockup" (substring-no-properties (car bodies))))))
+
+(ert-deftest agent-shell-elicitation-preview-is-readable-without-opening-test ()
+  "The preview is offered as `help-echo', so \\[display-local-help] reads it out.
+
+That needs no keybinding of our own, and works on the option itself
+rather than only on the glyph.  An option carrying no preview offers no
+help, keeps the plain control keymap so \\`?' stays free for whatever the
+buffer binds it to, and says so when asked to open one anyway."
+  (agent-shell-elicitation-tests--with-shell (state sent bodies)
+    (agent-shell--on-request
+     :state state
+     :acp-request (agent-shell-elicitation-tests--request
+                   :id 5 :schema agent-shell-elicitation-tests--preview-schema))
+    (with-temp-buffer
+      (insert (car bodies))
+      (goto-char (point-min))
+      (should (agent-shell-elicitation-next-field))
+      (should (equal (get-text-property (point) 'help-echo) "mockup one\nmockup two"))
+      ;; The option without a preview offers no help, and does not take
+      ;; over `?' -- the viewport binds it to its help menu.
+      (should (agent-shell-elicitation-next-field))
+      (should-not (get-text-property (point) 'help-echo))
+      (should (eq agent-shell-elicitation-map (get-text-property (point) 'keymap)))
+      (should-not (eq #'agent-shell-elicitation-toggle-preview (key-binding (kbd "?"))))
+      (cl-letf (((symbol-function 'agent-shell-elicitation--shell-buffer)
+                 (lambda () (current-buffer))))
+        (should-error (agent-shell-elicitation-toggle-preview) :type 'user-error)))
+    (should-not (map-elt (agent-shell-elicitation--get state 5) :previews))))
+
+
 ;;; Tool calls behind a questionnaire
 
 (defconst agent-shell-elicitation-tests--questionnaire
