@@ -101,6 +101,17 @@ otherwise nil so the id stays hidden from users."
   (when agent-shell-ui-debug-enabled
     qualified-id))
 
+(defun agent-shell-ui--fragment-help-echo-properties (qualified-id)
+  "Return `help-echo' properties tagging QUALIFIED-ID, or nil to add none.
+
+Applied across a region, a nil `help-echo' does not merely fail to tag
+it: `add-text-properties' sets the property to nil, erasing whatever
+help the region's own content carried.  A body holds arbitrary rendered
+content, which may carry help of its own, so adding no property at all
+is what leaves it in place."
+  (when-let* ((help (agent-shell-ui--fragment-help-echo qualified-id)))
+    (list 'help-echo help)))
+
 (cl-defun agent-shell-ui-make-fragment-model (&key (namespace-id "global") (block-id "1") label-left label-right body group-id group-label (group-expanded t))
   "Create a fragment model alist.
 NAMESPACE-ID, BLOCK-ID, LABEL-LEFT, LABEL-RIGHT, and BODY are the keys.
@@ -440,10 +451,10 @@ match.  Explicit `invisible' assignment overrides any value the
 new chars might have inherited via rear-stickiness from preceding
 trailing-whitespace chars."
   (add-text-properties start end
-                       `(agent-shell-ui-section body
-                                                help-echo ,(agent-shell-ui--fragment-help-echo qualified-id)
-                                                read-only t
-                                                front-sticky (read-only)))
+                       (append (list 'agent-shell-ui-section 'body
+                                     'read-only t
+                                     'front-sticky '(read-only))
+                               (agent-shell-ui--fragment-help-echo-properties qualified-id)))
   (when state
     (put-text-property start end 'agent-shell-ui-state state))
   (put-text-property start end 'invisible (if body-invisible t nil)))
@@ -638,10 +649,10 @@ be handed in."
                    :hint "toggle"))
           (let ((insert-end (point)))
             (add-text-properties insert-start insert-end
-                                 `(agent-shell-ui-section ,section
-                                                          help-echo ,(agent-shell-ui--fragment-help-echo qualified-id)
-                                                          read-only t
-                                                          front-sticky (read-only)))
+                                 (append (list 'agent-shell-ui-section section
+                                               'read-only t
+                                               'front-sticky '(read-only))
+                                         (agent-shell-ui--fragment-help-echo-properties qualified-id)))
             (when state
               (put-text-property insert-start insert-end
                                  'agent-shell-ui-state state))))))))
@@ -1108,10 +1119,10 @@ indents a child's header line under its group header."
                :hint "toggle"))
       (setq label-left-end (point))
       (add-text-properties label-left-start label-left-end
-                           `(agent-shell-ui-section label-left
-                                                    help-echo ,(agent-shell-ui--fragment-help-echo qualified-id)
-                                                    read-only t
-                                                    front-sticky (read-only)))
+                           (append (list 'agent-shell-ui-section 'label-left
+                                         'read-only t
+                                         'front-sticky '(read-only))
+                                   (agent-shell-ui--fragment-help-echo-properties qualified-id)))
       (setq need-space t))
 
     (when label-right
@@ -1123,10 +1134,10 @@ indents a child's header line under its group header."
                :hint "toggle"))
       (setq label-right-end (point))
       (add-text-properties label-right-start label-right-end
-                           `(agent-shell-ui-section label-right
-                                                    help-echo ,(agent-shell-ui--fragment-help-echo qualified-id)
-                                                    read-only t
-                                                    front-sticky (read-only))))
+                           (append (list 'agent-shell-ui-section 'label-right
+                                         'read-only t
+                                         'front-sticky '(read-only))
+                                   (agent-shell-ui--fragment-help-echo-properties qualified-id))))
 
     (when body
       (when (or label-left label-right)
@@ -1143,10 +1154,10 @@ indents a child's header line under its group header."
         (insert (agent-shell-ui--indent-text clean-body body-indent)))
       (setq body-end (point))
       (add-text-properties body-start body-end
-                           `(agent-shell-ui-section body
-                                                    help-echo ,(agent-shell-ui--fragment-help-echo qualified-id)
-                                                    read-only t
-                                                    front-sticky (read-only))))
+                           (append (list 'agent-shell-ui-section 'body
+                                         'read-only t
+                                         'front-sticky '(read-only))
+                                   (agent-shell-ui--fragment-help-echo-properties qualified-id))))
     ;; Indent a group child's header line under its group header.  The
     ;; body already carries its own (deeper) `line-prefix' from above.
     ;; A child with neither label has no header line to indent (the
