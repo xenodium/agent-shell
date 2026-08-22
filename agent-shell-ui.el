@@ -76,20 +76,22 @@ For example, to fold with TAB as well as RET:
 Rebind with `define-key' rather than `setq': already rendered text
 holds on to this keymap object.")
 
-(defun agent-shell-ui--echo-action-hint (verb)
+(defun agent-shell-ui--echo-action-hint (verb &optional command keymap)
   "Echo how to run an action described by VERB.
 
-Searches `agent-shell-ui-fragment-map' for whichever key runs
-`agent-shell-ui-toggle-fragment', skipping mouse bindings so the hint
-names something the user can press.
+Searches KEYMAP for whichever key runs COMMAND, skipping mouse bindings
+so the hint names something the user can press.  COMMAND defaults to
+`agent-shell-ui-toggle-fragment' and KEYMAP to
+`agent-shell-ui-fragment-map', which is the fold chrome; other chrome
+bound to its own shared map passes both.
 
 For example, VERB \"toggle\" echoes \"Press RET to toggle\" with the
 default bindings, or \"Press TAB to toggle\" once that map binds TAB."
   (when-let* ((keys (seq-remove
                      (lambda (key) (mouse-event-p (aref key 0)))
                      (where-is-internal
-                      #'agent-shell-ui-toggle-fragment
-                      (list agent-shell-ui-fragment-map)))))
+                      (or command #'agent-shell-ui-toggle-fragment)
+                      (list (or keymap agent-shell-ui-fragment-map))))))
     (message "Press %s to %s" (key-description (seq-first keys)) verb)))
 
 (defun agent-shell-ui--fragment-help-echo (qualified-id)
