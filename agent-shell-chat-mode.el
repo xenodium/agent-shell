@@ -47,8 +47,11 @@
 
 (declare-function agent-shell-subscribe-to "agent-shell")
 (declare-function agent-shell-unsubscribe "agent-shell")
+(declare-function agent-shell--agent-label "agent-shell")
+(declare-function agent-shell--prompt-face-p "agent-shell")
 
 (defvar agent-shell--state)
+(defvar agent-shell-user-label)
 ;; Soft reference: `agent-shell-prompt-bar-mode' may be unbound when the
 ;; prompt bar is not loaded.  Read it with `bound-and-true-p'.
 (defvar agent-shell-prompt-bar-mode)
@@ -116,27 +119,6 @@ FACE carries the box (see `agent-shell-chat-me-label').
 For example, (agent-shell-chat--label \"Me\" \\='agent-shell-chat-me-label)
 returns \" Me \" in that face."
   (propertize (format " %s " text) 'face face))
-
-(defun agent-shell-chat--agent-name ()
-  "Return the attached agent's display name for the response label.
-
-For example, with a mode-line name of \"Claude\" returns \"Claude\";
-with none available, returns \"Agent\"."
-  (or (map-nested-elt agent-shell--state '(:agent-config :mode-line-name))
-      "Agent"))
-
-(defun agent-shell-chat--prompt-face-p (value)
-  "Return non-nil when a `font-lock-face' VALUE marks a shell prompt.
-A live prompt carries `comint-highlight-prompt'; a restored or echoed
-prompt carries `agent-shell-prompt' (which inherits it).  Either may be
-repeated.
-
-For example, \\='comint-highlight-prompt, \\='agent-shell-prompt, and
-\\='(comint-highlight-prompt comint-highlight-prompt) all return non-nil,
-while \\='default returns nil."
-  (let ((faces (if (listp value) value (list value))))
-    (or (memq 'comint-highlight-prompt faces)
-        (memq 'agent-shell-prompt faces))))
 
 (defun agent-shell-chat--extends-bg-p (face)
   "Return non-nil when FACE paints an `:extend' background past end of line.
@@ -212,7 +194,7 @@ whitespace separates them."
       (while (< pos (point-max))
         (let ((run-end (or (next-single-property-change pos 'font-lock-face)
                            (point-max))))
-          (when (agent-shell-chat--prompt-face-p
+          (when (agent-shell--prompt-face-p
                  (get-text-property pos 'font-lock-face))
             (push (cons pos run-end) runs))
           (setq pos run-end)))
@@ -308,7 +290,7 @@ above, putting the first line of a multi-line input out of reach of
                                       (skip-chars-forward " \t\n")
                                       (point))))
                (me-label (agent-shell-chat--label
-                          "Me" 'agent-shell-chat-me-label))
+                          agent-shell-user-label 'agent-shell-chat-me-label))
                ;; Face the padding and marker `default' so they do not inherit
                ;; the covered text's face: a display string's unfaced chars
                ;; take the face of the text they replace, and after a code
@@ -447,7 +429,7 @@ newline would merge the input line into the response for line motion
   (save-excursion
     (goto-char (point-min))
     (let ((label (agent-shell-chat--label
-                  (agent-shell-chat--agent-name)
+                  (agent-shell--agent-label)
                   'agent-shell-chat-agent-label))
           (kept nil))
       (while (re-search-forward "<shell-maker-end-of-prompt>" nil t)
@@ -468,7 +450,7 @@ newline would merge the input line into the response for line motion
                       ;; (an empty response): it belongs to that prompt's
                       ;; spacing, and swallowing it would overlap the `Me'
                       ;; overlay.  Keep the label anchored at the marker.
-                      (if (agent-shell-chat--prompt-face-p
+                      (if (agent-shell--prompt-face-p
                            (get-text-property (point) 'font-lock-face))
                           mend
                         (point))))
@@ -500,7 +482,7 @@ newline would merge the input line into the response for line motion
                                  (goto-char mend)
                                  (skip-chars-forward " \t\n")
                                  (or (get-text-property (point) 'shell-maker--marker)
-                                     (agent-shell-chat--prompt-face-p
+                                     (agent-shell--prompt-face-p
                                       (get-text-property (point) 'font-lock-face))))))
           ;; A turn with no response is not labeled; its stale overlay, if
           ;; any, is dropped by the `--gc-overlays' sweep below.  Anchor the
@@ -570,7 +552,7 @@ replaced by the label, a blank line, and the marker the input follows:
     ;; Laid out as the shell lays out its own live prompt, without its
     ;; leading pad: nothing sits above this one to separate it from.
     (overlay-put overlay 'before-string
-                 (concat (agent-shell-chat--label "Me" 'agent-shell-chat-me-label)
+                 (concat (agent-shell-chat--label agent-shell-user-label 'agent-shell-chat-me-label)
                          (propertize "\n\n" 'face 'default)
                          (propertize (concat agent-shell-chat--body-indent
                                              agent-shell-chat--prompt)
