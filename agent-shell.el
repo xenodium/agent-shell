@@ -1966,6 +1966,145 @@ associated viewport buffer exists, switch to that instead."
         (message "Copied session ID: %s" session-id))
     (user-error "No active session")))
 
+(defcustom agent-shell-user-label "Me"
+  "Name standing for you in this shell.
+
+Used wherever a turn needs attributing: `agent-shell-chat-mode' boxes it
+above each submitted prompt, and `agent-shell-copy-as-markdown' writes it
+into copied transcripts as `**Me:**'.  Set it empty to leave your turns
+unlabelled in copies.
+
+The agent's side is named by `agent-shell-agent-label'.  Change this to
+suit your language or taste, e.g. \"Ich\" or \"Moi\"."
+  :type 'string
+  :group 'agent-shell)
+
+(defcustom agent-shell-agent-label "%s"
+  "Name standing for the agent in this shell.
+
+Any `%s' is replaced with the agent's own name, taken from its
+configuration's mode-line name -- so the default labels a Claude shell
+\"Claude\" and a Pi shell \"Pi\", and \"%s (agent)\" gives \"Claude (agent)\".
+
+Leave `%s' out to use one fixed name for every agent, e.g. \"Agent\" or
+\"Assistant\".  Substitution is literal, so a `%' elsewhere in the string
+needs no escaping.
+
+Used wherever a turn needs attributing: `agent-shell-chat-mode' boxes it
+above each response, and `agent-shell-copy-as-markdown' writes it into
+copied transcripts as `**Claude:**'.  Set it empty to leave the agent's
+turns unlabelled in copies.  Your side of the conversation is named by
+`agent-shell-user-label'."
+  :type 'string
+  :group 'agent-shell)
+
+(defun agent-shell--agent-label ()
+  "Return the agent's name for labelling its turns.
+
+Applies `agent-shell-agent-label' to the attached agent's display name
+\(its configuration's mode-line name), falling back to \"Agent\" when no
+name is available, e.g. before a shell has attached."
+  (string-replace
+   "%s"
+   (or (map-nested-elt agent-shell--state '(:agent-config :mode-line-name))
+       "Agent")
+   agent-shell-agent-label))
+
+(defun agent-shell--prompt-face-p (value)
+  "Return non-nil when a `font-lock-face' VALUE marks a shell prompt.
+
+A live prompt carries `comint-highlight-prompt'; a restored or echoed
+prompt carries `agent-shell-prompt' (which inherits it).  Either may be
+repeated.
+
+For example, \\='comint-highlight-prompt, \\='agent-shell-prompt, and
+\\='(comint-highlight-prompt comint-highlight-prompt) all return non-nil,
+while \\='default returns nil."
+  (let ((faces (if (listp value) value (list value))))
+    (or (memq 'comint-highlight-prompt faces)
+        (memq 'agent-shell-prompt faces))))
+
+(defun agent-shell--copy-turn-label (name suffix-p)
+  "Return NAME as a copied-transcript turn label, or an empty string.
+
+Renders NAME in bold as `**NAME:**', with the blank line that separates
+it from the turn it introduces.  SUFFIX-P non-nil also prefixes a
+newline, for a label that must break out of the preceding line (the
+end-of-prompt marker sits at the end of the prompt's last line, whereas
+the shell prompt already starts one).
+
+An empty NAME returns the empty string, which stashes that chrome as
+\"vanishes from the copy\" -- so emptying `agent-shell-user-label' or
+`agent-shell-agent-label' leaves that side unlabelled."
+  (if (string-empty-p name)
+      ""
+    (let ((label (format "**%s:**" name)))
+      (if suffix-p
+          (concat "\n" label "\n")
+        (concat label "\n\n")))))
+
+(defun agent-shell--label-turn-chrome (beg end user-label agent-label)
+  "Stash USER-LABEL and AGENT-LABEL on the shell chrome between BEG and END.
+
+Puts `agent-shell-markdown-source' on the two spans that are shell chrome
+rather than markdown, so `agent-shell-markdown-reconstruct' substitutes a
+turn label for each:
+
+  - shell-maker's invisible `<shell-maker-end-of-prompt>' marker, tagged
+    `shell-maker--marker', becomes AGENT-LABEL.
+  - the shell prompt, recognized by `agent-shell--prompt-face-p', becomes
+    USER-LABEL.
+
+shell-maker's other markers (`<shell-maker-failed-command>',
+`<shell-maker-interrupted-command>') are chrome with no markdown meaning,
+so they are stashed empty and vanish from the copy.
+
+Intended to run on a scratch copy of the region (see
+`agent-shell--reconstruct-with-turn-labels'), never on the shell buffer
+itself."
+  (let ((pos beg))
+    (while (< pos end)
+      (let ((next (or (next-single-property-change
+                       pos 'shell-maker--marker nil end)
+                      end)))
+        (when (get-text-property pos 'shell-maker--marker)
+          (put-text-property
+           pos next 'agent-shell-markdown-source
+           (if (string-search "<shell-maker-end-of-prompt>"
+                              (buffer-substring-no-properties pos next))
+               agent-label
+             "")))
+        (setq pos next))))
+  (let ((pos beg))
+    (while (< pos end)
+      (let ((next (or (next-single-property-change
+                       pos 'font-lock-face nil end)
+                      end)))
+        (when (agent-shell--prompt-face-p
+               (get-text-property pos 'font-lock-face))
+          (put-text-property pos next 'agent-shell-markdown-source user-label))
+        (setq pos next)))))
+
+(defun agent-shell--reconstruct-with-turn-labels (beg end)
+  "Reconstruct markdown for BEG..END with shell chrome shown as turn labels.
+
+Works on a scratch copy of the region so the shell buffer is never
+modified: `buffer-substring' carries the text properties
+`agent-shell-markdown-reconstruct' reads, and the labels are stashed
+there.
+
+Both labels are resolved before the copy, since `agent-shell-agent-label'
+reads buffer-local state that the scratch buffer does not have."
+  (let ((text (buffer-substring beg end))
+        (user-label (agent-shell--copy-turn-label agent-shell-user-label nil))
+        (agent-label (agent-shell--copy-turn-label (agent-shell--agent-label) t)))
+    (with-temp-buffer
+      (insert text)
+      (agent-shell--label-turn-chrome
+       (point-min) (point-max) user-label agent-label)
+      (agent-shell-markdown-reconstruct (point-min) (point-max)))))
+
+
 (defun agent-shell-copy-as-markdown (beg end)
   "Copy the region between BEG and END to the kill ring as markdown.
 
@@ -1978,9 +2117,14 @@ fenced code blocks with their ```language fences, and tables.  A
 construct only partially selected (for example a single line of a
 code block) is copied verbatim as shown.
 
+Shell chrome is turned into markdown too: the prompt and shell-maker's
+invisible end-of-prompt marker are replaced by turn labels naming
+`agent-shell-user-label' and `agent-shell-agent-label', so a copied
+transcript shows where each turn begins.
+
 Interactively, operates on the active region."
   (interactive "r")
-  (kill-new (agent-shell-markdown-reconstruct beg end))
+  (kill-new (agent-shell--reconstruct-with-turn-labels beg end))
   (setq deactivate-mark t)
   (message "Copied as markdown"))
 

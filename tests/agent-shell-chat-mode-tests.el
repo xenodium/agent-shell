@@ -72,21 +72,6 @@ Carries `shell-maker--marker', as shell-maker's real marker does."
                  agent-shell-chat--labeled t)
      ,@body))
 
-(ert-deftest agent-shell-chat-prompt-face-p-test ()
-  "Prompt runs are recognized whether the face is a symbol or a list."
-  (should (agent-shell-chat--prompt-face-p 'comint-highlight-prompt))
-  (should (agent-shell-chat--prompt-face-p '(comint-highlight-prompt comint-highlight-prompt)))
-  (should-not (agent-shell-chat--prompt-face-p 'default))
-  (should-not (agent-shell-chat--prompt-face-p nil)))
-
-(ert-deftest agent-shell-chat-agent-name-test ()
-  "The agent label uses `:mode-line-name', falling back to \"Agent\"."
-  (agent-shell-chat-mode-tests--with-shell
-    (should (equal "Claude" (agent-shell-chat--agent-name))))
-  (with-temp-buffer
-    (setq-local agent-shell--state nil)
-    (should (equal "Agent" (agent-shell-chat--agent-name)))))
-
 (ert-deftest agent-shell-chat-labels-submitted-turn-test ()
   "A submitted turn boxes the prompt as `Me' and the response as the agent."
   (agent-shell-chat-mode-tests--with-shell

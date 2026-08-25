@@ -5937,5 +5937,128 @@ Then [after](https://after.com/y)
     (agent-shell-previous-item)
     (should (eq (char-after) ?A))))
 
+;;; Turn labels (chat mode's boxes and copy-as-markdown's headings).
+
+(defmacro agent-shell-tests--with-agent-name (name &rest body)
+  "Run BODY in a buffer whose shell state reports mode-line name NAME."
+  (declare (indent 1))
+  `(with-temp-buffer
+     (setq-local agent-shell--state
+                 (list (cons :agent-config (list (cons :mode-line-name ,name)))))
+     ,@body))
+
+(defun agent-shell-tests--prompt (text)
+  "Insert a live shell prompt run displaying TEXT, as shell-maker fontifies it."
+  (insert (propertize text 'font-lock-face
+                      '(comint-highlight-prompt comint-highlight-prompt))))
+
+(defun agent-shell-tests--marker (&optional text)
+  "Insert shell-maker's invisible end-of-prompt marker, or TEXT as a marker."
+  (insert (propertize (or text "<shell-maker-end-of-prompt>")
+                      'invisible t 'shell-maker--marker t)))
+
+(ert-deftest agent-shell--prompt-face-p-test ()
+  "Prompt runs are recognized whether the face is a symbol or a list.
+`agent-shell-prompt' counts too: restored and echoed prompts carry it
+rather than `comint-highlight-prompt'."
+  (should (agent-shell--prompt-face-p 'comint-highlight-prompt))
+  (should (agent-shell--prompt-face-p
+           '(comint-highlight-prompt comint-highlight-prompt)))
+  (should (agent-shell--prompt-face-p 'agent-shell-prompt))
+  (should (agent-shell--prompt-face-p '(agent-shell-prompt)))
+  (should-not (agent-shell--prompt-face-p 'default))
+  (should-not (agent-shell--prompt-face-p nil)))
+
+(ert-deftest agent-shell--agent-label-test ()
+  "The agent label substitutes `:mode-line-name', falling back to \"Agent\"."
+  (agent-shell-tests--with-agent-name "Claude"
+    (should (equal "Claude" (agent-shell--agent-label))))
+  (with-temp-buffer
+    (setq-local agent-shell--state nil)
+    (should (equal "Agent" (agent-shell--agent-label)))))
+
+(ert-deftest agent-shell--agent-label-shapes-test ()
+  "`agent-shell-agent-label' shapes the name: `%s', fixed, or decorated."
+  (agent-shell-tests--with-agent-name "Claude"
+    (let ((agent-shell-agent-label "%s (agent)"))
+      (should (equal "Claude (agent)" (agent-shell--agent-label))))
+    ;; No `%s': one fixed name for every agent.
+    (let ((agent-shell-agent-label "Agent"))
+      (should (equal "Agent" (agent-shell--agent-label))))
+    ;; Substitution is literal, so a stray `%' needs no escaping.
+    (let ((agent-shell-agent-label "%s 100%"))
+      (should (equal "Claude 100%" (agent-shell--agent-label))))
+    (let ((agent-shell-agent-label ""))
+      (should (equal "" (agent-shell--agent-label))))))
+
+(ert-deftest agent-shell--copy-turn-label-test ()
+  "A turn label is bold, followed by a blank line; a suffix label breaks first.
+An empty name yields the empty string, which makes that chrome vanish
+from a copy rather than labelling it."
+  (should (equal "**Me:**\n\n" (agent-shell--copy-turn-label "Me" nil)))
+  (should (equal "\n**Claude:**\n" (agent-shell--copy-turn-label "Claude" t)))
+  (should (equal "" (agent-shell--copy-turn-label "" nil)))
+  (should (equal "" (agent-shell--copy-turn-label "" t))))
+
+(ert-deftest agent-shell--copy-as-markdown-labels-turns-test ()
+  "A copied transcript names each turn instead of showing shell chrome.
+The prompt becomes the user label and the invisible end-of-prompt marker
+becomes the agent label, so the two turns stay separated."
+  (agent-shell-tests--with-agent-name "Claude"
+    (agent-shell-tests--prompt "Claude> ")
+    (insert "hello\n")
+    (agent-shell-tests--marker)
+    (insert "world\n")
+    (should (equal (agent-shell--reconstruct-with-turn-labels
+                    (point-min) (point-max))
+                   "**Me:**\n\nhello\n\n**Claude:**\nworld\n"))))
+
+(ert-deftest agent-shell--copy-as-markdown-labels-restored-prompt-test ()
+  "A restored prompt is labelled too: it carries `agent-shell-prompt'.
+`comint-highlight-prompt' alone would miss it."
+  (agent-shell-tests--with-agent-name "Claude"
+    (insert (propertize "Claude> " 'font-lock-face 'agent-shell-prompt))
+    (insert "hello\n")
+    (should (equal (agent-shell--reconstruct-with-turn-labels
+                    (point-min) (point-max))
+                   "**Me:**\n\nhello\n"))))
+
+(ert-deftest agent-shell--copy-as-markdown-empty-label-drops-chrome-test ()
+  "Emptying a label leaves that side unlabelled, but still drops its chrome."
+  (agent-shell-tests--with-agent-name "Claude"
+    (agent-shell-tests--prompt "Claude> ")
+    (insert "hello\n")
+    (agent-shell-tests--marker)
+    (insert "world\n")
+    (let ((agent-shell-user-label "")
+          (agent-shell-agent-label ""))
+      (should (equal (agent-shell--reconstruct-with-turn-labels
+                      (point-min) (point-max))
+                     "hello\nworld\n")))))
+
+(ert-deftest agent-shell--copy-as-markdown-drops-other-markers-test ()
+  "shell-maker's other markers are chrome with no markdown meaning: they vanish."
+  (agent-shell-tests--with-agent-name "Claude"
+    (insert "output\n")
+    (agent-shell-tests--marker "<shell-maker-failed-command>")
+    (should (equal (agent-shell--reconstruct-with-turn-labels
+                    (point-min) (point-max))
+                   "output\n"))))
+
+(ert-deftest agent-shell--copy-as-markdown-leaves-buffer-unmodified-test ()
+  "Labelling happens on a scratch copy, so a copy never touches the shell."
+  (agent-shell-tests--with-agent-name "Claude"
+    (agent-shell-tests--prompt "Claude> ")
+    (insert "hello\n")
+    (agent-shell-tests--marker)
+    (insert "world\n")
+    (let ((before (buffer-string)))
+      (set-buffer-modified-p nil)
+      (agent-shell--reconstruct-with-turn-labels (point-min) (point-max))
+      (should (equal before (buffer-string)))
+      (should-not (buffer-modified-p))
+      ;; The label is stashed on the scratch copy only, never here.
+      (should-not (get-text-property (point-min) 'agent-shell-markdown-source)))))
+
 (provide 'agent-shell-tests)
 ;;; agent-shell-tests.el ends here
