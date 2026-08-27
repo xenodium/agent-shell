@@ -1212,6 +1212,7 @@ OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
         (cons :supports-session-load nil)
         (cons :supports-session-resume nil)
         (cons :supports-session-fork nil)
+        (cons :supports-steering nil)
         (cons :resume-session-id nil)
         (cons :fork-session-id nil)
         (cons :pending-restore nil)
@@ -2038,6 +2039,16 @@ Returns one of:
       (if (shell-maker-busy)
           'busy
         'ready)))))
+
+(cl-defun agent-shell-steering-supported-p (&key shell-buffer)
+  "Return non-nil when the agent accepts a prompt steered into a running turn.
+When SHELL-BUFFER is non-nil, check that buffer instead of the current one.
+
+Steering is an ACP extension rather than part of the spec, so the agent
+advertises it in the `initialize' response's top-level `_meta' as
+`steering.supported'.  See `agent-shell-experimental--send-steering'."
+  (with-current-buffer (or shell-buffer (current-buffer))
+    (map-elt agent-shell--state :supports-steering)))
 
 (defun agent-shell-interrupt (&optional force)
   "Interrupt in-progress request and reject all pending permissions.
@@ -6102,6 +6113,12 @@ Session events:
   `input-submitted'       - User submitted input to the agent
     :data contains :prompt (the text sent to the agent, with any
     truncated regions expanded)
+  `prompt-steered'        - User steered a prompt into the running turn
+    :data contains :prompt and :outcome.  :outcome is `injected' when
+    the prompt joined the running turn, `prompt-required' or
+    `started-new-turn' when the turn had already ended, or `failed'
+    when the steer could not be applied and the prompt was queued
+    instead.  See `agent-shell-experimental--steering-outcome'.
   `idle'                  - Agent idle for variable `agent-shell-idle-timeout'
     seconds :data contains :idle-event and :buffer
 
@@ -6409,6 +6426,11 @@ Must provide ON-INITIATED (lambda ())."
                                                               (:name . ,(map-elt mode 'name))
                                                               (:description . ,(map-elt mode 'description))))
                                                           (map-elt modes 'availableModes))))))
+                   ;; Steering is an extension, so it is advertised in the
+                   ;; response's top-level `_meta' rather than in
+                   ;; `agentCapabilities'.  See `agent-shell-steering-supported-p'.
+                   (map-put! agent-shell--state :supports-steering
+                             (eq (map-nested-elt acp-response '(_meta steering supported)) t))
                    (when-let* ((agent-capabilities (map-elt acp-response 'agentCapabilities)))
                      (map-put! agent-shell--state :supports-session-load
                                (eq (map-elt agent-capabilities 'loadSession) t))
@@ -6416,7 +6438,13 @@ Must provide ON-INITIATED (lambda ())."
                       :state agent-shell--state
                       :block-id "agent_capabilities"
                       :label-left (propertize "Agent capabilities" 'font-lock-face 'agent-shell-section-heading)
-                      :body (agent-shell--format-agent-capabilities agent-capabilities)))
+                      ;; Listed alongside the spec capabilities because that is
+                      ;; what it is to a reader of this block, even though the
+                      ;; wire carries it elsewhere.
+                      :body (agent-shell--format-agent-capabilities
+                             (if (map-elt agent-shell--state :supports-steering)
+                                 (append agent-capabilities '((steering . t)))
+                               agent-capabilities))))
                    (agent-shell--emit-event :event 'init-handshake))
                  (funcall on-initiated))
    :on-failure (agent-shell--make-error-handler
@@ -7956,6 +7984,51 @@ Each marked span is replaced by its `agent-shell-region-text' value."
           (goto-char beg)
           (insert full-text))))
     (buffer-string)))
+
+(defconst agent-shell--steered-entry-type "steered_user_message"
+  "`:last-entry-type' left by a steered prompt.
+
+Deliberately not \"user_message_chunk\": that value asks the replay
+path to insert the end-of-prompt marker on the next notification, and
+`agent-shell--render-steered-prompt' has already inserted its own.")
+
+(cl-defun agent-shell--render-steered-prompt (&key state prompt)
+  "Render PROMPT into STATE's shell as the user prompt it is.
+
+A steered prompt is never echoed back: neither the Claude nor the Codex
+adapter forwards it as a `user_message_chunk' while the turn runs, so
+the client renders it or it does not appear at all.
+
+Uses the field/face shape comint gives a live prompt, so
+`comint-next-prompt', `agent-shell-next-item', copying and screen-reader
+prompt navigation treat it as a user prompt rather than as a new kind of
+entry.  `shell-maker-insert-end-of-prompt-marker' then closes it, which
+is what bounds the prompt for anything measuring it by searching forward
+for the marker; without it such a search runs to the next submission and
+takes the rest of the turn's output as this prompt's body.
+
+The `[steered]' prefix carries the one thing this shape would otherwise
+lose -- that the prompt was injected into a running turn rather than
+typed before one."
+  (map-put! state :chunked-group-count (1+ (map-elt state :chunked-group-count)))
+  (agent-shell--append-transcript
+   :text (format "## User (steered) (%s)\n\n%s\n\n"
+                 (format-time-string "%F %T")
+                 (agent-shell--indent-markdown-headers prompt))
+   :file-path agent-shell--transcript-file)
+  (agent-shell--update-text
+   :state state
+   :block-id (format "%s-steered-user_message_chunk"
+                     (map-elt state :chunked-group-count))
+   :text (concat (propertize (map-nested-elt state '(:agent-config :shell-prompt))
+                             'font-lock-face '(agent-shell-prompt comint-highlight-prompt)
+                             'field 'output)
+                 (propertize (concat "[steered] " (substring-no-properties prompt))
+                             'font-lock-face 'agent-shell-input))
+   :create-new t)
+  (with-current-buffer (map-elt state :buffer)
+    (shell-maker-insert-end-of-prompt-marker))
+  (map-put! state :last-entry-type agent-shell--steered-entry-type))
 
 (cl-defun agent-shell--send-command (&key prompt shell-buffer)
   "Send PROMPT to agent using SHELL-BUFFER."

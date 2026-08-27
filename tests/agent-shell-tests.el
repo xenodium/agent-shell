@@ -5750,6 +5750,156 @@ shell is left working in a directory that was just deleted."
         (kill-buffer new-shell-buffer))
       (when (file-directory-p temp-dir)
         (delete-directory temp-dir t)))))
+(ert-deftest agent-shell-experimental--make-session-steering-request-test ()
+  "Test `agent-shell-experimental--make-session-steering-request'."
+  (let ((request (agent-shell-experimental--make-session-steering-request
+                  :session-id "sess-1"
+                  :prompt '(((type . "text") (text . "actually, just the filenames"))))))
+    (should (equal (map-elt request :method) "_session/steering"))
+    (should (equal (map-nested-elt request '(:params sessionId)) "sess-1"))
+    ;; Sent as a vector so it serializes to a JSON array, like session/prompt.
+    (should (vectorp (map-nested-elt request '(:params prompt))))
+    (should (equal (map-nested-elt request '(:params prompt))
+                   [((type . "text") (text . "actually, just the filenames"))]))
+    ;; Opts out of the agent starting a turn of its own when none is running.
+    (should (equal (map-nested-elt request '(:params _meta steering idleBehavior))
+                   "promptRequired")))
+  (should-error (agent-shell-experimental--make-session-steering-request
+                 :prompt '(((type . "text") (text . "hi")))))
+  (should-error (agent-shell-experimental--make-session-steering-request
+                 :session-id "sess-1")))
+
+(ert-deftest agent-shell-experimental--steering-outcome-test ()
+  "Test `agent-shell-experimental--steering-outcome'."
+  (should (eq (agent-shell-experimental--steering-outcome '((outcome . "injected")))
+              'injected))
+  (should (eq (agent-shell-experimental--steering-outcome
+               '((outcome . "promptRequired") (reason . "noRunningTurn")))
+              'prompt-required))
+  (should (eq (agent-shell-experimental--steering-outcome '((outcome . "startedNewTurn")))
+              'started-new-turn))
+  (should (eq (agent-shell-experimental--steering-outcome '((outcome . "failed")))
+              'failed))
+  ;; An outcome we don't know, or none at all, must read as failure so the
+  ;; caller queues the prompt rather than treating it as delivered.
+  (should (eq (agent-shell-experimental--steering-outcome '((outcome . "somethingNew")))
+              'failed))
+  (should (eq (agent-shell-experimental--steering-outcome '()) 'failed)))
+
+(ert-deftest agent-shell--prompt-queue-steer-p-test ()
+  "Test `agent-shell--prompt-queue-steer-p' decides when to steer."
+  (cl-letf* ((status 'busy)
+             (supported t)
+             ((symbol-function 'agent-shell-status) (lambda (&rest _) status))
+             ((symbol-function 'agent-shell-steering-supported-p) (lambda (&rest _) supported)))
+    (let ((agent-shell-steer-when-busy t))
+      (should (agent-shell--prompt-queue-steer-p))
+      ;; A pending permission answer is a question, not a turn to redirect.
+      (setq status 'blocked)
+      (should-not (agent-shell--prompt-queue-steer-p))
+      (setq status 'ready)
+      (should-not (agent-shell--prompt-queue-steer-p))
+      ;; An agent that never advertised steering is only ever queued to.
+      (setq status 'busy
+            supported nil)
+      (should-not (agent-shell--prompt-queue-steer-p)))
+    ;; Reset the stubs' own bindings, not fresh shadowing ones: the stubs
+    ;; close over these, so a `let' here would leave them reading the values
+    ;; set above and pass for the wrong reason.
+    (setq status 'busy
+          supported t)
+    (let ((agent-shell-steer-when-busy nil))
+      (should-not (agent-shell--prompt-queue-steer-p)))))
+
+(cl-defun agent-shell-tests--steer-outcome (&key outcome busy)
+  "Steer a prompt, answer with OUTCOME, and return where the prompt landed.
+
+BUSY is what `shell-maker-busy' reports while the outcome is handled: a
+shell that has not yet processed its own `session/prompt' response is
+still busy even though the agent says the turn ended.
+
+Returns `rendered' (shown as a user prompt in the running turn),
+`submitted' (sent as an ordinary prompt), `queued' (added to the pending
+queue) or `reported' (rendered as a fragment explaining a turn we did
+not ask for)."
+  (let ((landed))
+    (cl-letf (((symbol-function 'agent-shell--state)
+               (lambda (&rest _) (list (cons :buffer (current-buffer)))))
+              ((symbol-function 'shell-maker-busy) (lambda (&rest _) busy))
+              ((symbol-function 'agent-shell-experimental--send-steering)
+               (lambda (&rest args)
+                 (funcall (plist-get args :on-outcome) outcome "agent said no")))
+              ((symbol-function 'agent-shell--render-steered-prompt)
+               (lambda (&rest _) (setq landed 'rendered)))
+              ((symbol-function 'agent-shell--insert-to-shell-buffer)
+               (lambda (&rest _) (setq landed 'submitted)))
+              ((symbol-function 'agent-shell--prompt-queue-enqueue)
+               (lambda (&rest _) (setq landed 'queued)))
+              ((symbol-function 'agent-shell--update-fragment)
+               (lambda (&rest _) (setq landed 'reported)))
+              ((symbol-function 'agent-shell--echo) #'ignore)
+              ((symbol-function 'agent-shell--emit-event) #'ignore))
+      (agent-shell--prompt-queue-steer :prompt "actually, just the filenames"))
+    landed))
+
+(ert-deftest agent-shell--prompt-queue-steer-test ()
+  "Test `agent-shell--prompt-queue-steer' keeps the prompt on every outcome."
+  (should (eq (agent-shell-tests--steer-outcome :outcome 'injected) 'rendered))
+  ;; The turn had ended and the agent handed the prompt back, so send it
+  ;; as an ordinary one -- unless this shell is still busy, where
+  ;; submitting would error and drop the text.  The queue drains as soon
+  ;; as the turn settles.
+  (should (eq (agent-shell-tests--steer-outcome :outcome 'prompt-required) 'submitted))
+  (should (eq (agent-shell-tests--steer-outcome :outcome 'prompt-required :busy t) 'queued))
+  (should (eq (agent-shell-tests--steer-outcome :outcome 'started-new-turn) 'reported))
+  ;; A steer that did not land must not cost the user their text.
+  (should (eq (agent-shell-tests--steer-outcome :outcome 'failed) 'queued)))
+
+(defun agent-shell-tests--render-steered-prompt (prompt)
+  "Render PROMPT into a bare shell buffer mid-turn.
+
+Returns an alist of the resulting buffer text and the `:last-entry-type'
+left behind."
+  (let* ((buffer (generate-new-buffer " *agent-shell-steer-render-test*"))
+         (fake-process (start-process "fake-agent" buffer "cat")))
+    (set-process-query-on-exit-flag fake-process nil)
+    (unwind-protect
+        (with-current-buffer buffer
+          (comint-mode)
+          (setq-local comint-prompt-regexp "^Claude> ")
+          (let ((state (list (cons :buffer (current-buffer))
+                             (cons :chunked-group-count 0)
+                             (cons :last-entry-type "agent_message_chunk")
+                             (cons :agent-config '((:shell-prompt . "Claude> "))))))
+            (cl-letf (((symbol-function 'shell-maker--process) (lambda () fake-process)))
+              ;; The turn so far: a prompt the user submitted and the
+              ;; agent's answer streaming under it.
+              (shell-maker--output-filter fake-process "Claude> ")
+              (let ((inhibit-read-only t))
+                (goto-char (point-max))
+                (insert "list the files<shell-maker-end-of-prompt>\nListing "))
+              (agent-shell--render-steered-prompt :state state :prompt prompt)
+              (list (cons :text (buffer-substring-no-properties (point-min) (point-max)))
+                    (cons :last-entry-type (map-elt state :last-entry-type))))))
+      (when (process-live-p fake-process)
+        (delete-process fake-process))
+      (kill-buffer buffer))))
+
+(ert-deftest agent-shell--render-steered-prompt-test ()
+  "Test a steered prompt renders as a closed user prompt.
+Neither adapter echoes a steered prompt back, so it is rendered here or
+it is nowhere.  The end-of-prompt marker closes it: chat mode reads the
+last prompt with no marker after it as the live one, and the prompt bar
+hides that."
+  (let ((rendered (agent-shell-tests--render-steered-prompt "just the filenames")))
+    (should (equal (map-elt rendered :text)
+                   (concat "Claude> list the files<shell-maker-end-of-prompt>\n"
+                           "Listing \n\n"
+                           "Claude> [steered] just the filenames"
+                           "<shell-maker-end-of-prompt>")))
+    ;; Not "user_message_chunk": that asks the notification dispatch to
+    ;; insert an end-of-prompt marker of its own on the next update.
+    (should-not (equal (map-elt rendered :last-entry-type) "user_message_chunk"))))
 
 (defmacro agent-shell-tests--with-rendered-shell (markdown &rest body)
   "Render MARKDOWN in a temporary shell buffer and run BODY with point at start.

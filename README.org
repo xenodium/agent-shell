@@ -757,6 +757,14 @@ In view mode, use =r= to compose a reply, =R= to quote the response in a reply, 
 Do not invoke =agent-shell-viewport-edit-mode= or =agent-shell-viewport-view-mode= directly in an agent shell buffer.  They are major modes installed by the entry points above on the separate viewport buffer, not commands for converting the shell buffer.
 #+end_quote
 
+*** Steering a running turn
+
+A prompt sent while the agent is working is queued and submitted once the turn ends.  Agents that support steering can take it into the turn already running instead, so a wrong direction can be corrected without waiting for it to finish.  Steering is an ACP extension (=_session/steering=) rather than part of the spec, advertised by the agent at initialization: the Claude and Codex packages implement it, other agents keep queueing.
+
+Sending from a busy shell steers automatically when the agent supports it.  Use a prefix argument (=C-u=) to queue that one prompt instead, or set =agent-shell-steer-when-busy= to nil to always queue.  =M-x agent-shell-steer= steers explicitly, and errors when there is no running turn to steer or the agent cannot steer.  A steer that the agent does not accept falls back to queueing, so the prompt is never lost.
+
+What the agent does with the steered prompt is up to the agent: Claude interrupts what it is generating and responds to it, while Codex finishes the message in flight first.
+
 *** Specific Agent Commands
 
 Start a specific agent shell session directly:
@@ -1071,6 +1079,7 @@ always go to Evil modes if you need to with ~C-z~).
 | agent-shell-show-context-usage-indicator      | Non-nil to show the context usage indicator in the header and mode line.        |
 | agent-shell-show-usage-at-turn-end            | Whether to display usage information when agent turn ends.                      |
 | agent-shell-show-welcome-message              | Non-nil to show welcome message.                                                |
+| agent-shell-steer-when-busy                   | Whether a prompt sent mid-turn steers the agent instead of queueing.            |
 | agent-shell-text-file-capabilities            | Whether agents are initialized with read/write text file capabilities.          |
 | agent-shell-thought-process-expand-by-default | Whether thought process sections should be expanded by default.                 |
 | agent-shell-thought-process-icon              | Icon displayed during the AI’s thought process.                                 |
@@ -1157,7 +1166,7 @@ always go to Evil modes if you need to with ~C-z~).
 | p or <backtab>  | agent-shell-previous-item                               | Go to previous item.                                                          |
 |                 | agent-shell-previous-permission-button                  | Jump to the previous button.                                                  |
 |                 | agent-shell-prompt-compose                              | Compose an `agent-shell' prompt in a dedicated buffer.                        |
-|                 | agent-shell-prompt-queue                                | Queue or immediately send a prompt depending on shell busy state.             |
+|                 | agent-shell-prompt-queue                                | Steer, queue, or immediately send a prompt depending on shell state.          |
 |                 | agent-shell-prompt-queue-remove                         | Remove all pending prompts or a specific prompt by REMOVE-INDEX.              |
 |                 | agent-shell-prompt-queue-resume                         | Resume processing pending prompts in the queue.                               |
 | r               | agent-shell-quote-region                                | Quote the active region into the shell's latest prompt.                       |
@@ -1174,6 +1183,7 @@ always go to Evil modes if you need to with ~C-z~).
 |                 | agent-shell-send-screenshot                             | Capture a screenshot and insert it into `agent-shell'.                        |
 | C-c RET         | agent-shell-set-session-mode                            | Set session mode (if any available).                                          |
 | C-c C-v         | agent-shell-set-session-model                           | Set session model.                                                            |
+|                 | agent-shell-steer                                       | Steer PROMPT into the turn the agent is currently running.                    |
 | RET             | agent-shell-submit                                      | Submit current input.                                                         |
 |                 | agent-shell-toggle                                      | Toggle agent shell display.                                                   |
 |                 | agent-shell-toggle-logging                              | Toggle logging.                                                               |
