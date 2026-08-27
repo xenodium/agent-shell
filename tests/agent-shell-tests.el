@@ -5786,30 +5786,38 @@ shell is left working in a directory that was just deleted."
               'failed))
   (should (eq (agent-shell-experimental--steering-outcome '()) 'failed)))
 
-(ert-deftest agent-shell--prompt-queue-steer-p-test ()
-  "Test `agent-shell--prompt-queue-steer-p' decides when to steer."
-  (cl-letf* ((status 'busy)
-             (supported t)
-             ((symbol-function 'agent-shell-status) (lambda (&rest _) status))
-             ((symbol-function 'agent-shell-steering-supported-p) (lambda (&rest _) supported)))
-    (let ((agent-shell-steer-when-busy t))
-      (should (agent-shell--prompt-queue-steer-p))
-      ;; A pending permission answer is a question, not a turn to redirect.
-      (setq status 'blocked)
-      (should-not (agent-shell--prompt-queue-steer-p))
-      (setq status 'ready)
-      (should-not (agent-shell--prompt-queue-steer-p))
-      ;; An agent that never advertised steering is only ever queued to.
-      (setq status 'busy
-            supported nil)
-      (should-not (agent-shell--prompt-queue-steer-p)))
-    ;; Reset the stubs' own bindings, not fresh shadowing ones: the stubs
-    ;; close over these, so a `let' here would leave them reading the values
-    ;; set above and pass for the wrong reason.
-    (setq status 'busy
-          supported t)
-    (let ((agent-shell-steer-when-busy nil))
-      (should-not (agent-shell--prompt-queue-steer-p)))))
+(cl-defun agent-shell-tests--steer-guard (&key busy supported status)
+  "Invoke `agent-shell-prompt-steer' and report what its guards decided.
+
+BUSY, SUPPORTED and STATUS are what `shell-maker-busy',
+`agent-shell-steering-supported-p' and `agent-shell-status' report.
+
+Returns `steered' when the prompt reached the agent, or the `user-error'
+message explaining why it did not."
+  (cl-letf (((symbol-function 'agent-shell--shell-buffer)
+             (lambda (&rest _) (current-buffer)))
+            ((symbol-function 'shell-maker-busy) (lambda (&rest _) busy))
+            ((symbol-function 'agent-shell-steering-supported-p)
+             (lambda (&rest _) supported))
+            ((symbol-function 'agent-shell-status) (lambda (&rest _) status))
+            ((symbol-function 'agent-shell--prompt-queue-steer)
+             (lambda (&rest _) 'steered)))
+    (condition-case error
+        (agent-shell-prompt-steer "actually, just the filenames")
+      (user-error (error-message-string error)))))
+
+(ert-deftest agent-shell-prompt-steer-test ()
+  "Test `agent-shell-prompt-steer' refuses when there is no turn to steer."
+  (should (eq (agent-shell-tests--steer-guard :busy t :supported t :status 'busy)
+              'steered))
+  (should (equal (agent-shell-tests--steer-guard :busy nil :supported t :status 'ready)
+                 "No turn to steer; the agent is idle"))
+  ;; An agent that never advertised steering is only ever queued to.
+  (should (equal (agent-shell-tests--steer-guard :busy t :supported nil :status 'busy)
+                 "This agent does not support steering"))
+  ;; A pending permission answer is a question, not a turn to redirect.
+  (should (equal (agent-shell-tests--steer-guard :busy t :supported t :status 'blocked)
+                 "Answer the pending permission request first")))
 
 (cl-defun agent-shell-tests--steer-outcome (&key outcome busy)
   "Steer a prompt, answer with OUTCOME, and return where the prompt landed.
