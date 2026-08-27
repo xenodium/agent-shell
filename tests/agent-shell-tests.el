@@ -5769,23 +5769,6 @@ shell is left working in a directory that was just deleted."
   (should-error (agent-shell-experimental--make-session-steering-request
                  :session-id "sess-1")))
 
-(ert-deftest agent-shell-experimental--steering-outcome-test ()
-  "Test `agent-shell-experimental--steering-outcome'."
-  (should (eq (agent-shell-experimental--steering-outcome '((outcome . "injected")))
-              'injected))
-  (should (eq (agent-shell-experimental--steering-outcome
-               '((outcome . "promptRequired") (reason . "noRunningTurn")))
-              'prompt-required))
-  (should (eq (agent-shell-experimental--steering-outcome '((outcome . "startedNewTurn")))
-              'started-new-turn))
-  (should (eq (agent-shell-experimental--steering-outcome '((outcome . "failed")))
-              'failed))
-  ;; An outcome we don't know, or none at all, must read as failure so the
-  ;; caller queues the prompt rather than treating it as delivered.
-  (should (eq (agent-shell-experimental--steering-outcome '((outcome . "somethingNew")))
-              'failed))
-  (should (eq (agent-shell-experimental--steering-outcome '()) 'failed)))
-
 (cl-defun agent-shell-tests--steer-guard (&key busy supported status)
   "Invoke `agent-shell-prompt-steer' and report what its guards decided.
 
@@ -5800,7 +5783,8 @@ message explaining why it did not."
             ((symbol-function 'agent-shell-steering-supported-p)
              (lambda (&rest _) supported))
             ((symbol-function 'agent-shell-status) (lambda (&rest _) status))
-            ((symbol-function 'agent-shell--prompt-queue-steer)
+            ((symbol-function 'agent-shell--state) (lambda (&rest _) nil))
+            ((symbol-function 'agent-shell-experimental--send-steering)
              (lambda (&rest _) 'steered)))
     (condition-case error
         (agent-shell-prompt-steer "actually, just the filenames")
@@ -5819,49 +5803,84 @@ message explaining why it did not."
   (should (equal (agent-shell-tests--steer-guard :busy t :supported t :status 'blocked)
                  "Answer the pending permission request first")))
 
-(cl-defun agent-shell-tests--steer-outcome (&key outcome busy)
-  "Steer a prompt, answer with OUTCOME, and return where the prompt landed.
+(cl-defun agent-shell-tests--steer-outcome (&key outcome busy request-failed)
+  "Steer a prompt, answer with OUTCOME, and return what became of it.
 
-BUSY is what `shell-maker-busy' reports while the outcome is handled: a
-shell that has not yet processed its own `session/prompt' response is
-still busy even though the agent says the turn ended.
+OUTCOME is the agent's answer verbatim, as it arrives on the wire.  BUSY
+is what `shell-maker-busy' reports while the answer is handled: a shell
+that has not yet processed its own `session/prompt' response is still
+busy even though the agent says the turn ended.  REQUEST-FAILED answers
+the request itself with an error instead.
 
-Returns `rendered' (shown as a user prompt in the running turn),
-`submitted' (sent as an ordinary prompt), `queued' (added to the pending
-queue) or `reported' (rendered as a fragment explaining a turn we did
-not ask for)."
-  (let ((landed))
-    (cl-letf (((symbol-function 'agent-shell--state)
-               (lambda (&rest _) (list (cons :buffer (current-buffer)))))
-              ((symbol-function 'shell-maker-busy) (lambda (&rest _) busy))
-              ((symbol-function 'agent-shell-experimental--send-steering)
+Returns the things that happened, in order: `rendered' (shown as a user
+prompt in the running turn), `submitted' (sent as an ordinary prompt),
+`queued' (added to the pending queue), `reported' (explained in a shell
+fragment) and `interrupted' (the running turn cancelled)."
+  (let ((happened)
+        ;; A turn is running when the guards check, which is what lets the
+        ;; steer go out at all.  BUSY is what the shell reports later, when
+        ;; the agent's answer comes back.
+        (running t))
+    (cl-letf (((symbol-function 'agent-shell--shell-buffer)
+               (lambda (&rest _) (current-buffer)))
+              ((symbol-function 'agent-shell--state)
+               (lambda (&rest _) (list (cons :buffer (current-buffer))
+                                       (cons :session (list (cons :id "sess-1"))))))
+              ((symbol-function 'agent-shell-steering-supported-p)
+               (lambda (&rest _) t))
+              ((symbol-function 'agent-shell-status) (lambda (&rest _) 'busy))
+              ((symbol-function 'agent-shell-interrupt)
+               (lambda (&rest _) (push 'interrupted happened)))
+              ((symbol-function 'shell-maker-busy) (lambda (&rest _) running))
+              ((symbol-function 'agent-shell--expand-truncated-regions)
+               (lambda (text) text))
+              ((symbol-function 'agent-shell--build-content-blocks)
+               (lambda (text) (vector (cons 'text text))))
+              ((symbol-function 'agent-shell--send-request)
                (lambda (&rest args)
-                 (funcall (plist-get args :on-outcome) outcome "agent said no")))
-              ((symbol-function 'agent-shell--render-steered-prompt)
-               (lambda (&rest _) (setq landed 'rendered)))
+                 (setq running busy)
+                 (if request-failed
+                     (funcall (plist-get args :on-failure)
+                              '((message . "agent said no")) "raw")
+                   (funcall (plist-get args :on-success)
+                            (list (cons 'outcome outcome))))))
+              ((symbol-function 'agent-shell-experimental--render-steered-prompt)
+               (lambda (&rest _) (push 'rendered happened)))
               ((symbol-function 'agent-shell--insert-to-shell-buffer)
-               (lambda (&rest _) (setq landed 'submitted)))
+               (lambda (&rest _) (push 'submitted happened)))
               ((symbol-function 'agent-shell--prompt-queue-enqueue)
-               (lambda (&rest _) (setq landed 'queued)))
+               (lambda (&rest _) (push 'queued happened)))
               ((symbol-function 'agent-shell--update-fragment)
-               (lambda (&rest _) (setq landed 'reported)))
-              ((symbol-function 'agent-shell--echo) #'ignore)
-              ((symbol-function 'agent-shell--emit-event) #'ignore))
-      (agent-shell--prompt-queue-steer :prompt "actually, just the filenames"))
-    landed))
+               (lambda (&rest _) (push 'reported happened))))
+      (agent-shell-prompt-steer "actually, just the filenames"))
+    (nreverse happened)))
 
-(ert-deftest agent-shell--prompt-queue-steer-test ()
-  "Test `agent-shell--prompt-queue-steer' keeps the prompt on every outcome."
-  (should (eq (agent-shell-tests--steer-outcome :outcome 'injected) 'rendered))
-  ;; The turn had ended and the agent handed the prompt back, so send it
-  ;; as an ordinary one -- unless this shell is still busy, where
-  ;; submitting would error and drop the text.  The queue drains as soon
-  ;; as the turn settles.
-  (should (eq (agent-shell-tests--steer-outcome :outcome 'prompt-required) 'submitted))
-  (should (eq (agent-shell-tests--steer-outcome :outcome 'prompt-required :busy t) 'queued))
-  (should (eq (agent-shell-tests--steer-outcome :outcome 'started-new-turn) 'reported))
-  ;; A steer that did not land must not cost the user their text.
-  (should (eq (agent-shell-tests--steer-outcome :outcome 'failed) 'queued)))
+(ert-deftest agent-shell-prompt-steer-outcome-test ()
+  "Test `agent-shell-prompt-steer' acts on the agent's own answer."
+  (should (equal (agent-shell-tests--steer-outcome :outcome "injected") '(rendered)))
+  ;; The turn had ended and the agent handed the prompt back, so send it as
+  ;; an ordinary one.  Claude only, and only because the request opts in.
+  (should (equal (agent-shell-tests--steer-outcome :outcome "promptRequired")
+                 '(submitted)))
+  (should (equal (agent-shell-tests--steer-outcome :outcome "startedNewTurn")
+                 '(reported)))
+  ;; Steering never queues: that is `agent-shell-prompt-queue''s job, and a
+  ;; queued prompt would reach the agent long after it was asked for.  The
+  ;; turn is interrupted so the agent does not carry on in a direction the
+  ;; user believes they already corrected.
+  (should (equal (agent-shell-tests--steer-outcome :outcome "failed")
+                 '(reported interrupted)))
+  ;; An outcome no agent answers with today must not read as delivered.
+  (should (equal (agent-shell-tests--steer-outcome :outcome "somethingNew")
+                 '(reported interrupted)))
+  (should (equal (agent-shell-tests--steer-outcome :outcome nil)
+                 '(reported interrupted)))
+  ;; A request that never got an answer is handled the same way.
+  (should (equal (agent-shell-tests--steer-outcome :request-failed t)
+                 '(reported interrupted)))
+  ;; Submitting into a still-busy shell would error, so it reports too.
+  (should (equal (agent-shell-tests--steer-outcome :outcome "promptRequired" :busy t)
+                 '(reported interrupted))))
 
 (defun agent-shell-tests--render-steered-prompt (prompt)
   "Render PROMPT into a bare shell buffer mid-turn.
@@ -5886,14 +5905,14 @@ left behind."
               (let ((inhibit-read-only t))
                 (goto-char (point-max))
                 (insert "list the files<shell-maker-end-of-prompt>\nListing "))
-              (agent-shell--render-steered-prompt :state state :prompt prompt)
+              (agent-shell-experimental--render-steered-prompt :state state :prompt prompt)
               (list (cons :text (buffer-substring-no-properties (point-min) (point-max)))
                     (cons :last-entry-type (map-elt state :last-entry-type))))))
       (when (process-live-p fake-process)
         (delete-process fake-process))
       (kill-buffer buffer))))
 
-(ert-deftest agent-shell--render-steered-prompt-test ()
+(ert-deftest agent-shell-experimental--render-steered-prompt-test ()
   "Test a steered prompt renders as a closed user prompt.
 Neither adapter echoes a steered prompt back, so it is rendered here or
 it is nowhere.  The end-of-prompt marker closes it: chat mode reads the

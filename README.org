@@ -761,7 +761,7 @@ Do not invoke =agent-shell-viewport-edit-mode= or =agent-shell-viewport-view-mod
 
 A prompt sent while the agent is working is queued and submitted once the turn ends.  Agents that support steering can take it into the turn already running instead, so a wrong direction can be corrected without waiting for it to finish.  Steering is an ACP extension (=_session/steering=) rather than part of the spec, advertised by the agent at initialization: the Claude and Codex packages implement it, other agents keep queueing.
 
-Steering is always explicit.  =M-x agent-shell-prompt-queue= queues, as it always has.  =M-x agent-shell-prompt-steer= steers, and errors when there is no running turn to steer or the agent cannot steer.  A steer that the agent does not accept falls back to queueing, so the prompt is never lost.
+Steering is always explicit.  =M-x agent-shell-prompt-queue= queues, as it always has.  =M-x agent-shell-prompt-steer= steers, and errors when there is no running turn to steer or the agent cannot steer.  When the agent declines a steer, the running turn is interrupted and the shell says so, rather than letting the agent carry on in a direction you believe you already corrected.
 
 What the agent does with the steered prompt is up to the agent: Claude interrupts what it is generating and responds to it, while Codex finishes the message in flight first.
 

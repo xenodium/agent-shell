@@ -39,9 +39,6 @@
 (declare-function agent-shell--shell-buffer "agent-shell")
 (declare-function agent-shell--state "agent-shell")
 (declare-function agent-shell--echo "agent-shell")
-(declare-function agent-shell--active-requests-p "agent-shell")
-(declare-function agent-shell--emit-event "agent-shell")
-(declare-function agent-shell--render-steered-prompt "agent-shell")
 (declare-function agent-shell-status "agent-shell")
 (declare-function agent-shell-steering-supported-p "agent-shell")
 (declare-function agent-shell-experimental--send-steering "agent-shell-experimental")
@@ -212,63 +209,36 @@ agent commands when the agent has reported them."
       (read-string (or (map-nested-elt (agent-shell--state) '(:agent-config :shell-prompt))
                        "Enqueue prompt: ")))))
 
-(cl-defun agent-shell--prompt-queue-steer (&key prompt)
-  "Steer PROMPT into the running turn, queueing it if that fails.
+(defun agent-shell-prompt-steer (prompt)
+  "Steer PROMPT into the turn the agent is currently running.
 
-Dispatches on the agent's answer:
+Unlike `agent-shell-prompt-queue', the prompt reaches the agent while it
+works, so it can change course instead of finishing first.  Signals a
+`user-error' when the agent does not support steering or no turn is
+running -- use `agent-shell-prompt-queue' for those.
 
-  `injected'         renders PROMPT as a user prompt in the running turn.
-  `prompt-required'  the turn had ended and the agent left PROMPT with
-                     us, so submit it as an ordinary prompt.
-  `started-new-turn' the turn had ended and the agent started one we did
-                     not ask for; its output arrives with no request in
-                     flight, so say so rather than let it appear as an
-                     unexplained out-of-turn message.
-  `failed'           queue PROMPT unchanged.
+Steering is not additive: an agent that interrupts what it is generating
+may drop the instruction it was working on, so what the agent was already
+doing can be lost.  Whether that happens is the agent's choice, not ours.
 
-Every path keeps PROMPT: a steer that does not land must not cost the
-user their text."
-  (let ((state (agent-shell--state)))
+When the agent declines the steer, the running turn is interrupted rather
+than left to carry on in a direction you believe you already corrected.
+
+While reading, @ completes project files and / completes available agent
+commands when the agent has reported them."
+  (interactive
+   (list (with-current-buffer (agent-shell--shell-buffer :no-create t)
+           (agent-shell--prompt-queue-read))))
+  (with-current-buffer (agent-shell--shell-buffer :no-create t)
+    (unless (shell-maker-busy)
+      (user-error "No turn to steer; the agent is idle"))
+    (unless (agent-shell-steering-supported-p)
+      (user-error "This agent does not support steering"))
+    (when (eq (agent-shell-status) 'blocked)
+      (user-error "Answer the pending permission request first"))
     (agent-shell-experimental--send-steering
-     :state state
-     :prompt prompt
-     :on-outcome
-     (lambda (outcome message)
-       (pcase outcome
-         ('injected
-          (agent-shell--render-steered-prompt :state state :prompt prompt))
-         ('prompt-required
-          ;; The agent saw no turn, but this shell may not have processed
-          ;; its own `session/prompt' response yet, and submitting into a
-          ;; still-busy shell errors and drops the text.  Queueing is
-          ;; correct either way: the queue drains as soon as the turn
-          ;; settles.
-          (if (shell-maker-busy)
-              (agent-shell--prompt-queue-enqueue :prompt prompt)
-            (agent-shell--insert-to-shell-buffer :text prompt :submit t :no-focus t)))
-         ('started-new-turn
-          (agent-shell--update-fragment
-           :state state
-           :block-id (format "%s-steer-detached-turn"
-                             (map-elt state :request-count))
-           :label-left (propertize "Steered prompt started a new turn"
-                                   'font-lock-face 'agent-shell-section-heading)
-           :body (format "The turn ended before this prompt reached the agent, so
-the agent started one of its own for it:
-
-  %s
-
-Its output arrives out of turn, and the shell does not show as
-busy while it runs." prompt)
-           :create-new t
-           :above-last-prompt (not (agent-shell--active-requests-p state))))
-         (_
-          (agent-shell--prompt-queue-enqueue :prompt prompt)
-          (when message
-            (agent-shell--echo "Steering failed (%s); prompt queued" message))))
-       (agent-shell--emit-event :event 'prompt-steered
-                                :data (list (cons :prompt prompt)
-                                            (cons :outcome outcome)))))))
+     :state (agent-shell--state)
+     :prompt prompt)))
 
 (defun agent-shell-prompt-queue (prompt)
   "Queue or immediately send a prompt depending on shell busy state.
@@ -291,32 +261,6 @@ commands when the agent has reported them."
     (if (shell-maker-busy)
         (agent-shell--prompt-queue-enqueue :prompt prompt)
       (agent-shell--insert-to-shell-buffer :text prompt :submit t :no-focus t))))
-
-(defun agent-shell-prompt-steer (prompt)
-  "Steer PROMPT into the turn the agent is currently running.
-
-Unlike `agent-shell-prompt-queue', the prompt reaches the agent while it
-works, so it can change course instead of finishing first.  Signals a
-`user-error' when the agent does not support steering or no turn is
-running -- use `agent-shell-prompt-queue' for those.
-
-Steering is not additive: an agent that interrupts what it is generating
-may drop the instruction it was working on, so what the agent was already
-doing can be lost.  Whether that happens is the agent's choice, not ours.
-
-While reading, @ completes project files and / completes available agent
-commands when the agent has reported them."
-  (interactive
-   (list (with-current-buffer (agent-shell--shell-buffer :no-create t)
-           (agent-shell--prompt-queue-read))))
-  (with-current-buffer (agent-shell--shell-buffer :no-create t)
-    (unless (shell-maker-busy)
-      (user-error "No turn to steer; the agent is idle"))
-    (unless (agent-shell-steering-supported-p)
-      (user-error "This agent does not support steering"))
-    (when (eq (agent-shell-status) 'blocked)
-      (user-error "Answer the pending permission request first"))
-    (agent-shell--prompt-queue-steer :prompt prompt)))
 
 (defun agent-shell-prompt-queue-resume ()
   "Resume processing pending prompts in the queue.
