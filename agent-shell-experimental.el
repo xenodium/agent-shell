@@ -252,6 +252,7 @@ asked for it."
                     :create-new t
                     :above-last-prompt (not (agent-shell--active-requests-p
                                              (agent-shell--state))))
+                   (map-put! (agent-shell--state) :last-entry-type "steering_declined")
                    ;; Interrupted so the agent does not carry on for a long
                    ;; while in a direction the user believes they already
                    ;; corrected.  A declined steer does not say whether
@@ -282,7 +283,8 @@ asked for it."
                   :text "Note: Steered prompt still in progress.")
            :create-new t
            :above-last-prompt (not (agent-shell--active-requests-p
-                                    (agent-shell--state)))))
+                                    (agent-shell--state))))
+          (map-put! (agent-shell--state) :last-entry-type "steering_detached_turn"))
          ;; Codex's "failed", a "promptRequired" this shell is too busy to
          ;; act on, and anything an agent we do not know about answers with.
          (_
@@ -298,6 +300,7 @@ asked for it."
            :create-new t
            :above-last-prompt (not (agent-shell--active-requests-p
                                     (agent-shell--state))))
+          (map-put! (agent-shell--state) :last-entry-type "steering_declined")
           ;; Interrupted so the agent does not carry on for hours in a
           ;; direction the user believes they already corrected.  A declined
           ;; steer does not say whether continuing is harmless, and the cost
