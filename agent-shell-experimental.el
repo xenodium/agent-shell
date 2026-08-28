@@ -45,6 +45,7 @@
 (declare-function acp-send-response "acp")
 (declare-function acp-make-error "acp")
 (declare-function agent-shell--active-requests-p "agent-shell")
+(declare-function agent-shell--cancel-idle-timer "agent-shell")
 (declare-function agent-shell--expand-truncated-regions "agent-shell")
 (declare-function agent-shell--prompt-content-blocks "agent-shell")
 (declare-function agent-shell--insert-to-shell-buffer "agent-shell")
@@ -272,7 +273,14 @@ asked for it."
          ;; inserting, so that case falls through to declined.
          ((and "promptRequired" (guard (not (shell-maker-busy))))
           (agent-shell--insert-to-shell-buffer :text prompt :submit t :no-focus t))
-         ;; Claude and Codex both answer with this one.
+         ;; Claude and Codex both answer with this one.  No `session/prompt'
+         ;; owns this turn, so nothing signals when it ends: its output
+         ;; arrives out of turn and the shell does not show as busy.  See
+         ;; claude-agent-acp#903.
+         ;;
+         ;; TODO: Track the turn once an end signal exists.  claude-agent-acp
+         ;; proposes `_session/turn_ended' for exactly this in #997, which
+         ;; would let us close the turn out rather than just warn about it.
          ("startedNewTurn"
           (agent-shell--update-fragment
            :state (agent-shell--state)
@@ -283,7 +291,13 @@ asked for it."
            :create-new t
            :above-last-prompt (not (agent-shell--active-requests-p
                                     (agent-shell--state))))
-          (map-put! (agent-shell--state) :last-entry-type "steering_detached_turn"))
+          (map-put! (agent-shell--state) :last-entry-type "steering_detached_turn")
+          ;; The turn ending is what started this timer, and it would now
+          ;; announce the agent idle while the turn it just began runs.
+          ;; Nothing re-arms it for this turn, since that happens on the
+          ;; `session/prompt' response there will never be.  A permission
+          ;; request during the turn still arms it on its own.
+          (agent-shell--cancel-idle-timer))
          ;; Codex's "failed", a "promptRequired" this shell is too busy to
          ;; act on, and anything an agent we do not know about answers with.
          (_

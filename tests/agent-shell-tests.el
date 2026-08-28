@@ -5839,6 +5839,7 @@ fragment) and `interrupted' (the running turn cancelled)."
               ((symbol-function 'agent-shell--prompt-content-blocks)
                (lambda (text) (vector (list (cons 'type "text")
                                             (cons 'text text)))))
+              ((symbol-function 'agent-shell--cancel-idle-timer) #'ignore)
               ((symbol-function 'agent-shell--send-request)
                (lambda (&rest args)
                  (setq running busy)
