@@ -5884,8 +5884,11 @@ fragment) and `interrupted' (the running turn cancelled)."
   (should (equal (agent-shell-tests--steer-outcome :outcome "promptRequired" :busy t)
                  '(reported interrupted))))
 
-(defun agent-shell-tests--render-steered-prompt (prompt)
+(cl-defun agent-shell-tests--render-steered-prompt (prompt &key idle)
   "Render PROMPT into a bare shell buffer mid-turn.
+
+IDLE renders as though the turn ended while the steer was in flight, so
+a live input prompt already sits at the buffer end.
 
 Returns an alist of the resulting buffer text and the `:last-entry-type'
 left behind."
@@ -5900,13 +5903,18 @@ left behind."
                              (cons :chunked-group-count 0)
                              (cons :last-entry-type "agent_message_chunk")
                              (cons :agent-config '((:shell-prompt . "Claude> "))))))
-            (cl-letf (((symbol-function 'shell-maker--process) (lambda () fake-process)))
+            (cl-letf (((symbol-function 'shell-maker--process) (lambda () fake-process))
+                      ((symbol-function 'shell-maker-busy) (lambda (&rest _) (not idle))))
               ;; The turn so far: a prompt the user submitted and the
               ;; agent's answer streaming under it.
               (shell-maker--output-filter fake-process "Claude> ")
               (let ((inhibit-read-only t))
                 (goto-char (point-max))
                 (insert "list the files<shell-maker-end-of-prompt>\nListing "))
+              ;; The turn ended while the steer was in flight, so the shell
+              ;; already printed the next prompt and is waiting on input.
+              (when idle
+                (shell-maker--output-filter fake-process "\nClaude> "))
               (agent-shell-experimental--render-steered-prompt :state state :prompt prompt)
               (list (cons :text (buffer-substring-no-properties (point-min) (point-max)))
                     (cons :last-entry-type (map-elt state :last-entry-type))))))
@@ -5924,11 +5932,21 @@ hides that."
     (should (equal (map-elt rendered :text)
                    (concat "Claude> list the files<shell-maker-end-of-prompt>\n"
                            "Listing \n\n"
-                           "Claude> [steered] just the filenames"
+                           "Claude> [steer] just the filenames"
                            "<shell-maker-end-of-prompt>")))
     ;; Not "user_message_chunk": that asks the notification dispatch to
     ;; insert an end-of-prompt marker of its own on the next update.
-    (should-not (equal (map-elt rendered :last-entry-type) "user_message_chunk"))))
+    (should-not (equal (map-elt rendered :last-entry-type) "user_message_chunk")))
+  ;; The turn can end while the steer is in flight, leaving a live input
+  ;; prompt at the buffer end.  Rendering there would put the prompt in
+  ;; comint's input area, where submitting sends it as input.
+  (let ((rendered (agent-shell-tests--render-steered-prompt "just the filenames" :idle t)))
+    (should (equal (map-elt rendered :text)
+                   (concat "Claude> list the files<shell-maker-end-of-prompt>\n"
+                           "Listing \n\n"
+                           "Claude> [steer] just the filenames"
+                           "<shell-maker-end-of-prompt>\n"
+                           "Claude> ")))))
 
 (defmacro agent-shell-tests--with-rendered-shell (markdown &rest body)
   "Render MARKDOWN in a temporary shell buffer and run BODY with point at start.

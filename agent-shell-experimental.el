@@ -50,6 +50,8 @@
 (declare-function agent-shell--insert-to-shell-buffer "agent-shell")
 (declare-function agent-shell--append-transcript "agent-shell")
 (declare-function agent-shell--indent-markdown-headers "agent-shell")
+(declare-function agent-shell--live-input-prompt-p "agent-shell")
+(declare-function agent-shell--reset-undo-history "agent-shell")
 (declare-function agent-shell--make-boxed-message "agent-shell")
 (declare-function agent-shell--send-request "agent-shell")
 (declare-function agent-shell--state "agent-shell")
@@ -322,27 +324,62 @@ is what bounds the prompt for anything measuring it by searching forward
 for the marker; without it such a search runs to the next submission and
 takes the rest of the turn's output as this prompt's body.
 
-The `[steered]' prefix carries the one thing this shape would otherwise
+The `[steer]' prefix carries the one thing this shape would otherwise
 lose -- that the prompt was injected into a running turn rather than
-typed before one."
+typed before one.
+
+The turn can end while the steer is in flight, leaving a live input
+prompt at the buffer end by the time the agent answers.  Rendering above
+it then keeps this out of comint's input area, where submitting would
+send it as input."
   (map-put! state :chunked-group-count (1+ (map-elt state :chunked-group-count)))
   (agent-shell--append-transcript
    :text (format "## User (steered) (%s)\n\n%s\n\n"
                  (format-time-string "%F %T")
                  (agent-shell--indent-markdown-headers prompt))
    :file-path agent-shell--transcript-file)
-  (agent-shell--update-text
-   :state state
-   :block-id (format "%s-steered-user_message_chunk"
-                     (map-elt state :chunked-group-count))
-   :text (concat (propertize (map-nested-elt state '(:agent-config :shell-prompt))
-                             'font-lock-face 'agent-shell-prompt
-                             'field 'output)
-                 (propertize (concat "[steered] " (substring-no-properties prompt))
-                             'font-lock-face 'agent-shell-input))
-   :create-new t)
   (with-current-buffer (map-elt state :buffer)
-    (shell-maker-insert-end-of-prompt-marker))
+    ;; Narrow to everything above a live input prompt so both inserts land
+    ;; there, and flip the prompt-start marker's insertion type so it
+    ;; advances past the new text rather than being stranded inside it.
+    ;; `shell-maker-insert-end-of-prompt-marker' documents this narrowing as
+    ;; the way to synthesize history above a live prompt.
+    (let* ((late-prompt-start (and (not (shell-maker-busy))
+                                   comint-last-prompt
+                                   (marker-position (car comint-last-prompt))
+                                   (agent-shell--live-input-prompt-p comint-last-prompt)
+                                   (car comint-last-prompt)))
+           (orig-insertion-type (and late-prompt-start
+                                     (marker-insertion-type late-prompt-start))))
+      (when late-prompt-start
+        (set-marker-insertion-type late-prompt-start t))
+      (unwind-protect
+          (save-restriction
+            (when late-prompt-start
+              (narrow-to-region (point-min) (marker-position late-prompt-start)))
+            (agent-shell--update-text
+             :state state
+             :block-id (format "%s-steered-user_message_chunk"
+                               (map-elt state :chunked-group-count))
+             :text (concat (propertize (map-nested-elt state '(:agent-config :shell-prompt))
+                                       'font-lock-face 'agent-shell-prompt
+                                       'field 'output)
+                           (propertize (concat "[steer] " (substring-no-properties prompt))
+                                       'font-lock-face 'agent-shell-input))
+             :create-new t)
+            (shell-maker-insert-end-of-prompt-marker)
+            ;; Under the narrowing `point-max' is the live prompt's start,
+            ;; so this keeps that prompt on its own line.
+            (when late-prompt-start
+              (let ((inhibit-read-only t))
+                (goto-char (point-max))
+                (insert "\n"))))
+        (when late-prompt-start
+          (set-marker-insertion-type late-prompt-start orig-insertion-type)))
+      (when late-prompt-start
+        ;; Rendering above the prompt pushed any unsubmitted input down, so
+        ;; undo entries recorded for it point at the shifted text.
+        (agent-shell--reset-undo-history))))
   ;; Deliberately not "user_message_chunk": that value asks the replay path
   ;; to insert the end-of-prompt marker on the next notification, and one
   ;; has already gone in above.
