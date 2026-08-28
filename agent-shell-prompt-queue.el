@@ -224,6 +224,11 @@ doing can be lost.  Whether that happens is the agent's choice, not ours.
 When the agent declines the steer, the running turn is interrupted rather
 than left to carry on in a direction you believe you already corrected.
 
+Steering a shell awaiting a permission answer asks for confirmation
+first: no implementation defines what an agent does with a prompt
+injected while a tool sits on that question, and a declined steer
+interrupts the turn, which rejects that permission along with it.
+
 While reading, @ completes project files and / completes available agent
 commands when the agent has reported them."
   (interactive
@@ -235,7 +240,9 @@ commands when the agent has reported them."
     (unless (agent-shell-steering-supported-p)
       (user-error "This agent does not support steering"))
     (when (eq (agent-shell-status) 'blocked)
-      (user-error "Answer the pending permission request first"))
+      (unless (y-or-n-p
+               "Shell is pending user action (Steering may cancel work).  Steer anyway?")
+        (user-error "Steering cancelled")))
     (agent-shell-experimental--send-steering
      :state (agent-shell--state)
      :prompt prompt)))

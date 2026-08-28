@@ -5769,11 +5769,12 @@ shell is left working in a directory that was just deleted."
   (should-error (agent-shell-experimental--make-session-steering-request
                  :session-id "sess-1")))
 
-(cl-defun agent-shell-tests--steer-guard (&key busy supported status)
+(cl-defun agent-shell-tests--steer-guard (&key busy supported status confirm)
   "Invoke `agent-shell-prompt-steer' and report what its guards decided.
 
 BUSY, SUPPORTED and STATUS are what `shell-maker-busy',
 `agent-shell-steering-supported-p' and `agent-shell-status' report.
+CONFIRM is how the user answers, should a guard ask.
 
 Returns `steered' when the prompt reached the agent, or the `user-error'
 message explaining why it did not."
@@ -5783,6 +5784,7 @@ message explaining why it did not."
             ((symbol-function 'agent-shell-steering-supported-p)
              (lambda (&rest _) supported))
             ((symbol-function 'agent-shell-status) (lambda (&rest _) status))
+            ((symbol-function 'y-or-n-p) (lambda (&rest _) confirm))
             ((symbol-function 'agent-shell--state) (lambda (&rest _) nil))
             ((symbol-function 'agent-shell-experimental--send-steering)
              (lambda (&rest _) 'steered)))
@@ -5799,9 +5801,14 @@ message explaining why it did not."
   ;; An agent that never advertised steering is only ever queued to.
   (should (equal (agent-shell-tests--steer-guard :busy t :supported nil :status 'busy)
                  "This agent does not support steering"))
-  ;; A pending permission answer is a question, not a turn to redirect.
-  (should (equal (agent-shell-tests--steer-guard :busy t :supported t :status 'blocked)
-                 "Answer the pending permission request first")))
+  ;; Steering a shell awaiting a permission answer can interrupt the turn,
+  ;; which rejects that permission too, so it is the user's call to make.
+  (should (equal (agent-shell-tests--steer-guard :busy t :supported t :status 'blocked
+                                                 :confirm nil)
+                 "Steering cancelled"))
+  (should (eq (agent-shell-tests--steer-guard :busy t :supported t :status 'blocked
+                                              :confirm t)
+              'steered)))
 
 (cl-defun agent-shell-tests--steer-outcome (&key outcome busy request-failed)
   "Steer a prompt, answer with OUTCOME, and return what became of it.
