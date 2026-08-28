@@ -7979,16 +7979,26 @@ Each marked span is replaced by its `agent-shell-region-text' value."
           (insert full-text))))
     (buffer-string)))
 
+(cl-defun agent-shell--prompt-content-blocks (prompt)
+  "Return PROMPT as content blocks, showing whatever files it attaches.
+
+Falls back to a lone text block when PROMPT cannot be parsed, so a
+malformed mention costs the mention rather than the whole prompt.
+
+Must be called from the shell buffer: `agent-shell--build-content-blocks'
+reads the buffer's prompt capabilities."
+  (let ((content-blocks (condition-case nil
+                            (agent-shell--build-content-blocks prompt)
+                          (error `[((type . "text")
+                                    (text . ,(substring-no-properties prompt)))]))))
+    (when-let* ((attached-files (agent-shell--collect-attached-files content-blocks)))
+      (agent-shell--display-attached-files attached-files))
+    content-blocks))
+
 (cl-defun agent-shell--send-command (&key prompt shell-buffer)
   "Send PROMPT to agent using SHELL-BUFFER."
   (let* ((expanded-prompt (agent-shell--expand-truncated-regions prompt))
-         (content-blocks (condition-case nil
-                             (agent-shell--build-content-blocks expanded-prompt)
-                           (error `[((type . "text")
-                                     (text . ,(substring-no-properties expanded-prompt)))])))
-         (attached-files (agent-shell--collect-attached-files content-blocks)))
-    (when attached-files
-      (agent-shell--display-attached-files attached-files))
+         (content-blocks (agent-shell--prompt-content-blocks expanded-prompt)))
     (when agent-shell-show-busy-indicator
       (agent-shell-heartbeat-start
        :heartbeat (map-elt agent-shell--state :heartbeat)))

@@ -45,8 +45,8 @@
 (declare-function acp-send-response "acp")
 (declare-function acp-make-error "acp")
 (declare-function agent-shell--active-requests-p "agent-shell")
-(declare-function agent-shell--build-content-blocks "agent-shell")
 (declare-function agent-shell--expand-truncated-regions "agent-shell")
+(declare-function agent-shell--prompt-content-blocks "agent-shell")
 (declare-function agent-shell--insert-to-shell-buffer "agent-shell")
 (declare-function agent-shell--append-transcript "agent-shell")
 (declare-function agent-shell--indent-markdown-headers "agent-shell")
@@ -202,7 +202,7 @@ For example:
   "Steer PROMPT into the turn STATE's session is currently running.
 
 Must be called from the shell buffer: PROMPT is converted with
-`agent-shell--build-content-blocks', which reads the buffer's prompt
+`agent-shell--prompt-content-blocks', which reads the buffer's prompt
 capabilities.
 
 Acts on the `outcome' the agent answers with:
@@ -226,11 +226,8 @@ reported in the shell, and the running turn interrupted.
 Nothing here queues.  Queueing is `agent-shell-prompt-queue', and a steer
 turned into a queued prompt would reach the agent long after the user
 asked for it."
-  (let* ((expanded (agent-shell--expand-truncated-regions prompt))
-         (content-blocks (condition-case nil
-                             (agent-shell--build-content-blocks expanded)
-                           (error `[((type . "text")
-                                     (text . ,(substring-no-properties expanded)))]))))
+  (let ((content-blocks (agent-shell--prompt-content-blocks
+                         (agent-shell--expand-truncated-regions prompt))))
     (agent-shell--send-request
      :state state
      :client (map-elt state :client)
