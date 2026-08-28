@@ -209,13 +209,16 @@ agent commands when the agent has reported them."
       (read-string (or (map-nested-elt (agent-shell--state) '(:agent-config :shell-prompt))
                        "Enqueue prompt: ")))))
 
-(defun agent-shell-prompt-steer (prompt)
+(defun agent-shell-prompt-steer (&optional prompt)
   "Steer PROMPT into the turn the agent is currently running.
 
-Unlike `agent-shell-prompt-queue', the prompt reaches the agent while it
-works, so it can change course instead of finishing first.  Signals a
-`user-error' when the agent does not support steering or no turn is
-running -- use `agent-shell-prompt-queue' for those.
+Unlike `agent-shell-prompt-queue', the prompt reaches the agent while
+it's already working on a submitted prompt, so it can change course
+instead of finishing first.  Signals a `user-error' when the agent does
+not support steering -- use `agent-shell-prompt-queue' for that one.
+
+With no turn running there is nothing to steer into, so PROMPT is simply
+submitted and starts the next turn.
 
 Steering is not additive: an agent that interrupts what it is generating
 may drop the instruction it was working on, so what the agent was already
@@ -231,21 +234,31 @@ interrupts the turn, which rejects that permission along with it.
 
 While reading, @ completes project files and / completes available agent
 commands when the agent has reported them."
-  (interactive
-   (list (with-current-buffer (agent-shell--shell-buffer :no-create t)
-           (agent-shell--prompt-queue-read))))
+  (interactive)
   (with-current-buffer (agent-shell--shell-buffer :no-create t)
-    (unless (shell-maker-busy)
-      (user-error "No turn to steer; the agent is idle"))
-    (unless (agent-shell-steering-supported-p)
-      (user-error "This agent does not support steering"))
-    (when (eq (agent-shell-status) 'blocked)
-      (unless (y-or-n-p
-               "Shell is pending user action (Steering may cancel work).  Steer anyway?")
-        (user-error "Steering cancelled")))
-    (agent-shell-experimental--send-steering
-     :state (agent-shell--state)
-     :prompt prompt)))
+    ;; Read once, before the prompt is asked for, so refusing costs no
+    ;; typing and so the same answer picks the path below.  The turn can
+    ;; end while the prompt is written, since the message pump drains on a
+    ;; timer and timers run from the minibuffer's own wait for input.
+    (let ((busy (shell-maker-busy)))
+      (when busy
+        (unless (agent-shell-steering-supported-p)
+          (user-error "This agent does not support steering"))
+        (when (eq (agent-shell-status) 'blocked)
+          (unless (y-or-n-p
+                   "Shell is pending user action (Steering may cancel work).  Steer anyway?")
+            (user-error "Steering cancelled"))))
+      (setq prompt (or prompt (agent-shell--prompt-queue-read)))
+      (if (not busy)
+          ;; No turn to join, so PROMPT starts the next one instead.
+          (agent-shell--insert-to-shell-buffer :text prompt :submit t :no-focus t)
+        ;; Steering is the one path that never reaches shell-maker, which
+        ;; would otherwise absorb a blank prompt by reprinting its own.
+        (when (string-empty-p (string-trim prompt))
+          (user-error "No prompt to steer"))
+        (agent-shell-experimental--send-steering
+         :state (agent-shell--state)
+         :prompt prompt)))))
 
 (defun agent-shell-prompt-queue (prompt)
   "Queue or immediately send a prompt depending on shell busy state.

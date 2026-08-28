@@ -5769,17 +5769,21 @@ shell is left working in a directory that was just deleted."
   (should-error (agent-shell-experimental--make-session-steering-request
                  :session-id "sess-1")))
 
-(cl-defun agent-shell-tests--steer-guard (&key busy supported status confirm)
-  "Invoke `agent-shell-prompt-steer' and report what its guards decided.
+(cl-defun agent-shell-tests--steer-guard (&key busy supported status confirm
+                                               (prompt "actually, just the filenames"))
+  "Invoke `agent-shell-prompt-steer' on PROMPT and report what its guards decided.
 
 BUSY, SUPPORTED and STATUS are what `shell-maker-busy',
 `agent-shell-steering-supported-p' and `agent-shell-status' report.
 CONFIRM is how the user answers, should a guard ask.
 
-Returns `steered' when the prompt reached the agent, or the `user-error'
-message explaining why it did not."
+Returns `steered' when the prompt reached the agent, `submitted' when it
+started a turn of its own instead, or the `user-error' message explaining
+why it did neither."
   (cl-letf (((symbol-function 'agent-shell--shell-buffer)
              (lambda (&rest _) (current-buffer)))
+            ((symbol-function 'agent-shell--insert-to-shell-buffer)
+             (lambda (&rest _) 'submitted))
             ((symbol-function 'shell-maker-busy) (lambda (&rest _) busy))
             ((symbol-function 'agent-shell-steering-supported-p)
              (lambda (&rest _) supported))
@@ -5789,15 +5793,19 @@ message explaining why it did not."
             ((symbol-function 'agent-shell-experimental--send-steering)
              (lambda (&rest _) 'steered)))
     (condition-case error
-        (agent-shell-prompt-steer "actually, just the filenames")
+        (agent-shell-prompt-steer prompt)
       (user-error (error-message-string error)))))
 
 (ert-deftest agent-shell-prompt-steer-test ()
   "Test `agent-shell-prompt-steer' refuses when there is no turn to steer."
   (should (eq (agent-shell-tests--steer-guard :busy t :supported t :status 'busy)
               'steered))
-  (should (equal (agent-shell-tests--steer-guard :busy nil :supported t :status 'ready)
-                 "No turn to steer; the agent is idle"))
+  ;; An idle agent has no turn to join, so the prompt starts its own.
+  (should (eq (agent-shell-tests--steer-guard :busy nil :supported t :status 'ready)
+              'submitted))
+  ;; Even one that cannot steer, since steering is not what happens here.
+  (should (eq (agent-shell-tests--steer-guard :busy nil :supported nil :status 'ready)
+              'submitted))
   ;; An agent that never advertised steering is only ever queued to.
   (should (equal (agent-shell-tests--steer-guard :busy t :supported nil :status 'busy)
                  "This agent does not support steering"))
@@ -5808,7 +5816,32 @@ message explaining why it did not."
                  "Steering cancelled"))
   (should (eq (agent-shell-tests--steer-guard :busy t :supported t :status 'blocked
                                               :confirm t)
-              'steered)))
+              'steered))
+  ;; Steering bypasses shell-maker, so a blank prompt would reach the wire.
+  (should (equal (agent-shell-tests--steer-guard :busy t :supported t :status 'busy
+                                                 :prompt "  \n ")
+                 "No prompt to steer"))
+  ;; Idle does reach shell-maker, which reprints its prompt for a blank one.
+  (should (eq (agent-shell-tests--steer-guard :busy nil :supported t :status 'ready
+                                              :prompt "  \n ")
+              'submitted)))
+
+(ert-deftest agent-shell-prompt-steer-guards-before-reading-test ()
+  "Test `agent-shell-prompt-steer' refuses before asking for a prompt.
+
+Reading first would make the user compose a prompt only to have it
+refused, leaving the text recoverable from `minibuffer-history' alone."
+  (cl-letf (((symbol-function 'agent-shell--shell-buffer)
+             (lambda (&rest _) (current-buffer)))
+            ((symbol-function 'shell-maker-busy) (lambda (&rest _) t))
+            ((symbol-function 'agent-shell-steering-supported-p)
+             (lambda (&rest _) nil))
+            ((symbol-function 'agent-shell--prompt-queue-read)
+             (lambda (&rest _) (error "Asked for a prompt before refusing"))))
+    (should (equal (condition-case error
+                       (agent-shell-prompt-steer)
+                     (user-error (error-message-string error)))
+                   "This agent does not support steering"))))
 
 (cl-defun agent-shell-tests--steer-outcome (&key outcome busy request-failed)
   "Steer a prompt, answer with OUTCOME, and return what became of it.
