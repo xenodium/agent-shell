@@ -3186,6 +3186,130 @@ so the command must not append a second time."
       (when (and test-buffer (buffer-live-p test-buffer))
         (kill-buffer test-buffer)))))
 
+(ert-deftest agent-shell--make-session-list-request-test ()
+  "Test `agent-shell--make-session-list-request' adds an optional cursor."
+  (let ((first-page (agent-shell--make-session-list-request :cwd "/tmp/"))
+        (next-page (agent-shell--make-session-list-request
+                    :cwd "/tmp/"
+                    :cursor "next-page")))
+    (should (equal (map-nested-elt first-page '(:params cwd)) "/tmp"))
+    (should-not (map-nested-elt first-page '(:params cursor)))
+    (should (equal (map-nested-elt next-page '(:params cwd)) "/tmp"))
+    (should (equal (map-nested-elt next-page '(:params cursor)) "next-page"))))
+
+(ert-deftest agent-shell--list-sessions-fetches-all-pages-test ()
+  "Test `agent-shell--list-sessions' follows cursors through empty pages."
+  (let ((agent-shell-session-list-page-limit nil)
+        failure
+        requests
+        sessions)
+    (cl-letf (((symbol-function 'agent-shell--send-request)
+               (lambda (&rest args)
+                 (let* ((request (plist-get args :request))
+                        (cursor (map-nested-elt request '(:params cursor))))
+                   (push request requests)
+                   (funcall
+                    (plist-get args :on-success)
+                    (cond
+                     ((not cursor)
+                      '((sessions . []) (nextCursor . "page-2")))
+                     ((equal cursor "page-2")
+                      '((sessions . [((sessionId . "session-1"))])
+                        (nextCursor . "page-3")))
+                     ((equal cursor "page-3")
+                      '((sessions . [((sessionId . "session-2"))])))
+                     (t (error "Unexpected cursor: %s" cursor))))))))
+      (agent-shell--list-sessions
+       :state '((:client . test-client))
+       :cwd "/tmp"
+       :buffer (current-buffer)
+       :on-success (lambda (result) (setq sessions result))
+       :on-failure (lambda (&rest args) (setq failure args))))
+    (setq requests (nreverse requests))
+    (should-not failure)
+    (should (equal (mapcar (lambda (request)
+                             (map-nested-elt request '(:params cursor)))
+                           requests)
+                   '(nil "page-2" "page-3")))
+    (should (seq-every-p (lambda (request)
+                           (equal (map-nested-elt request '(:params cwd)) "/tmp"))
+                         requests))
+    (should (equal (mapcar (lambda (session)
+                             (map-elt session 'sessionId))
+                           sessions)
+                   '("session-1" "session-2")))))
+
+(ert-deftest agent-shell--list-sessions-respects-page-limit-test ()
+  "Test `agent-shell--list-sessions' stops silently at the page limit."
+  (let ((agent-shell-session-list-page-limit 2)
+        failure
+        requests
+        sessions)
+    (cl-letf (((symbol-function 'agent-shell--send-request)
+               (lambda (&rest args)
+                 (let* ((request (plist-get args :request))
+                        (cursor (map-nested-elt request '(:params cursor))))
+                   (push request requests)
+                   (funcall
+                    (plist-get args :on-success)
+                    (if cursor
+                        '((sessions . []) (nextCursor . "page-3"))
+                      '((sessions . [((sessionId . "session-1"))])
+                        (nextCursor . "page-2"))))))))
+      (agent-shell--list-sessions
+       :state '((:client . test-client))
+       :cwd "/tmp"
+       :buffer (current-buffer)
+       :on-success (lambda (result) (setq sessions result))
+       :on-failure (lambda (&rest args) (setq failure args))))
+    (should-not failure)
+    (should (equal (mapcar (lambda (request)
+                             (map-nested-elt request '(:params cursor)))
+                           (nreverse requests))
+                   '(nil "page-2")))
+    (should (equal (mapcar (lambda (session)
+                             (map-elt session 'sessionId))
+                           sessions)
+                   '("session-1")))))
+
+(ert-deftest agent-shell--list-sessions-rejects-invalid-page-limit-test ()
+  "Test `agent-shell--list-sessions' rejects invalid page limits."
+  (dolist (page-limit '(0 -1 1.5 "2"))
+    (let ((agent-shell-session-list-page-limit page-limit)
+          request-sent)
+      (cl-letf (((symbol-function 'agent-shell--send-request)
+                 (lambda (&rest _args) (setq request-sent t))))
+        (should-error
+         (agent-shell--list-sessions
+          :state '((:client . test-client))
+          :cwd "/tmp"
+          :buffer (current-buffer)
+          :on-success #'ignore
+          :on-failure #'ignore)
+         :type 'user-error))
+      (should-not request-sent))))
+
+(ert-deftest agent-shell--list-sessions-rejects-repeated-cursor-test ()
+  "Test `agent-shell--list-sessions' stops when an agent repeats a cursor."
+  (let ((request-count 0)
+        failure
+        sessions)
+    (cl-letf (((symbol-function 'agent-shell--send-request)
+               (lambda (&rest args)
+                 (setq request-count (1+ request-count))
+                 (funcall (plist-get args :on-success)
+                          '((sessions . []) (nextCursor . "same-cursor"))))))
+      (agent-shell--list-sessions
+       :state '((:client . test-client))
+       :cwd "/tmp"
+       :buffer (current-buffer)
+       :on-success (lambda (result) (setq sessions result))
+       :on-failure (lambda (&rest args) (setq failure args))))
+    (should (= request-count 2))
+    (should-not sessions)
+    (should (equal (map-nested-elt (car failure) '(message))
+                   "Agent repeated a session/list cursor"))))
+
 (ert-deftest agent-shell--initiate-session-prefers-list-and-load-when-supported ()
   "Test `agent-shell--initiate-session' prefers session/list + session/load."
   (with-temp-buffer
@@ -3229,10 +3353,13 @@ so the command must not append a second time."
                           (method (map-elt request :method)))
                      (pcase method
                        ("session/list"
-                        (funcall (plist-get args :on-success)
-                                 '((sessions . [((sessionId . "session-123")
-                                                 (cwd . "/tmp")
-                                                 (title . "Recent session"))]))))
+                        (funcall
+                         (plist-get args :on-success)
+                         (if (map-nested-elt request '(:params cursor))
+                             '((sessions . [((sessionId . "session-123")
+                                             (cwd . "/tmp")
+                                             (title . "Recent session"))]))
+                           '((sessions . []) (nextCursor . "next-page")))))
                        ("session/load"
                         (funcall (plist-get args :on-success)
                                  '((modes (currentModeId . "default")
@@ -3252,8 +3379,13 @@ so the command must not append a second time."
           (should (equal (mapcar (lambda (req)
                                    (map-elt (plist-get req :request) :method))
                                  ordered-requests)
-                         '("session/list" "session/load")))
-          (let* ((load-request (plist-get (nth 1 ordered-requests) :request))
+                         '("session/list" "session/list" "session/load")))
+          (should-not (map-nested-elt (plist-get (nth 0 ordered-requests) :request)
+                                      '(:params cursor)))
+          (should (equal (map-nested-elt (plist-get (nth 1 ordered-requests) :request)
+                                         '(:params cursor))
+                         "next-page"))
+          (let* ((load-request (plist-get (nth 2 ordered-requests) :request))
                  (load-params (map-elt load-request :params)))
             (should (equal (map-elt load-params 'sessionId) "session-123"))
             (should (equal (map-elt load-params 'cwd) "/tmp"))))
