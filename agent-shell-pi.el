@@ -115,6 +115,8 @@ after adaptation."
                             (map-elt update 'toolCallId))))
       (when (and (stringp terminal-id)
                  (or terminal-output terminal-exit))
+        (unless (local-variable-p 'agent-shell-pi--terminal-output-snapshots)
+          (setq-local agent-shell-pi--terminal-output-snapshots nil))
         (when-let* ((data (map-elt terminal-output 'data)))
           (when (stringp data)
             (setf (alist-get terminal-id agent-shell-pi--terminal-output-snapshots
