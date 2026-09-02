@@ -34,6 +34,8 @@
   (require 'cl-lib))
 (require 'shell-maker)
 (require 'acp)
+(require 'map)
+(require 'seq)
 
 (declare-function agent-shell--indent-string "agent-shell")
 (declare-function agent-shell-make-agent-config "agent-shell")
@@ -67,6 +69,71 @@ Example usage to set custom environment variables:
   :type '(repeat string)
   :group 'agent-shell)
 
+(defvar-local agent-shell-pi--terminal-output-snapshots nil
+  "Alist of Pi terminal IDs and accumulated output for the current buffer.")
+
+(defun agent-shell-pi--terminal-output-content (text)
+  "Return standard ACP content for terminal output TEXT.
+
+Examples:
+
+  (agent-shell-pi--terminal-output-content \"hello\")
+    => (((type . \"content\")
+         (content (type . \"text\") (text . \"```\\nhello\\n```\"))))"
+  (when (and (stringp text) (not (string-empty-p text)))
+    (list `((type . "content")
+            (content (type . "text")
+                     (text . ,(format "```\n%s\n```" text)))))))
+
+(defun agent-shell-pi--forget-terminal-output (terminal-id)
+  "Forget accumulated output for Pi TERMINAL-ID in the current buffer."
+  (setq agent-shell-pi--terminal-output-snapshots
+        (seq-remove (lambda (entry)
+                      (equal (car entry) terminal-id))
+                    agent-shell-pi--terminal-output-snapshots)))
+
+(cl-defun agent-shell-pi--notification-adapter (&key acp-notification)
+  "Adapt Pi terminal metadata into standard ACP tool-call content.
+
+Pi's ACP adapter emits terminal output as incremental `data' values in
+`_meta.terminal_output' and signals completion with `_meta.terminal_exit'.
+Accumulate those values by terminal ID and expose the result as regular
+text content for `agent-shell'.
+
+Existing tool-call content is left unchanged.  ACP-NOTIFICATION is returned
+after adaptation."
+  (when-let* ((method (map-elt acp-notification 'method))
+              ((equal method "session/update"))
+              (update-type (map-nested-elt acp-notification
+                                            '(params update sessionUpdate)))
+              ((equal update-type "tool_call_update")))
+    (let* ((update (map-nested-elt acp-notification '(params update)))
+           (terminal-output (map-nested-elt update '(_meta terminal_output)))
+           (terminal-exit (map-nested-elt update '(_meta terminal_exit)))
+           (terminal-id (or (map-elt terminal-output 'terminal_id)
+                            (map-elt terminal-exit 'terminal_id)
+                            (map-elt update 'toolCallId))))
+      (when (and (stringp terminal-id)
+                 (or terminal-output terminal-exit))
+        (when-let* ((data (map-elt terminal-output 'data)))
+          (when (stringp data)
+            (setf (alist-get terminal-id agent-shell-pi--terminal-output-snapshots
+                             nil nil #'equal)
+                  (concat (alist-get terminal-id agent-shell-pi--terminal-output-snapshots
+                                     "" nil #'equal)
+                          data))))
+        (when-let* ((output (alist-get terminal-id agent-shell-pi--terminal-output-snapshots
+                                      nil nil #'equal))
+                    ((seq-empty-p (map-elt update 'content)))
+                    (content (agent-shell-pi--terminal-output-content output)))
+          (setf (alist-get 'content
+                           (alist-get 'update
+                                      (alist-get 'params acp-notification)))
+                content))
+        (when terminal-exit
+          (agent-shell-pi--forget-terminal-output terminal-id)))))
+  acp-notification)
+
 (defun agent-shell-pi-make-agent-config ()
   "Create a Pi coding agent configuration.
 
@@ -81,6 +148,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :welcome-function #'agent-shell-pi--welcome-message
    :client-maker (lambda (buffer)
                    (agent-shell-pi-make-client :buffer buffer))
+   :notification-adapter #'agent-shell-pi--notification-adapter
    :install-instructions "See https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent for Pi installation.
 Requires pi-acp adapter for ACP integration."))
 
