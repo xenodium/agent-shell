@@ -58,6 +58,8 @@
 (declare-function agent-shell-interaction-at-point "agent-shell")
 (declare-function agent-shell-copy-session-id "agent-shell")
 (declare-function agent-shell-cycle-session-mode "agent-shell")
+(declare-function agent-shell-elicitation-next-field "agent-shell-elicitation")
+(declare-function agent-shell-elicitation-previous-field "agent-shell-elicitation")
 (declare-function agent-shell-interrupt "agent-shell")
 (declare-function agent-shell-interrupt-confirmed-p "agent-shell")
 (declare-function agent-shell-open-transcript "agent-shell")
@@ -639,6 +641,8 @@ in, landing on the item after it rather than on its next cell."
                       (agent-shell-ui-forward-block)))
          (button-pos (save-mark-and-excursion
                        (agent-shell-next-permission-button)))
+         (field-pos (save-mark-and-excursion
+                      (agent-shell-elicitation-next-field)))
          (image-pos (save-mark-and-excursion
                       (agent-shell-markdown--next-visible-image)))
          (link-pos (save-mark-and-excursion
@@ -658,6 +662,7 @@ in, landing on the item after it rather than on its next cell."
                                                           response-start
                                                           block-pos
                                                           button-pos
+                                                          field-pos
                                                           image-pos
                                                           link-pos
                                                           source-block-pos
@@ -705,6 +710,8 @@ in, as `agent-shell-viewport-next-item' does from its end."
                       (agent-shell-ui-backward-block)))
          (button-pos (save-mark-and-excursion
                        (agent-shell-previous-permission-button)))
+         (field-pos (save-mark-and-excursion
+                      (agent-shell-elicitation-previous-field)))
          (image-pos (save-mark-and-excursion
                       (agent-shell-markdown--previous-visible-image)))
          (link-pos (save-mark-and-excursion
@@ -726,6 +733,7 @@ in, as `agent-shell-viewport-next-item' does from its end."
                                                           response-start
                                                           block-pos
                                                           button-pos
+                                                          field-pos
                                                           image-pos
                                                           link-pos
                                                           source-block-pos

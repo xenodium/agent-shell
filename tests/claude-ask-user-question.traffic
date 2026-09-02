@@ -1,0 +1,144 @@
+(((:direction . outgoing) (:kind . request)
+  (:object (jsonrpc . #2="2.0") (method . "initialize") (id . 1)
+	   (params
+	    (clientInfo (name . "agent-shell")
+			(title . "Emacs Agent Shell")
+			(version . "0.74.2"))
+	    (protocolVersion . 1)
+	    (clientCapabilities
+	     (fs (readTextFile . t) (writeTextFile . t))
+	     (elicitation (form))))))
+ ((:direction . incoming) (:kind . response)
+  (:object (jsonrpc . "2.0") (id . 1)
+	   (result (protocolVersion . 1)
+		   (agentCapabilities
+		    (_meta (claudeCode (promptQueueing . t)))
+		    (promptCapabilities (image . t)
+					(embeddedContext . t))
+		    (mcpCapabilities (http . t) (sse . t))
+		    (auth (logout)) (providers) (loadSession . t)
+		    (sessionCapabilities (additionalDirectories)
+					 (close) (delete) (fork)
+					 (list) (resume)))
+		   (agentInfo
+		    (name . "@agentclientprotocol/claude-agent-acp")
+		    (title . "Claude Agent") (version . "0.70.0"))
+		   (authMethods . #1=[])
+		   (_meta
+		    (jetbrains
+		     (air (version . 1)
+			  (capabilities
+			   . ["sessionFailure" "agentFileChangeReport"])))
+		    (steering (supported . t))
+		    (goal (version . 1)
+			  (controlMethod . "_session/goal")
+			  (actions . ["set" "clear"]))))))
+ ((:direction . incoming) (:kind . notification)
+  (:object (jsonrpc . "2.0") (method . "session/update")
+	   (params
+	    (sessionId . "866901fc-f565-4ff7-b3c8-b6c3905fb293")
+	    (update
+	     (_meta (claudeCode (toolName . "AskUserQuestion")))
+	     (toolCallId . "toolu_018EPi8fBMWmYGL3cfag3v9c")
+	     (sessionUpdate . "tool_call") (rawInput)
+	     (status . "pending") (title . "Asking for your input")
+	     (kind . "other") (content . #1#)))))
+ ((:direction . incoming) (:kind . notification)
+  (:object (jsonrpc . "2.0") (method . "session/update")
+	   (params
+	    (sessionId . "866901fc-f565-4ff7-b3c8-b6c3905fb293")
+	    (update
+	     (_meta (claudeCode (toolName . "AskUserQuestion")))
+	     (toolCallId . "toolu_018EPi8fBMWmYGL3cfag3v9c")
+	     (sessionUpdate . "tool_call_update")
+	     (rawInput
+	      (questions
+	       . [((question
+		    . "Which colour do you prefer, red or blue?")
+		   (header . "Colour")
+		   (options
+		    . [((label . "Red")
+			(description . "You prefer red."))
+		       ((label . "Blue")
+			(description . "You prefer blue."))])
+		   (multiSelect))]))
+	     (title . "Which colour do you prefer, red or blue?")
+	     (kind . "other")
+	     (content
+	      . [((type . "content")
+		  (content (type . "text")
+			   (text
+			    . "Which colour do you prefer, red or blue?")))])))))
+ ((:direction . incoming) (:kind . request)
+  (:object (jsonrpc . "2.0") (id . 0) (method . "elicitation/create")
+	   (params (mode . "form")
+		   (sessionId . "866901fc-f565-4ff7-b3c8-b6c3905fb293")
+		   (toolCallId . "toolu_018EPi8fBMWmYGL3cfag3v9c")
+		   (message
+		    . "Which colour do you prefer, red or blue?")
+		   (requestedSchema (type . "object")
+				    (properties
+				     (question_0 (type . "string")
+						 (title . "Colour")
+						 (oneOf
+						  . [((const . #3=
+							     "Red")
+						      (title . "Red")
+						      (description
+						       . "You prefer red."))
+						     ((const . "Blue")
+						      (title . "Blue")
+						      (description
+						       . "You prefer blue."))]))
+				     (question_0_custom
+				      (type . "string")
+				      (title . "Other")
+				      (description
+				       . "Type your own answer instead of choosing an option above (optional).")
+				      (_meta
+				       (_askUserQuestionCustomAnswer
+					(questionId . "question_0")
+					(isCustomAnswer . t)))))))))
+ ((:direction . outgoing) (:kind . response)
+  (:object (jsonrpc . #2#) (id . 0)
+	   (result (action . "accept") (content (question_0 . #3#)))))
+ ((:direction . incoming) (:kind . notification)
+  (:object (jsonrpc . "2.0") (method . "session/update")
+	   (params
+	    (sessionId . "866901fc-f565-4ff7-b3c8-b6c3905fb293")
+	    (update
+	     (_meta
+	      (claudeCode
+	       (toolResponse
+		(questions
+		 . [((question
+		      . "Which colour do you prefer, red or blue?")
+		     (header . "Colour")
+		     (options
+		      . [((label . "Red")
+			  (description . "You prefer red."))
+			 ((label . "Blue")
+			  (description . "You prefer blue."))])
+		     (multiSelect))])
+		(answers
+		 (Which\ colour\ do\ you\ prefer\,\ red\ or\ blue?
+		  . "Red")))
+	       (toolName . "AskUserQuestion")))
+	     (toolCallId . "toolu_018EPi8fBMWmYGL3cfag3v9c")
+	     (sessionUpdate . "tool_call_update")))))
+ ((:direction . incoming) (:kind . notification)
+  (:object (jsonrpc . "2.0") (method . "session/update")
+	   (params
+	    (sessionId . "866901fc-f565-4ff7-b3c8-b6c3905fb293")
+	    (update
+	     (_meta (claudeCode (toolName . "AskUserQuestion")))
+	     (toolCallId . "toolu_018EPi8fBMWmYGL3cfag3v9c")
+	     (sessionUpdate . "tool_call_update")
+	     (status . "completed")
+	     (rawOutput
+	      . "Your questions have been answered: \"Which colour do you prefer, red or blue?\"=\"Red\". You can now continue with these answers in mind.")
+	     (content
+	      . [((type . "content")
+		  (content (type . "text")
+			   (text
+			    . "Your questions have been answered: \"Which colour do you prefer, red or blue?\"=\"Red\". You can now continue with these answers in mind.")))]))))))

@@ -977,6 +977,45 @@ it lying.  Mouse bindings are skipped so the hint stays pressable."
       (agent-shell-ui--echo-action-hint "toggle")
       (should (equal "Press TAB to toggle" echoed)))))
 
+(ert-deftest agent-shell-ui-action-hint-names-the-supplied-keymap-test ()
+  "The hint describes the command and keymap it was handed.
+
+Chrome bound to its own shared map needs the same \"Press KEY to VERB\"
+hint pointing at its own binding, rather than at whichever key folds a
+fragment."
+  (let ((map (make-sparse-keymap))
+        (echoed nil))
+    (define-key map (kbd "C-c C-e") #'ignore)
+    (cl-letf (((symbol-function 'message)
+               (lambda (fmt &rest args) (setq echoed (apply #'format fmt args)))))
+      (agent-shell-ui--echo-action-hint "act on this" #'ignore map)
+      (should (equal "Press C-c C-e to act on this" echoed)))))
+
+(ert-deftest agent-shell-ui-body-keeps-its-own-help-echo-test ()
+  "A fragment leaves the help its body carried alone.
+
+Adding a nil `help-echo' across the body does not merely fail to tag it,
+it erases whatever help the body's own content came with, which
+`display-local-help' would otherwise read out.  With debugging on the
+tag does cover the body, since that mode exists to surface
+qualified-ids."
+  (cl-flet ((body-help (debugging)
+              (with-temp-buffer
+                (agent-shell-ui-mode 1)
+                (let ((inhibit-read-only t)
+                      (agent-shell-ui-debug-enabled debugging))
+                  (agent-shell-ui-update-fragment
+                   (agent-shell-ui-make-fragment-model
+                    :namespace-id "ns" :block-id "1" :label-left "run"
+                    :body (concat (propertize "described" 'help-echo "the content's own help")
+                                  " plain\n"))
+                   :expanded t :navigation 'always))
+                (goto-char (point-min))
+                (should (search-forward "described" nil t))
+                (get-text-property (match-beginning 0) 'help-echo))))
+    (should (equal (body-help nil) "the content's own help"))
+    (should (equal (body-help t) "ns-1"))))
+
 (ert-deftest agent-shell-ui-keys-reach-fragment-chrome-only-test ()
   "The fold keys sit on the chrome, leaving the rest of the buffer alone.
 

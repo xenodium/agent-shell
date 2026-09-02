@@ -923,6 +923,14 @@ All of the above settings can be applied on a per-project basis using [[https://
 - =C-c C-c= - Interrupt current agent operation
 - =TAB and Shift-TAB= - Navigate interactive elements
 
+  When an agent asks a question, its form renders in the buffer and =TAB=
+  stops on each option, field and button:
+
+  - =RET= - Pick the option, toggle the checkbox, edit the field, or press
+    the button at point.
+  - =C-c C-c= - Interrupt, cancelling any question still waiting for an
+    answer.
+
   To customize =RET= binding behaviour, you can use something like:
 
   #+begin_src emacs-lisp :lexical no
