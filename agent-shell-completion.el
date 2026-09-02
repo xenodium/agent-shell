@@ -26,10 +26,12 @@
 
 ;;; Code:
 
+(require 'comint)
 (require 'map)
 (require 'seq)
 (require 'agent-shell-project)
 
+(declare-function agent-shell--live-input-prompt-p "agent-shell")
 (declare-function agent-shell--shell-buffer "agent-shell")
 (declare-function agent-shell--project-files "agent-shell-project")
 
@@ -52,6 +54,40 @@ the word, nil otherwise."
                 ((or (= start (1+ (line-beginning-position)))
                      (memq (char-before (1- start)) '(?\s ?\t ?\n)))))
       `((:start . ,start) (:end . ,end)))))
+
+(defun agent-shell-completion--input-start ()
+  "Return the position where the prompt input being composed begins.
+Handles the shell's live comint prompt, the viewport's compose buffer
+and the minibuffer reading a queued prompt.  Falls back to `point-min',
+which includes a stale prompt with agent output streaming below it.
+
+With the shell buffer ending in `Claude> hello', where the prompt
+`Claude> ' ends at position 30 and the typed `hello' occupies 30 to 35,
+returns 30."
+  (cond
+   ((minibufferp)
+    (minibuffer-prompt-end))
+   ((derived-mode-p 'agent-shell-viewport-edit-mode)
+    (point-min))
+   ((and (derived-mode-p 'comint-mode)
+         comint-last-prompt
+         (agent-shell--live-input-prompt-p comint-last-prompt)
+         (>= (point) (cdr comint-last-prompt)))
+    (marker-position (cdr comint-last-prompt)))
+   (t
+    (point-min))))
+
+(defun agent-shell-completion--command-start-p (position)
+  "Non-nil when a / typed at POSITION starts a slash command.
+Agents only recognize a slash command as the very first character of a
+message, so nothing at all may precede POSITION in the input being
+composed.
+
+With the shell buffer ending in `Claude> hello ', where the typed input
+occupies 30 to 36: a / typed right after the prompt (POSITION 30)
+returns non-nil, while one typed after `hello ' (POSITION 36) returns
+nil."
+  (= position (agent-shell-completion--input-start)))
 
 (defun agent-shell--capf-exit-with-space (_string _status)
   "Insert space after completion."
@@ -102,6 +138,8 @@ buffer.  Returns nil if the override is set but its buffer is dead."
 (defun agent-shell--command-completion-at-point ()
   "Complete available commands after /."
   (when-let* ((bounds (agent-shell--completion-bounds "[:alnum:]_-" ?/))
+              ;; Bounds start after /, so the / itself sits one char back.
+              ((agent-shell-completion--command-start-p (1- (map-elt bounds :start))))
               (source (or (and (buffer-live-p agent-shell-completion--shell-buffer)
                                agent-shell-completion--shell-buffer)
                           (agent-shell--shell-buffer :no-error t :no-create t)))
@@ -124,7 +162,9 @@ buffer.  Returns nil if the override is set but its buffer is dead."
 (defun agent-shell--trigger-completion-at-point ()
   "Trigger completion when @ or / is typed at a word boundary.
 Only triggers when the character is at line start or after whitespace,
-preventing spurious completions mid-word or in paths."
+preventing spurious completions mid-word or in paths.  / additionally
+requires being at the start of the input, where agents recognize
+commands."
   (when (and (memq (char-before) '(?@ ?/))
              (or (= (point) (1+ (line-beginning-position)))
                  (memq (char-before (1- (point))) '(?\s ?\t ?\n))))
