@@ -4007,6 +4007,62 @@ other unknown ones."
                                         (point-min) (point-max))))))
       (delete-directory temp-dir t))))
 
+(ert-deftest agent-shell--buffer-files-obvious-dired-ignores-current-line-test ()
+  "DWIM file context should not use Dired's current line by accident."
+  (let* ((temp-dir (make-temp-file "agent-shell-test" t))
+         (file (expand-file-name "README.org" temp-dir))
+         dired-buffer)
+    (unwind-protect
+        (progn
+          (write-region "" nil file nil 'no-message)
+          (setq dired-buffer (dired-noselect temp-dir))
+          (with-current-buffer dired-buffer
+            (goto-char (point-min))
+            (search-forward "README.org")
+            (should-not (agent-shell--buffer-files :obvious t))
+            (should (equal (agent-shell--buffer-files)
+                           (list file)))))
+      (when (buffer-live-p dired-buffer)
+        (kill-buffer dired-buffer))
+      (delete-directory temp-dir t))))
+
+(ert-deftest agent-shell--buffer-files-obvious-dired-uses-marked-files-test ()
+  "DWIM file context should use explicitly marked Dired files."
+  (let* ((temp-dir (make-temp-file "agent-shell-test" t))
+         (file (expand-file-name "README.org" temp-dir))
+         dired-buffer)
+    (unwind-protect
+        (progn
+          (write-region "" nil file nil 'no-message)
+          (setq dired-buffer (dired-noselect temp-dir))
+          (with-current-buffer dired-buffer
+            (goto-char (point-min))
+            (search-forward "README.org")
+            (dired-mark 1)
+            (should (equal (agent-shell--buffer-files :obvious t)
+                           (list file)))))
+      (when (buffer-live-p dired-buffer)
+        (kill-buffer dired-buffer))
+      (delete-directory temp-dir t))))
+
+(ert-deftest agent-shell--context-dired-ignores-current-line-test ()
+  "DWIM context should not insert raw Dired listing lines."
+  (let* ((temp-dir (make-temp-file "agent-shell-test" t))
+         (git-dir (expand-file-name ".git" temp-dir))
+         (agent-shell-context-sources '(files line))
+         dired-buffer)
+    (unwind-protect
+        (progn
+          (make-directory git-dir)
+          (setq dired-buffer (dired-noselect temp-dir "-la"))
+          (with-current-buffer dired-buffer
+            (goto-char (point-min))
+            (search-forward ".git")
+            (should-not (agent-shell--context))))
+      (when (buffer-live-p dired-buffer)
+        (kill-buffer dired-buffer))
+      (delete-directory temp-dir t))))
+
 (ert-deftest agent-shell--on-request-calls-permission-request-handler-test ()
   "Test `agent-shell--on-request' calls handler and :respond auto-approves."
   (with-temp-buffer
