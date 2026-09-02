@@ -31,6 +31,7 @@
 
 (require 'map)
 (require 'ring)
+(require 'text-property-search)
 (require 'agent-shell-faces)
 (eval-when-compile (require 'cl-lib))
 
@@ -333,6 +334,67 @@ either remove all or select a specific prompt to remove."
                               (length (map-elt agent-shell--state :pending-prompts))))
         (map-put! agent-shell--state :pending-prompts nil)
         (message "Removed all pending prompts")))))
+
+(defun agent-shell-queue-list-next-prompt ()
+  "Move to the next queued prompt."
+  (declare (modes agent-shell-queue-list-mode))
+  (interactive)
+  (if-let* ((match (save-excursion
+                     (text-property-search-forward 'agent-shell-queue-item nil nil t))))
+      (goto-char (prop-match-beginning match))
+    (user-error "No next prompt")))
+
+(defun agent-shell-queue-list-previous-prompt ()
+  "Move to the previous queued prompt."
+  (declare (modes agent-shell-queue-list-mode))
+  (interactive)
+  (if-let* ((match (save-excursion
+                     (text-property-search-backward 'agent-shell-queue-item nil nil t))))
+      (goto-char (prop-match-beginning match))
+    (user-error "No previous prompt")))
+
+(defvar agent-shell-queue-list-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "n") #'agent-shell-queue-list-next-prompt)
+    (define-key map (kbd "p") #'agent-shell-queue-list-previous-prompt)
+    map)
+  "Keymap for `agent-shell-queue-list-mode'.")
+
+(define-derived-mode agent-shell-queue-list-mode special-mode "Agent Shell Queue"
+  "Major mode for viewing pending `agent-shell' prompts.")
+
+(defun agent-shell-queue-list ()
+  "Show all pending prompts, in full, in a dedicated read-only buffer.
+
+Acts on the current project's shell, resolving it via
+`agent-shell--shell-buffer' so this works even when invoked outside a
+shell buffer."
+  (interactive)
+  (with-current-buffer (agent-shell--shell-buffer :no-create t)
+    (agent-shell--prompt-queue-migrate)
+    (let ((pending (map-elt agent-shell--state :pending-prompts))
+          (list-buffer (get-buffer-create (concat (buffer-name) " [queue]"))))
+      (when (seq-empty-p pending)
+        (user-error "No pending prompts"))
+      (with-current-buffer list-buffer
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (insert (propertize (format "Pending prompts: %d" (length pending))
+                              'face 'agent-shell-section-heading)
+                  "\n")
+          (seq-do-indexed
+           (lambda (prompt idx)
+             (insert "\n"
+                     (propertize (format "%d:" (1+ idx))
+                                 'face 'agent-shell-secondary
+                                 'agent-shell-queue-item (1+ idx))
+                     "\n"
+                     (string-trim-right prompt)
+                     "\n"))
+           pending))
+        (agent-shell-queue-list-mode)
+        (goto-char (point-min)))
+      (pop-to-buffer list-buffer))))
 
 (provide 'agent-shell-prompt-queue)
 
