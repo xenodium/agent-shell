@@ -93,14 +93,48 @@ Examples:
                     agent-shell-pi--terminal-output-snapshots)))
 
 (cl-defun agent-shell-pi--notification-adapter (&key acp-notification)
-  "Adapt Pi terminal metadata into standard ACP tool-call content.
+  "Adapt Pi terminal metadata to standard ACP tool-call content.
 
-Pi's ACP adapter emits terminal output as incremental `data' values in
-`_meta.terminal_output' and signals completion with `_meta.terminal_exit'.
-Accumulate those values by terminal ID and expose the result as regular
-text content for `agent-shell'.
+Pi's current `pi-acp' sequence for a bash call is:
 
-Existing tool-call content is left unchanged.  ACP-NOTIFICATION is returned
+  1. `tool_call' includes general terminal content and `_meta.terminal_info'.
+  2. One or more `tool_call_update' with status `in_progress' and
+     `_meta.terminal_output' with an output since last update in `data'.
+  3. A final `tool_call_update' with status `completed' and the last
+     `_meta.terminal_output' delta together with `_meta.terminal_exit'.
+
+For a terminal ID `call-1', an example flow can look like this:
+
+  `tool_call':
+    (content . [((type . \"terminal\") (terminalId . \"call-1\"))])
+    (_meta (terminal_info (terminal_id . \"call-1\") (cwd . \"/project\")))
+
+  `tool_call_update':
+    (status . \"in_progress\")
+    (_meta (terminal_output (terminal_id . \"call-1\")
+                            (data . \"hello\\\\n\")))
+
+  `tool_call_update':
+    (status . \"completed\")
+    (_meta (terminal_output (terminal_id . \"call-1\") (data . \"world\"))
+           (terminal_exit (terminal_id . \"call-1\") (exit_code . 0)
+                          (signal . nil)))
+
+In this example, the two output deltas, \"hello\\n\" and \"world\", should go to
+`agent-shell' as a text content block containing:
+
+  ```
+  hello
+  world
+  ```
+
+The adapter accumulates output by terminal ID because each update contains a
+delta, and fills in `content' when pi-acp omits it. The current pi-acp version
+sends `terminal_exit' with the final status update; it does not send another
+status-only update afterward. If a status-only update follows an output
+update, the saved output is reused before it is discarded.
+
+Existing tool-call content is left unchanged. ACP-NOTIFICATION is returned
 after adaptation."
   (when-let* ((method (map-elt acp-notification 'method))
               ((equal method "session/update"))
@@ -114,7 +148,11 @@ after adaptation."
                             (map-elt terminal-exit 'terminal_id)
                             (map-elt update 'toolCallId))))
       (when (and (stringp terminal-id)
-                 (or terminal-output terminal-exit))
+                 (or terminal-output
+                     terminal-exit
+                     (alist-get terminal-id
+                                agent-shell-pi--terminal-output-snapshots
+                                nil nil #'equal)))
         (unless (local-variable-p 'agent-shell-pi--terminal-output-snapshots)
           (setq-local agent-shell-pi--terminal-output-snapshots nil))
         (when-let* ((data (map-elt terminal-output 'data)))
@@ -132,7 +170,8 @@ after adaptation."
                            (alist-get 'update
                                       (alist-get 'params acp-notification)))
                 content))
-        (when terminal-exit
+        (when (or terminal-exit
+                  (member (map-elt update 'status) '("completed" "failed")))
           (agent-shell-pi--forget-terminal-output terminal-id)))))
   acp-notification)
 
