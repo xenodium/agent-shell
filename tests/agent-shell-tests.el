@@ -5200,6 +5200,159 @@ current interaction instead of the previous one."
       (kill-buffer viewport-buffer)
       (kill-buffer shell-buffer))))
 
+(cl-defun agent-shell-viewport-tests--with-page-steps
+    (&key entries position snapshot body)
+  "Run BODY in a view-mode viewport that can step through ENTRIES.
+Each step hands out the next of ENTRIES, a list of (prompt . response),
+and returns nil once they run out, the way
+`shell-maker-next-command-and-response' does at the end of history.
+POSITION is the stubbed `agent-shell-viewport--position' alist, and
+SNAPSHOT the compose snapshot parked before BODY runs.  Returns an alist
+of :steps (how many steps were taken), :directions (the BACKWARDS
+argument each step saw), :initialized (the keyword plist passed to
+`agent-shell-viewport--initialize'), :entered-edit (whether the compose
+page was opened) and :snapshot-after (the snapshot left behind)."
+  (let ((shell-buffer (generate-new-buffer " *agent-shell shell*"))
+        (viewport-buffer (generate-new-buffer " *agent-shell shell* [viewport]"))
+        (remaining entries)
+        (directions nil)
+        (steps 0)
+        (initialized nil)
+        (entered-edit nil))
+    (unwind-protect
+        (progn
+          (with-current-buffer shell-buffer
+            (insert "page one\npage two\npage three\npage four\n")
+            ;; Mid-buffer, so the stubbed comint prompt motion below has
+            ;; somewhere to move in either direction.
+            (goto-char (point-min))
+            (forward-line 2))
+          (with-current-buffer viewport-buffer
+            (cl-letf (((symbol-function 'agent-shell-viewport--update-header)
+                       (lambda () nil)))
+              (agent-shell-viewport-view-mode)))
+          (with-current-buffer viewport-buffer
+            (setq-local agent-shell-viewport--compose-snapshot snapshot)
+            (cl-letf (((symbol-function 'agent-shell-viewport--busy-p)
+                       (lambda (&rest _) nil))
+                      ((symbol-function 'agent-shell-viewport--shell-buffer)
+                       (lambda (&rest _) shell-buffer))
+                      ((symbol-function 'agent-shell-viewport--position)
+                       (lambda (&rest _)
+                         (or position '((:current . 2) (:total . 4)))))
+                      ((symbol-function 'shell-maker--prompt-begin-position)
+                       (lambda () (line-beginning-position)))
+                      ((symbol-function 'comint-next-prompt)
+                       (lambda (&rest _) (forward-line 1)))
+                      ((symbol-function 'comint-previous-prompt)
+                       (lambda (&rest _) (forward-line -1)))
+                      ((symbol-function 'shell-maker-next-command-and-response)
+                       (lambda (step-backwards &rest _)
+                         (push step-backwards directions)
+                         (when remaining
+                           (setq steps (1+ steps))
+                           (pop remaining))))
+                      ((symbol-function 'agent-shell-viewport-edit-mode)
+                       (lambda ()
+                         (setq entered-edit t)
+                         ;; Real edit mode makes the buffer writable, which
+                         ;; the snapshot restore below relies on.
+                         (setq-local buffer-read-only nil)))
+                      ((symbol-function 'agent-shell-viewport--initialize)
+                       (lambda (&rest args) (setq initialized args)))
+                      ((symbol-function 'agent-shell-viewport--update-header)
+                       (lambda () nil)))
+              (funcall body)
+              `((:steps . ,steps)
+                (:directions . ,(nreverse directions))
+                (:initialized . ,initialized)
+                (:entered-edit . ,entered-edit)
+                (:snapshot-after . ,agent-shell-viewport--compose-snapshot)))))
+      (kill-buffer viewport-buffer)
+      (kill-buffer shell-buffer))))
+
+(ert-deftest agent-shell-viewport-next-page-jumps-n-pages-test ()
+  "Test `agent-shell-viewport-next-page' moves N interactions.
+
+N=2 takes two forward steps and shows the interaction reached last, not
+the one after a single step."
+  (let ((result (agent-shell-viewport-tests--with-page-steps
+                 :entries '(("page three" . "three") ("page four" . "four"))
+                 :body (lambda () (agent-shell-viewport-next-page :n 2)))))
+    (should (equal (map-elt result :steps) 2))
+    (should (equal (map-elt result :directions) '(nil nil)))
+    (should (equal (map-elt result :initialized)
+                   '(:prompt "page four" :response "four")))))
+
+(ert-deftest agent-shell-viewport-previous-page-jumps-n-pages-test ()
+  "Test `agent-shell-viewport-previous-page' moves N interactions back.
+
+N=2 takes two backward steps.  A numeric prefix argument supplies the
+same N."
+  (let ((result (agent-shell-viewport-tests--with-page-steps
+                 :entries '(("page two" . "two") ("page one" . "one"))
+                 :body (lambda () (agent-shell-viewport-previous-page 2)))))
+    (should (equal (map-elt result :steps) 2))
+    (should (equal (map-elt result :directions) '(t t)))
+    (should (equal (map-elt result :initialized)
+                   '(:prompt "page one" :response "one"))))
+  (let ((result (agent-shell-viewport-tests--with-page-steps
+                 :entries '(("page two" . "two") ("page one" . "one"))
+                 :body (lambda ()
+                         (let ((current-prefix-arg 2))
+                           (call-interactively
+                            #'agent-shell-viewport-previous-page))))))
+    (should (equal (map-elt result :steps) 2))))
+
+(ert-deftest agent-shell-viewport-next-page-without-n-moves-one-page-test ()
+  "Test paging with no prefix argument still moves a single interaction."
+  (let ((result (agent-shell-viewport-tests--with-page-steps
+                 :entries '(("page three" . "three") ("page four" . "four"))
+                 :body (lambda () (agent-shell-viewport-next-page)))))
+    (should (equal (map-elt result :steps) 1))
+    (should (equal (map-elt result :initialized)
+                   '(:prompt "page three" :response "three")))))
+
+(ert-deftest agent-shell-viewport-next-page-n-stops-at-last-reachable-page-test ()
+  "Test an N larger than the remaining history pages as far as it can.
+
+Two interactions remain and N=5, so with no draft parked it stops on
+the last one rather than refusing to move."
+  (let ((result (agent-shell-viewport-tests--with-page-steps
+                 :entries '(("page three" . "three") ("page four" . "four"))
+                 :body (lambda () (agent-shell-viewport-next-page :n 5)))))
+    (should (equal (map-elt result :steps) 2))
+    (should-not (map-elt result :entered-edit))
+    (should (equal (map-elt result :initialized)
+                   '(:prompt "page four" :response "four")))))
+
+(ert-deftest agent-shell-viewport-next-page-n-past-last-enters-compose-test ()
+  "Test a prefix jump running past the newest interaction opens the draft.
+
+Pressing the key three times from page 2 of 4 would show pages 3 and 4
+and then restore the parked draft, so C-u 3 must land there too."
+  (let ((result (agent-shell-viewport-tests--with-page-steps
+                 :entries '(("page three" . "three") ("page four" . "four"))
+                 :snapshot '((:content . "draft") (:location . 1))
+                 :body (lambda () (agent-shell-viewport-next-page :n 3)))))
+    (should (equal (map-elt result :steps) 2))
+    (should (map-elt result :entered-edit))
+    (should-not (map-elt result :snapshot-after))))
+
+(ert-deftest agent-shell-viewport-next-page-n-from-last-page-enters-compose-test ()
+  "Test a prefix jump from the newest interaction opens the draft.
+
+Already being on the last page, there is nothing to step through, so
+any N restores the parked draft the way a plain step does."
+  (let ((result (agent-shell-viewport-tests--with-page-steps
+                 :entries '(("page three" . "three"))
+                 :position '((:current . 4) (:total . 4))
+                 :snapshot '((:content . "draft") (:location . 1))
+                 :body (lambda () (agent-shell-viewport-next-page :n 3)))))
+    (should (equal (map-elt result :steps) 0))
+    (should (map-elt result :entered-edit))
+    (should-not (map-elt result :snapshot-after))))
+
 (ert-deftest agent-shell-viewport-initialize-rerenders-header-position-test ()
   "Test `agent-shell-viewport--initialize' re-renders the header position.
 
