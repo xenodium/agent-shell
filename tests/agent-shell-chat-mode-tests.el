@@ -254,6 +254,37 @@ such as `end-of-visual-line'."
         (should (> (overlay-start me) terminator))
         (should-not (get-char-property terminator 'display))))))
 
+(ert-deftest agent-shell-chat-live-prompt-excludes-replaced-output-test ()
+  "Replacing output before the live prompt does not hide its replacement.
+
+An inline control replaces its fragment body by deleting the old body
+before inserting the new one.  The live prompt's whitespace overlay
+survives because one structural newline remains.  Text inserted at that
+overlay's front must stay outside its empty `display', as \"new form\"
+does here."
+  (agent-shell-chat-mode-tests--with-shell
+    (let ((body-start (point)))
+      (insert "old form\n")
+      (let ((body-end (point)))
+        (insert "\n\n")
+        (agent-shell-chat-mode-tests--prompt "Claude> ")
+        (agent-shell-chat--relabel)
+        (let ((surplus
+               (seq-find
+                (lambda (overlay)
+                  (eq
+                   (overlay-get overlay 'agent-shell-chat--tag)
+                   'me-surplus))
+                (overlays-in (point-min) (point-max)))))
+          (should surplus)
+          (delete-region body-start body-end)
+          (should (= body-start (overlay-start surplus)))
+          (goto-char body-start)
+          (insert "new form\n\n")
+          (should-not
+           (equal ""
+                  (get-char-property body-start 'display))))))))
+
 (ert-deftest agent-shell-chat-label-is-before-string-test ()
   "The `Me' label renders as a `before-string' with an empty `display'.
 Like the agent label, this keeps the cursor from landing on it during

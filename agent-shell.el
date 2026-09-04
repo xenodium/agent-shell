@@ -64,6 +64,7 @@
 (require 'agent-shell-cursor)
 (require 'agent-shell-devcontainer)
 (require 'agent-shell-diff)
+(require 'agent-shell-elicitation)
 (require 'agent-shell-experimental)
 (require 'agent-shell-droid)
 (require 'agent-shell-github)
@@ -353,14 +354,20 @@ members, so neither local nor global renderers run.
 
 Passes agent-shell's own cache directory as the renderer's remote-image
 cache so downloaded images share `agent-shell-cache-dir'."
-  (let ((agent-shell-markdown-render-functions
-         (when external-renderers
-           agent-shell-markdown-render-functions)))
-    (funcall agent-shell-markdown-render-function
-             :render-images render-images
-             :highlight-blocks highlight-blocks
-             :complete complete
-             :image-cache-directory (agent-shell-cache-dir "content"))))
+  ;; Literal fragments retain this property so later generic passes, such
+  ;; as expansion and deferred-image rendering, cannot accidentally turn
+  ;; untrusted form text into active Markdown links.
+  (unless (and (< (point-min) (point-max))
+               (get-text-property (point-min)
+                                  'agent-shell-literal-content))
+    (let ((agent-shell-markdown-render-functions
+           (when external-renderers
+             agent-shell-markdown-render-functions)))
+      (funcall agent-shell-markdown-render-function
+               :render-images render-images
+               :highlight-blocks highlight-blocks
+               :complete complete
+               :image-cache-directory (agent-shell-cache-dir "content")))))
 
 (defun agent-shell--render-deferred-images ()
   "Render image markup the streaming passes held back, the turn being over.
@@ -1192,6 +1199,8 @@ OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
         (cons :request-count 0)
         (cons :last-activity-time nil)
         (cons :tool-calls nil)
+        (cons :elicitations nil)
+        (cons :elicitation-count 0)
         (cons :available-commands nil)
         (cons :available-modes nil)
         (cons :supports-session-list nil)
@@ -2124,6 +2133,28 @@ When nil, check if any permission request is pending."
                   (map-elt (cdr entry) :permission-request-id))
                 (map-elt (agent-shell--state) :tool-calls)))))
 
+(cl-defun agent-shell--present-user-input-request (&key state focus)
+  "Display STATE's shell and reveal the control selected by FOCUS.
+
+Permission and elicitation requests have different protocol lifetimes,
+but their canonical controls belong to the same shell buffer.  Present
+that buffer instead of changing a viewport, which may contain the
+user's next prompt."
+  (when-let* ((shell-buffer (map-elt state :buffer))
+              ((buffer-live-p shell-buffer)))
+    (with-current-buffer shell-buffer
+      ;; A chat label is an overlay attached before the shell prompt.
+      ;; Recompute it after inserting the request above that prompt, or its
+      ;; displayed "Me" label remains above Agent-originated controls.
+      (when agent-shell-chat-mode
+        (agent-shell-chat--relabel))
+      (agent-shell--display-buffer shell-buffer)
+      (when (funcall focus)
+        ;; `set-window-point' alone permits a window point outside its
+        ;; displayed range.  Recenter the selected shell window so the
+        ;; request is visibly actionable, not merely present in its buffer.
+        (recenter)))))
+
 (cl-defun agent-shell-status (&key shell-buffer)
   "Return the status of the agent shell as a symbol.
 When SHELL-BUFFER is non-nil, check that buffer instead of the current one.
@@ -2355,7 +2386,10 @@ Flow:
           ;; Needs ACP subscriptions
           ((or (not (map-nested-elt (agent-shell--state) '(:client :request-handlers)))
                (not (map-nested-elt (agent-shell--state) '(:client :notification-handlers)))
-               (not (map-nested-elt (agent-shell--state) '(:client :error-handlers))))
+               (not (map-nested-elt (agent-shell--state) '(:client :error-handlers)))
+               (not (map-nested-elt
+                     (agent-shell--state)
+                     '(:client :process-exit-handlers))))
            (when (agent-shell--initialize-subscriptions)
              (agent-shell--handle :command command :shell-buffer shell-buffer)))
           ;; Needs to send ACP initialize request
@@ -2948,7 +2982,16 @@ Clears STATE's `:expanded-activity-group'."
 (cl-defun agent-shell--on-notification (&key state acp-notification)
   "Handle incoming ACP-NOTIFICATION using STATE."
   (map-put! state :last-activity-time (current-time))
-  (cond ((equal (map-elt acp-notification 'method) "session/update")
+  (cond ((and
+          (equal (map-elt acp-notification 'method) "$/cancel_request")
+          (agent-shell-elicitation--entry
+           state
+           (map-nested-elt acp-notification '(params requestId))))
+         (agent-shell-elicitation--on-cancel-request
+          :state state
+          :request-id (map-nested-elt acp-notification
+                                      '(params requestId))))
+        ((equal (map-elt acp-notification 'method) "session/update")
          ;; Replayed user_message_chunks aren't followed by
          ;; shell-maker's end-of-prompt marker (no real
          ;; `comint-send-input').  Insert it on the first
@@ -3045,6 +3088,15 @@ Clears STATE's `:expanded-activity-group'."
                     (when-let* ((diffs (agent-shell--make-diff-infos
                                         :acp-tool-call (map-nested-elt acp-notification '(params update)))))
                       (list (cons :diffs diffs)))))
+           (when (seq-contains-p
+                  '("completed" "failed" "cancelled")
+                  (map-nested-elt acp-notification
+                                  '(params update status)))
+             (agent-shell-elicitation--tool-finished
+              :state state
+              :tool-call-id
+              (map-nested-elt acp-notification
+                              '(params update toolCallId))))
            (agent-shell--cancel-idle-timer)
            (agent-shell--emit-event
             :event 'tool-call-update
@@ -3306,8 +3358,17 @@ Clears STATE's `:expanded-activity-group'."
              ;; Status is completed or failed so the user
              ;; likely selected one of: accepted/rejected/always.
              ;; Remove stale permission dialog.
-             (when (member (map-nested-elt acp-notification '(params update status))
-                           '("completed" "failed"))
+             (when (seq-contains-p
+                    '("completed" "failed" "cancelled")
+                    (map-nested-elt
+                     acp-notification '(params update status)))
+               ;; A tool-scoped elicitation cannot remain valid after its
+               ;; owning tool call has reached a terminal state.
+               (agent-shell-elicitation--tool-finished
+                :state state
+                :tool-call-id
+                (map-nested-elt acp-notification
+                                '(params update toolCallId)))
                ;; block-id must be the same as the one used as
                ;; agent-shell--update-fragment param by "session/request_permission".
                (agent-shell--delete-fragment :state state :block-id (format "permission-%s" (map-nested-elt acp-notification '(params update toolCallId)))))
@@ -3487,13 +3548,9 @@ Clears STATE's `:expanded-activity-group'."
               :expanded t
               :navigation 'never
               :above-last-prompt (not (agent-shell--active-requests-p state)))
-             (agent-shell-jump-to-latest-permission-button-row)
-             (when-let* (((map-elt state :buffer))
-                         (viewport-buffer (agent-shell-viewport--buffer
-                                           :shell-buffer (map-elt state :buffer)
-                                           :existing-only t)))
-               (with-current-buffer viewport-buffer
-                 (agent-shell-jump-to-latest-permission-button-row)))
+             (agent-shell--present-user-input-request
+              :state state
+              :focus #'agent-shell-jump-to-latest-permission-button-row)
              (let ((data (list (cons :request-id (map-elt acp-request 'id))
                                (cons :tool-call-id tool-call-id)
                                (cons :tool-call (map-nested-elt state (list :tool-calls tool-call-id))))))
@@ -3512,6 +3569,10 @@ Clears STATE's `:expanded-activity-group'."
           :acp-request acp-request))
         ((equal (map-elt acp-request 'method) "session/push")
          (agent-shell-experimental--on-session-push-request
+          :state state
+          :acp-request acp-request))
+        ((equal (map-elt acp-request 'method) "elicitation/create")
+         (agent-shell-elicitation--on-create-request
           :state state
           :acp-request acp-request))
         (t
@@ -4226,6 +4287,10 @@ For example, shut down ACP client."
   (unless (derived-mode-p 'agent-shell-mode)
     (error "Not in a shell"))
   (when (map-elt (agent-shell--state) :client)
+    ;; Elicitations are reverse requests owned by this connection.  Resolve
+    ;; them before deliberately closing the transport; a dead connection
+    ;; cannot receive their cancellation responses.
+    (agent-shell-elicitation--dismiss-all :state (agent-shell--state))
     (acp-shutdown :client (map-elt (agent-shell--state) :client))
     (map-put! (agent-shell--state) :client nil)
     (map-put! (agent-shell--state) :initialized nil)
@@ -4851,24 +4916,28 @@ variable (see makunbound)"))
           (agent-shell--display-buffer shell-buffer))))
     shell-buffer))
 
-(cl-defun agent-shell--delete-fragment (&key state block-id)
-  "Delete fragment with STATE and BLOCK-ID."
-  (when-let* (((map-elt state :buffer))
-              (viewport-buffer (agent-shell-viewport--buffer
-                                :shell-buffer (map-elt state :buffer)
-                                :existing-only t))
-              ;; Fragment deletion only makes sense when viewport is
-              ;; displaying conversation, never while it's an active compose buffer.
-              ((with-current-buffer viewport-buffer
-                 (derived-mode-p 'agent-shell-viewport-view-mode))))
-    (with-current-buffer viewport-buffer
-      (agent-shell-ui-delete-fragment :namespace-id (map-elt state :request-count) :block-id block-id :no-undo t)))
-  (with-current-buffer (map-elt state :buffer)
-    (unless (and (derived-mode-p 'agent-shell-mode)
-                 (equal (current-buffer)
-                        (map-elt state :buffer)))
-      (error "Editing the wrong buffer: %s" (current-buffer)))
-    (agent-shell-ui-delete-fragment :namespace-id (map-elt state :request-count) :block-id block-id :no-undo t)))
+(cl-defun agent-shell--delete-fragment (&key state block-id namespace-id)
+  "Delete fragment with STATE and BLOCK-ID.
+Use STATE's request count as the namespace unless NAMESPACE-ID is given."
+  (let ((namespace-id (or namespace-id (map-elt state :request-count))))
+    (when-let* (((map-elt state :buffer))
+                (viewport-buffer (agent-shell-viewport--buffer
+                                  :shell-buffer (map-elt state :buffer)
+                                  :existing-only t))
+                ;; Fragment deletion only makes sense when viewport is
+                ;; displaying conversation, never while it's an active compose buffer.
+                ((with-current-buffer viewport-buffer
+                   (derived-mode-p 'agent-shell-viewport-view-mode))))
+      (with-current-buffer viewport-buffer
+        (agent-shell-ui-delete-fragment
+         :namespace-id namespace-id :block-id block-id :no-undo t)))
+    (with-current-buffer (map-elt state :buffer)
+      (unless (and (derived-mode-p 'agent-shell-mode)
+                   (equal (current-buffer)
+                          (map-elt state :buffer)))
+        (error "Editing the wrong buffer: %s" (current-buffer)))
+      (agent-shell-ui-delete-fragment
+       :namespace-id namespace-id :block-id block-id :no-undo t))))
 
 (cl-defun agent-shell--collapse-fragment-group (&key state namespace-id block-id)
   "Collapse group header BLOCK-ID under NAMESPACE-ID in STATE's buffers.
@@ -4968,7 +5037,8 @@ the reported range down to the newly inserted chars."
 (cl-defun agent-shell--update-fragment (&key state namespace-id block-id label-left label-right
                                              body append create-new navigation expanded
                                              render-body-images above-last-prompt
-                                             group-id group-label (group-expanded t))
+                                             group-id group-label (group-expanded t)
+                                             (render-markdown t))
   "Update fragment in the shell buffer.
 
 Creates or updates existing dialog using STATE's request count as namespace
@@ -4983,7 +5053,8 @@ NAVIGATION for navigation style, EXPANDED to show block expanded
 by default, RENDER-BODY-IMAGES to enable inline image rendering in
 body, ABOVE-LAST-PROMPT to land content above the active prompt
 instead of after it (typical for notifications arriving out of
-turn).  Programmatic fragment updates do not enter undo history.
+turn), and RENDER-MARKDOWN nil to preserve body and labels literally.
+Programmatic fragment updates do not enter undo history.
 
 GROUP-ID nests this block under a collapsible group header, materialized
 from GROUP-LABEL on first use (see `agent-shell-ui-make-fragment-model'),
@@ -4993,7 +5064,8 @@ with GROUP-EXPANDED as the group's initial fold state."
   ;; Convert non-standard multiline single-backtick code spans to fenced
   ;; code blocks so the markdown renderer can recognize them as source
   ;; blocks, but only for labels that start with `.
-  (when (and label-right
+  (when (and render-markdown
+             label-right
              (not (string-match-p (rx "```") label-right))
              (string-match-p
               (rx "`" (zero-or-more (not (any "\n`")))
@@ -5008,6 +5080,16 @@ with GROUP-EXPANDED as the group's initial fold state."
                "`")
            "Snippet\n\n```\n\\1\n```\n"
            label-right)))
+  ;; Carry literalness with the text rather than with one rendering pass.
+  ;; Expansion and deferred-image rendering revisit fragment bodies later,
+  ;; and `agent-shell--render-markdown' must still leave them inert.
+  (unless render-markdown
+    (when body
+      (setq body
+            (propertize body 'agent-shell-literal-content t)))
+    (when label-right
+      (setq label-right
+            (propertize label-right 'agent-shell-literal-content t))))
   (when-let* (((map-elt state :buffer))
               (viewport-buffer (agent-shell-viewport--buffer
                                 :shell-buffer (map-elt state :buffer)
@@ -5275,6 +5357,8 @@ insert the character instead."
                         (agent-shell-ui-forward-block)))
            (button-pos (save-mark-and-excursion
                          (agent-shell-next-permission-button)))
+           (elicitation-pos (save-mark-and-excursion
+                              (agent-shell-next-elicitation-control)))
            (image-pos (save-mark-and-excursion
                         (agent-shell-markdown--next-visible-image)))
            (link-pos (save-mark-and-excursion
@@ -5292,6 +5376,7 @@ insert the character instead."
                                            (delq nil (list prompt-pos
                                                            block-pos
                                                            button-pos
+                                                           elicitation-pos
                                                            image-pos
                                                            link-pos
                                                            source-block-pos
@@ -5342,6 +5427,8 @@ insert the character instead."
                         (agent-shell-ui-backward-block)))
            (button-pos (save-mark-and-excursion
                          (agent-shell-previous-permission-button)))
+           (elicitation-pos (save-mark-and-excursion
+                              (agent-shell-previous-elicitation-control)))
            (image-pos (save-mark-and-excursion
                         (agent-shell-markdown--previous-visible-image)))
            (link-pos (save-mark-and-excursion
@@ -5361,6 +5448,7 @@ insert the character instead."
                                            (delq nil (list prompt-pos
                                                            block-pos
                                                            button-pos
+                                                           elicitation-pos
                                                            image-pos
                                                            link-pos
                                                            source-block-pos
@@ -6512,8 +6600,9 @@ the original EVENT as :idle-event."
 (cl-defun agent-shell--send-request (&key state client request buffer on-success on-failure sync)
   "Send ACP REQUEST, tracking it in STATE via :active-requests.
 
-Wraps `acp-send-request' so that REQUEST is pushed to
-:active-requests while in-flight and removed on success or failure.
+The tracked copy receives its wire request id before transmission.  ACP
+elicitations may be scoped to that id, so the id must be visible while
+the Agent can observe and answer the outgoing request.
 
 CLIENT, REQUEST, BUFFER, ON-SUCCESS, ON-FAILURE, and SYNC are passed
 through to `acp-send-request'."
@@ -6521,27 +6610,48 @@ through to `acp-send-request'."
   ;; Without this, map-put! fails on mid-session package updates.
   (unless (assq :active-requests state)
     (nconc state (list (cons :active-requests nil))))
-  (map-put! state :active-requests
-            (cons request (map-elt state :active-requests)))
-  (acp-send-request
-   :client client
-   :request request
-   :buffer buffer
-   :on-success (lambda (acp-response)
-                 (map-put! state :active-requests
-                           (seq-remove (lambda (r)
-                                         (equal r request))
-                                       (map-elt state :active-requests)))
-                 (when on-success
-                   (funcall on-success acp-response)))
-   :on-failure (lambda (acp-error raw-message)
-                 (map-put! state :active-requests
-                           (seq-remove (lambda (r)
-                                         (equal r request))
-                                       (map-elt state :active-requests)))
-                 (when on-failure
-                   (funcall on-failure acp-error raw-message)))
-   :sync sync))
+  (let* ((tracked-request
+          (append (copy-tree request)
+                  (list (cons :wire-request-id nil))))
+         (finished nil)
+         (finish
+          (lambda ()
+            (unless finished
+              (setq finished t)
+              (map-put! state :active-requests
+                        (seq-remove
+                         (lambda (active-request)
+                           (eq active-request tracked-request))
+                         (map-elt state :active-requests)))
+              (agent-shell-elicitation--request-finished
+               :state state
+               :request-id
+               (map-elt tracked-request :wire-request-id))))))
+    (map-put! state :active-requests
+              (cons tracked-request (map-elt state :active-requests)))
+    (condition-case err
+        (acp-send-request
+         :client client
+         :request request
+         :buffer buffer
+         :on-sent
+         (lambda (sent)
+           (map-put! tracked-request :wire-request-id
+                     (map-elt sent :request-id)))
+         :on-success
+         (lambda (acp-response)
+           (funcall finish)
+           (when on-success
+             (funcall on-success acp-response)))
+         :on-failure
+         (lambda (acp-error raw-message)
+           (funcall finish)
+           (when on-failure
+             (funcall on-failure acp-error raw-message)))
+         :sync sync)
+      (error
+       (funcall finish)
+       (signal (car err) (cdr err))))))
 
 (cl-defun agent-shell--initiate-handshake (&key shell-buffer on-initiated)
   "Initiate ACP handshake with SHELL-BUFFER.
@@ -6564,7 +6674,8 @@ Must provide ON-INITIATED (lambda ())."
                             (title . "Emacs Agent Shell")
                             (version . ,agent-shell--version))
              :read-text-file-capability agent-shell-text-file-capabilities
-             :write-text-file-capability agent-shell-text-file-capabilities)
+             :write-text-file-capability agent-shell-text-file-capabilities
+             :elicitation-form-capability t)
    :on-success (lambda (acp-response)
                  (with-current-buffer shell-buffer
                    (let ((acp-session-capabilities (or (map-elt acp-response 'sessionCapabilities)
@@ -7318,6 +7429,14 @@ Falls back to latest session in batch mode (e.g. tests)."
 
 (cl-defun agent-shell--set-session-from-response (&key acp-response acp-session-id)
   "Set active session state from ACP-RESPONSE and ACP-SESSION-ID."
+  (when-let* ((old-session-id
+               (map-nested-elt agent-shell--state '(:session :id)))
+              ((not (equal old-session-id acp-session-id))))
+    ;; Session-scoped reverse requests belong to the old session even when
+    ;; the same ACP connection is reused for a new or forked one.
+    (agent-shell-elicitation--session-finished
+     :state agent-shell--state
+     :session-id old-session-id))
   (map-put! agent-shell--state
             :session (agent-shell--session-from-response
                       :acp-response acp-response
@@ -7957,6 +8076,13 @@ The agent config's `:mcp-servers' take precedence over the global
 
 (cl-defun agent-shell--subscribe-to-client-events (&key state)
   "Subscribe SHELL and STATE to ACP events."
+  (acp-subscribe-to-process-exits
+   :client (map-elt state :client)
+   :on-exit
+   (lambda (_event)
+     ;; The transport is already gone, so there is nowhere to send a
+     ;; cancellation response.  Remove connection-owned UI and state.
+     (agent-shell-elicitation--abandon-all :state state)))
   (acp-subscribe-to-errors
    :client (map-elt state :client)
    :on-error (lambda (acp-error)

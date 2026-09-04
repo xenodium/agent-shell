@@ -161,9 +161,9 @@ so a label following it needs a full pad rather than a single newline."
     (or (= beg (point-min))
         (eq (char-before beg) ?\n))))
 
-(cl-defun agent-shell-chat--ensure-overlay (&key tag beg end props rear-advance
-                                                 (anchor-beg beg)
-                                                 (anchor-end end))
+(cl-defun agent-shell-chat--ensure-overlay
+    (&key tag beg end props front-advance rear-advance
+          (anchor-beg beg) (anchor-end end))
   "Ensure a TAG overlay spans BEG..END carrying PROPS.
 
 TAG is a symbol naming what the overlay is for (`me', `agent' and so
@@ -182,14 +182,21 @@ agent event, and each overlay write dirties its span for redisplay.
 ANCHOR-BEG..ANCHOR-END default to the span, and are widened only where
 an overlay is expected to sit somewhere its span no longer covers.
 
-With REAR-ADVANCE non-nil the overlay takes in text inserted at its end
-and is not `evaporate'd while empty, so it can hold properties over an
-input still being typed: relabeling is event-driven, so an overlay that
-stopped at the caret would never grow to cover what follows it."
+FRONT-ADVANCE and REAR-ADVANCE control whether text inserted at the
+corresponding boundary remains outside or enters the overlay.  Live
+prompt decoration uses FRONT-ADVANCE so fragments inserted immediately
+before it do not become prompt chrome or disappear behind its `display'
+properties.  With REAR-ADVANCE non-nil
+the overlay takes in text inserted at its end and is not `evaporate'd
+while empty, so it can hold properties over an input still being typed:
+relabeling is event-driven, so an overlay that stopped at the caret
+would never grow to cover what follows it."
   (let ((overlay (or (seq-find (lambda (overlay)
                                  (eq (overlay-get overlay 'agent-shell-chat--tag) tag))
                                (overlays-in anchor-beg (max anchor-end (1+ anchor-beg))))
-                     (let ((created (make-overlay beg end nil nil rear-advance)))
+                     (let ((created
+                            (make-overlay beg end nil
+                                          front-advance rear-advance)))
                        (overlay-put created 'agent-shell-chat--tag tag)
                        (unless rear-advance
                          (overlay-put created 'evaporate t))
@@ -562,6 +569,7 @@ above, putting the first line of a multi-line input out of reach of
             (push
              (agent-shell-chat--ensure-overlay
               :tag 'me-surplus :beg start :end label-nl
+              :front-advance t
               :props (list (cons 'display "")
                            (cons 'line-prefix "")
                            (cons 'wrap-prefix "")))
@@ -572,6 +580,7 @@ above, putting the first line of a multi-line input out of reach of
             (push
              (agent-shell-chat--ensure-overlay
               :tag 'me-label :beg label-nl :end pos
+              :front-advance t
               :props (list (cons 'before-string before)
                            (cons 'line-prefix "")
                            (cons 'wrap-prefix "")))
@@ -579,6 +588,7 @@ above, putting the first line of a multi-line input out of reach of
           (push
            (agent-shell-chat--ensure-overlay
             :tag 'me :beg (if label-nl pos start) :end end
+            :front-advance t
             ;; Anchor on the prompt run, which the span may start before: the
             ;; span's start flips with `label-nl', and reuse has to survive
             ;; that flip rather than strand the overlay it should have moved.
