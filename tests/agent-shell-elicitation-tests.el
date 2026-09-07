@@ -48,7 +48,8 @@ pushed, newest first."
   (declare (indent 1) (debug t))
   (let ((bodies (or bodies-var (gensym "bodies"))))
     `(with-temp-buffer
-       (let ((,state-var (agent-shell-elicitation-tests--state))
+       (let ((agent-shell-elicitation--experimental-feature-enabled t)
+             (,state-var (agent-shell-elicitation-tests--state))
              (,sent-var nil)
              (,bodies nil))
          (cl-letf (((symbol-function 'agent-shell--state)
@@ -557,6 +558,19 @@ sent; answering it would claim a capability we do not have."
     (should-not bodies)
     (should-not (agent-shell-elicitation--get state 5))))
 
+(ert-deftest agent-shell-elicitation-disabled-answers-method-not-found-test ()
+  "With the feature off, a form request is a method we do not implement.
+
+The capability goes unadvertised, so this only happens if an agent asks
+anyway.  Answering keeps it from waiting on a form nobody will see."
+  (agent-shell-elicitation-tests--with-shell (state sent bodies)
+    (let ((agent-shell-elicitation--experimental-feature-enabled nil))
+      (agent-shell--on-request
+       :state state
+       :acp-request (agent-shell-elicitation-tests--request :id 5)))
+    (should (equal (map-nested-elt (seq-first sent) '(:error code)) -32601))
+    (should-not (agent-shell-elicitation--get state 5))))
+
 (ert-deftest agent-shell-elicitation-submit-gate-test ()
   "Submit is gated by required fields, and says which way it is stuck.
 
@@ -849,11 +863,16 @@ it, so removing the form would erase the only account of what was asked."
   "The handshake advertises `form' and stays silent about `url'.
 
 An empty `elicitation' object would mean zero modes, so the `form' key
-has to be there for the capability to say anything at all."
-  (should (equal (json-serialize
-                  (map-nested-elt (agent-shell--make-initialize-request)
-                                  '(:params clientCapabilities elicitation)))
-                 "{\"form\":{}}")))
+has to be there for the capability to say anything at all.
+
+Sent only while the feature is enabled: unadvertised, a conforming
+agent never raises a form to begin with."
+  (cl-flet ((elicitation ()
+              (map-nested-elt (agent-shell--make-initialize-request)
+                              '(:params clientCapabilities elicitation))))
+    (let ((agent-shell-elicitation--experimental-feature-enabled t))
+      (should (equal (json-serialize (elicitation)) "{\"form\":{}}")))
+    (should-not (elicitation))))
 
 
 ;;; Keys and navigation
@@ -921,7 +940,8 @@ so a control whose action reaches no branch of
 The buffer is displayed rather than temporary: key dispatch goes
 through the selected window, so keys pressed at a buffer nobody is
 showing resolve against something else entirely."
-  (let ((buffer (generate-new-buffer "*agent-shell-elicitation-keys-test*"))
+  (let ((agent-shell-elicitation--experimental-feature-enabled t)
+        (buffer (generate-new-buffer "*agent-shell-elicitation-keys-test*"))
         (sent nil))
     (unwind-protect
         (progn

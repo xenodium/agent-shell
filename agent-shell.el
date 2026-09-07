@@ -3530,7 +3530,8 @@ Clears STATE's `:expanded-activity-group'."
          (agent-shell-experimental--on-session-push-request
           :state state
           :acp-request acp-request))
-        ((equal (map-elt acp-request 'method) "elicitation/create")
+        ((and (equal (map-elt acp-request 'method) "elicitation/create")
+              agent-shell-elicitation--experimental-feature-enabled)
          (agent-shell-elicitation--on-create-request
           :state state
           :acp-request acp-request))
@@ -6586,13 +6587,14 @@ Built here rather than taken wholesale from `acp-make-initialize-request'
 because that helper hardcodes `clientCapabilities' to the `fs' pair and
 has no way to advertise elicitation support.
 
-`elicitation' names the modes we can render.  An empty object there
-would mean zero modes, so the `form' key must be present for the
-capability to say anything.  `url' is deliberately absent: an agent
-must not send a mode the client did not advertise, and directing the
-user to a URL is a separate feature we do not implement.
+`elicitation' names the modes we can render, and is sent only when
+`agent-shell-elicitation--experimental-feature-enabled'.  An empty
+object there would mean zero modes, so the `form' key must be present
+for the capability to say anything.  `url' is deliberately absent: an
+agent must not send a mode the client did not advertise, and directing
+the user to a URL is a separate feature we do not implement.
 
-For example:
+For example, with the form feature enabled:
 
   (agent-shell--make-initialize-request)
   => ((:method . \"initialize\")
@@ -6609,7 +6611,8 @@ For example:
                 (clientCapabilities
                  . ((fs . ((readTextFile . ,(if agent-shell-text-file-capabilities t :false))
                            (writeTextFile . ,(if agent-shell-text-file-capabilities t :false))))
-                    (elicitation . ((form . nil)))))))))
+                    ,@(when agent-shell-elicitation--experimental-feature-enabled
+                        '((elicitation . ((form . nil)))))))))))
 
 (cl-defun agent-shell--initiate-handshake (&key shell-buffer on-initiated)
   "Initiate ACP handshake with SHELL-BUFFER.
