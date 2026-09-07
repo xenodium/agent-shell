@@ -81,6 +81,12 @@
 
 (defvar agent-shell--transcript-file)
 
+(defvar agent-shell-elicitation--experimental-feature-enabled nil
+  "When non-nil, render `elicitation/create' requests as in-buffer forms.
+
+Off by default while the feature soaks.  With it off the capability
+goes unadvertised, so a conforming agent never sends the request.")
+
 (defun agent-shell-elicitation--questionnaire-p (raw-input)
   "Return non-nil when RAW-INPUT is an ask-the-user questionnaire.
 
