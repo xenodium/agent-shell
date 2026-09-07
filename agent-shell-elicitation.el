@@ -86,7 +86,7 @@
 
 Agents bridging an ask-the-user tool onto elicitation call it with the
 questions as its input, so the tool call carries the whole questionnaire
-and its `content\=' later carries the answers.  Recognising that shape is
+and its `content' later carries the answers.  Recognising that shape is
 what lets such a call render as prose rather than as a JSON dump, live
 and on a restored session alike -- restore replays notifications but
 never requests, so the form itself never comes back and the tool call is
@@ -98,7 +98,7 @@ raised, since nothing marks it on restore.
 For example:
 
   (agent-shell-elicitation--questionnaire-p
-   \='((questions . [((question . \"Which colour?\"))])))
+   \\='((questions . [((question . \"Which colour?\"))])))
   => t"
   (when-let* ((questions (map-elt raw-input 'questions))
               ((not (seq-empty-p questions))))
@@ -131,7 +131,7 @@ keystroke while `map-elt' quietly read the newest.
 
 For example:
 
-  (agent-shell-elicitation--assoc-put \='((a . 1) (b . 2)) \='a 3)
+  (agent-shell-elicitation--assoc-put \\='((a . 1) (b . 2)) \\='a 3)
   => ((a . 3) (b . 2))"
   (cons (cons key value) (map-delete (copy-alist alist) key)))
 
@@ -175,7 +175,7 @@ For example:
            (append options nil)))
 
 (defconst agent-shell-elicitation--option-meta-key '_claude/askUserQuestionOption
-  "`_meta\=' key an option's preview travels under.
+  "`_meta' key an option's preview travels under.
 
 Unlike the free-text companion marker, this one is namespaced to the
 agent that sends it, so only Claude sends a preview today.  An option
@@ -191,7 +191,7 @@ client to show on demand.
 For example:
 
   (agent-shell-elicitation--option-preview
-   \='((const . \"a\") (_meta (_claude/askUserQuestionOption (preview . \"…\")))))
+   \\='((const . \"a\") (_meta (_claude/askUserQuestionOption (preview . \"…\")))))
   => \"…\""
   (map-nested-elt option (list '_meta
                                agent-shell-elicitation--option-meta-key
@@ -222,11 +222,11 @@ variant, whose `type' this client has no way to render.
 A string is a single-select only once it offers options, so the two
 share a `type' and are told apart by that:
 
-  (agent-shell-elicitation--field-type \='((type . \"string\")))
+  (agent-shell-elicitation--field-type \\='((type . \"string\")))
   => string
 
   (agent-shell-elicitation--field-type
-   \='((type . \"string\") (enum . [\"a\"])))
+   \\='((type . \"string\") (enum . [\"a\"])))
   => single-select"
   (pcase (map-elt schema 'type)
     ("string" (if (agent-shell-elicitation--field-options schema)
@@ -249,7 +249,7 @@ such a field simply starts unchecked.
 For example:
 
   (agent-shell-elicitation--field-default
-   \='multi-select \='((default . [\"a\" \"b\"])))
+   \\='multi-select \\='((default . [\"a\" \"b\"])))
   => (\"a\" \"b\")"
   (when-let* ((default (map-elt schema 'default)))
     (pcase type
@@ -258,14 +258,14 @@ For example:
       (_ default))))
 
 (defconst agent-shell-elicitation--custom-answer-meta-key '_askUserQuestionCustomAnswer
-  "`_meta\=' key marking a text field as another field\='s free-text companion.
+  "`_meta' key marking a text field as another field's free-text companion.
 
 Agents bridging an ask-the-user tool onto elicitation send a select
 field and a free-text \"Other\" field per question, and mark the second
 as belonging to the first.  The key is deliberately un-namespaced so the
 same marker is recognisable across Claude, Codex and any other bridge.
 
-Unlike agent-namespaced `_meta\=' decoration, acting on this is what makes
+Unlike agent-namespaced `_meta' decoration, acting on this is what makes
 the form readable: rendered as two independent fields, one question
 looks like two, and a user can answer it twice in contradictory ways.")
 
@@ -273,7 +273,7 @@ looks like two, and a user can answer it twice in contradictory ways.")
   "Return the field key SCHEMA declares itself the free-text companion of.
 
 Returns nil for an ordinary field.  See
-`agent-shell-elicitation--custom-answer-meta-key\='."
+`agent-shell-elicitation--custom-answer-meta-key'."
   (map-nested-elt schema (list '_meta
                                agent-shell-elicitation--custom-answer-meta-key
                                'questionId)))
@@ -281,8 +281,8 @@ Returns nil for an ordinary field.  See
 (defun agent-shell-elicitation--link-custom-answers (fields)
   "Fold each free-text companion in FIELDS into the select it answers for.
 
-The select gains `:custom-key\=', naming the companion; the companion gains
-`:folded-into\=', naming the select.  The renderer then offers the companion
+The select gains `:custom-key', naming the companion; the companion gains
+`:folded-into', naming the select.  The renderer then offers the companion
 as one more option of that select rather than as a field of its own, so
 picking an option and typing an answer are alternatives rather than both
 being answerable at once.
@@ -336,8 +336,8 @@ Each descriptor is an alist:
    (:custom-key . nil)
    (:folded-into . nil))
 
-`:custom-answer-for\=' through `:folded-into\=' carry the free-text
-companion link, see `agent-shell-elicitation--link-custom-answers\='.
+`:custom-answer-for' through `:folded-into' carry the free-text
+companion link, see `agent-shell-elicitation--link-custom-answers'.
 
 For example:
 
@@ -375,7 +375,7 @@ field is omitted from the response rather than sent as null.
 For example:
 
   (agent-shell-elicitation--initial-values
-   \='(((:key . \"n\") (:default . 3)) ((:key . \"note\") (:default . nil))))
+   \\='(((:key . \"n\") (:default . 3)) ((:key . \"note\") (:default . nil))))
   => ((\"n\" . 3))"
   (seq-reduce (lambda (values field)
                 (if-let* ((value (map-elt field :default)))
@@ -502,8 +502,8 @@ see `agent-shell-elicitation--field-answer'.
 For example:
 
   (agent-shell-elicitation--make-content
-   :fields \='(((:key . \"n\") (:type . integer)) ((:key . \"m\") (:type . string)))
-   :values \='((\"n\" . 2)))
+   :fields \\='(((:key . \"n\") (:type . integer)) ((:key . \"m\") (:type . string)))
+   :values \\='((\"n\" . 2)))
   => ((n . 2))"
   (seq-reduce (lambda (content field)
                 (if-let* ((answer (agent-shell-elicitation--field-answer
@@ -1164,7 +1164,7 @@ so every interaction mutates state and pushes a freshly built body."
   "Leave elicitation ID's answer in STATE on screen, as form or tool call.
 
 A questionnaire bridged from an ask-the-user tool lives on in the tool
-call that raised it, whose `content\=' spells the answers out in prose.
+call that raised it, whose `content' spells the answers out in prose.
 The form is removed there, so the answer reads the same whether it was
 just given or replayed from a restored session -- the same tool call
 rendering either way, since restore never brings the form back.
@@ -1288,9 +1288,9 @@ form has no controls left)."
 (defun agent-shell-elicitation--read-string (prompt initial)
   "Read a string with PROMPT, prefilled with INITIAL and point at its end.
 
-Prefilled by inserting rather than through `read-string\='s INITIAL-INPUT
-argument, which is deprecated.  Follows
-`agent-shell--prompt-queue-read\=' for the shape."
+Prefilled by inserting rather than through the INITIAL-INPUT argument
+of `read-string', which is deprecated.  Follows
+`agent-shell--prompt-queue-read' for the shape."
   (minibuffer-with-setup-hook
       (lambda ()
         (when initial
@@ -1382,10 +1382,10 @@ option drops the answer typed in its place, and typing an answer drops
 the option picked in its place, so exactly one of the two is ever sent.
 A multi-select clears nothing, since its ticks and its typed answer are
 one answer together.  Feed the result to
-`agent-shell-elicitation--set-values\='.
+`agent-shell-elicitation--set-values'.
 
-For example, given a select `question_0\=' whose free-text companion is
-`question_0_custom\=':
+For example, given a select `question_0' whose free-text companion is
+`question_0_custom':
 
   (agent-shell-elicitation--clearing elicitation \"question_0\" \"Red\")
   => ((\"question_0\" . \"Red\") (\"question_0_custom\"))"
