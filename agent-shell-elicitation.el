@@ -1044,7 +1044,7 @@ cannot drift out of step with the layout."
 (defun agent-shell-elicitation--make-text (elicitation)
   "Create text to render the form for ELICITATION.
 
-ELICITATION is the entry `agent-shell--state' holds under
+ELICITATION is the entry the variable `agent-shell--state' holds under
 `:elicitations'.  Pure: every interaction mutates that entry and calls
 this again, and the fresh body is pushed through
 `agent-shell--update-fragment'.
@@ -1460,7 +1460,7 @@ one never binds the key.  Reaching this command anyway -- through
   "Act on the elicitation control at point.
 
 Reads which elicitation, field and option the control names from its
-text properties, then mutates the authoritative entry in
+text properties, then mutates the authoritative entry in the variable
 `agent-shell--state' and re-renders.  Named rather than a per-control
 closure so it stays rebindable (see issue #759)."
   (declare (modes agent-shell-mode))
