@@ -150,7 +150,7 @@ answered in the negative."
   (dolist (case '((;; optional, no default: silent either way
                    nil nil ((nil . nil) (("flag" . t) . ((flag . t)))
                             (("flag" . :false) . nil)))
-                  (;; required: answers, including `no\=', and never blocks
+                  (;; required: answers, including `no', and never blocks
                    t nil ((nil . ((flag . :false)))
                           (("flag" . t) . ((flag . t)))))
                   (;; defaulted: confirming or overturning both count
@@ -868,7 +868,7 @@ refuses a fraction rather than truncating it, since answering 1.9 with 1
 reports a number the user never typed and leaves a plausible-looking
 form behind."
   ;; An integer field names its requirement whatever is wrong with the
-  ;; input, which reads better than "not a number" for `2 apples\='.
+  ;; input, which reads better than "not a number" for `2 apples'.
   (dolist (case '((integer ("1.9" "2 apples" "2") 2
                    ("N: " "Whole number needed.  N: " "Whole number needed.  N: "))
                   (number ("1.9") 1.9 ("N: "))
@@ -914,9 +914,9 @@ does, so subscribers watching for `idle' must hear about it."
 (ert-deftest agent-shell-elicitation-keys-drive-the-whole-form-test ()
   "Pressing RET on each control does what the control says.
 
-Driven through `execute-kbd-macro\=' rather than by calling the commands,
+Driven through `execute-kbd-macro' rather than by calling the commands,
 so a control whose action reaches no branch of
-`agent-shell-elicitation-act\=' shows up as the silent no-op it is.
+`agent-shell-elicitation-act' shows up as the silent no-op it is.
 
 The buffer is displayed rather than temporary: key dispatch goes
 through the selected window, so keys pressed at a buffer nobody is

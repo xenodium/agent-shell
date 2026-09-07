@@ -6582,13 +6582,13 @@ through to `acp-send-request'."
 (defun agent-shell--make-initialize-request ()
   "Instantiate the \"initialize\" request this client sends on startup.
 
-Built here rather than taken wholesale from `acp-make-initialize-request\='
-because that helper hardcodes `clientCapabilities\=' to the `fs\=' pair and
+Built here rather than taken wholesale from `acp-make-initialize-request'
+because that helper hardcodes `clientCapabilities' to the `fs' pair and
 has no way to advertise elicitation support.
 
-`elicitation\=' names the modes we can render.  An empty object there
-would mean zero modes, so the `form\=' key must be present for the
-capability to say anything.  `url\=' is deliberately absent: an agent
+`elicitation' names the modes we can render.  An empty object there
+would mean zero modes, so the `form' key must be present for the
+capability to say anything.  `url' is deliberately absent: an agent
 must not send a mode the client did not advertise, and directing the
 user to a URL is a separate feature we do not implement.
 
