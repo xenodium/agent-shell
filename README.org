@@ -923,6 +923,16 @@ All of the above settings can be applied on a per-project basis using [[https://
 - =C-c C-c= - Interrupt current agent operation
 - =TAB and Shift-TAB= - Navigate interactive elements
 
+  When an ACP agent requests structured input, agent-shell displays the
+  authoritative shell and renders the form inline there.  =TAB= and =Shift-TAB=
+  include its fields, options, and actions in normal interactive-element
+  navigation.  Press =RET= to edit a value, toggle an option, or activate
+  =Submit=, =Decline=, or =Cancel=.
+
+  Form elicitation must not be used for passwords, API keys, access tokens,
+  payment credentials, or other secrets.  agent-shell currently supports
+  form elicitation only; it does not advertise URL-mode elicitation.
+
   To customize =RET= binding behaviour, you can use something like:
 
   #+begin_src emacs-lisp :lexical no
