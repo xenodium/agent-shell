@@ -153,6 +153,14 @@
   "Face for alternating (zebra) data rows in tables."
   :group 'agent-shell-markdown)
 
+(defface agent-shell-markdown-table-row
+  '((t nil))
+  "Face for plain (non-zebra) table data rows.
+Carries no attributes of its own, so default rendering is unchanged.
+It exists so face-remapping setups such as `mixed-pitch-mode' can pin
+every table row to the same font and keep columns aligned."
+  :group 'agent-shell-markdown)
+
 (defface agent-shell-markdown-source-block
   '((t :inherit org-block :foreground unspecified :extend t))
   "Background face applied to rendered fenced source-block bodies.
@@ -3940,7 +3948,8 @@ prone to a few-pixel drift on emoji-heavy tables."
                               (= (mod data-row-num 2) 1)))
                (row-face (cond
                           (is-header 'agent-shell-markdown-table-header)
-                          (is-zebra 'agent-shell-markdown-table-zebra))))
+                          (is-zebra 'agent-shell-markdown-table-zebra)
+                          (t 'agent-shell-markdown-table-row))))
           (unless (or is-header is-separator)
             (setq data-row-num (1+ data-row-num)))
           (push (if is-separator

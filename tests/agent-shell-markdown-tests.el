@@ -2626,13 +2626,15 @@ after" nil)))))
 
 (ert-deftest agent-shell-markdown-convert-table-cell-uses-bold ()
   ;; Bold inside a cell is processed by the main pass; the rendered
-  ;; table preserves the bold face on \"Alice\".
+  ;; table keeps the bold face on \"Alice\", stacked over the data
+  ;; row's own face.
   (let* ((s (agent-shell-markdown-convert "| Name | Role |
 |------|------|
 | **Alice** | Engineer |"))
          (alice-pos (string-match "Alice" s)))
     (should alice-pos)
-    (should (eq 'agent-shell-markdown-bold (get-text-property alice-pos 'face s)))))
+    (should (equal '(agent-shell-markdown-bold agent-shell-markdown-table-row)
+                   (get-text-property alice-pos 'face s)))))
 
 (ert-deftest agent-shell-markdown-table-leaves-cell-link-keys-alone ()
   ;; Cells hold whatever the inline passes rendered, links included.  A
@@ -2923,7 +2925,7 @@ after" nil)))))
   ;; smear the first char's `font-lock-face' (a border) across every
   ;; cell.  A fresh render mirrors each cell's `face' to `font-lock-face'
   ;; on its own, so header cells stay `table-header' and plain data
-  ;; cells stay unstyled rather than all going border-grey.
+  ;; cells stay `table-row' rather than all going border-grey.
   (with-temp-buffer
     (insert "| A | B |\n|---|---|\n| 1 | 2 |\n")
     (agent-shell-markdown-replace-markup)
@@ -2942,17 +2944,45 @@ after" nil)))))
        (list (cons :source (prop-match-value region))
              (cons :start (prop-match-beginning region))
              (cons :end (prop-match-end region)))))
-    ;; Header cell recovers its header face; a plain data cell has no
-    ;; border font-lock-face smeared onto it.
+    ;; Header cell recovers its header face; a plain data cell gets its
+    ;; row face back rather than the smeared border face.
     (should (eq (get-text-property
                  (save-excursion (goto-char (point-min))
                                  (1- (search-forward "A")))
                  'font-lock-face)
                 'agent-shell-markdown-table-header))
-    (should (null (get-text-property
-                   (save-excursion (goto-char (point-min))
-                                   (1- (search-forward "1")))
-                   'font-lock-face)))))
+    (should (eq (get-text-property
+                 (save-excursion (goto-char (point-min))
+                                 (1- (search-forward "1")))
+                 'font-lock-face)
+                'agent-shell-markdown-table-row))))
+
+(ert-deftest agent-shell-markdown-table-every-data-row-carries-a-face ()
+  ;; Plain data rows carry `agent-shell-markdown-table-row' and
+  ;; alternating rows `agent-shell-markdown-table-zebra'.  A row with
+  ;; no face at all falls through to `default', which face-remapping
+  ;; setups such as `mixed-pitch-mode' cannot pin to a fixed-pitch
+  ;; font, so that row drifts out of line with the rest of the table.
+  (let ((cell-faces
+         (lambda (markdown)
+           (with-temp-buffer
+             (insert markdown)
+             (agent-shell-markdown-replace-markup)
+             (seq-map (lambda (cell)
+                        (goto-char (point-min))
+                        (search-forward cell)
+                        (get-text-property (1- (point)) 'face))
+                      '("1" "2" "3"))))))
+    (should (equal (funcall cell-faces "| A |\n|---|\n| 1 |\n| 2 |\n| 3 |\n")
+                   '(agent-shell-markdown-table-row
+                     agent-shell-markdown-table-zebra
+                     agent-shell-markdown-table-row)))
+    ;; With striping off, every data row is a plain row.
+    (let ((agent-shell-markdown-table-zebra-stripe nil))
+      (should (equal (funcall cell-faces "| A |\n|---|\n| 1 |\n| 2 |\n| 3 |\n")
+                     '(agent-shell-markdown-table-row
+                       agent-shell-markdown-table-row
+                       agent-shell-markdown-table-row))))))
 
 (ert-deftest agent-shell-markdown-table-sizes-against-destination-window ()
   ;; Regression: column allocation must size against the table's
@@ -3568,9 +3598,9 @@ A " nil)
              ("
 " nil)
              ("│" (agent-shell-markdown-table-border))
-             (" 1 " nil)
+             (" 1 " (agent-shell-markdown-table-row))
              ("│" (agent-shell-markdown-table-border))
-             (" 2 " nil)
+             (" 2 " (agent-shell-markdown-table-row))
              ("│" (agent-shell-markdown-table-border))))))
 
 (ert-deftest agent-shell-markdown-watermark-skips-prefix-on-streamed-append ()
