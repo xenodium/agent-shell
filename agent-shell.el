@@ -9,6 +9,15 @@
 
 (defconst agent-shell--version "0.75.3")
 
+;; Minimum dependency versions, as declared in the `Package-Requires'
+;; header above.  Package managers that resolve versions enforce the
+;; header on install; those that only resolve dependency names (straight.el,
+;; for one) leave `agent-shell--start' as the sole check, so keep these two
+;; in sync with it.
+(defconst agent-shell--shell-maker-minimum-version "0.97.3")
+
+(defconst agent-shell--acp-minimum-version "0.15.1")
+
 ;; This package is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
 ;; the Free Software Foundation; either version 3, or (at your option)
@@ -4671,10 +4680,12 @@ SESSION-STRATEGY overrides `agent-shell-session-strategy' buffer-locally.
 SESSION-ID resumes an existing session by its id string.
 FORK-SESSION-ID forks an existing session by its id string.
 OUTGOING-REQUEST-DECORATOR is passed through to `acp-make-client'."
-  (unless (version<= "0.91.2" shell-maker-version)
-    (error "Please update shell-maker to version 0.91.2 or newer"))
-  (unless (version<= "0.14.3" acp-package-version)
-    (error "Please update acp.el to version 0.14.3 or newer"))
+  (unless (version<= agent-shell--shell-maker-minimum-version shell-maker-version)
+    (error "Please update shell-maker to version %s or newer"
+           agent-shell--shell-maker-minimum-version))
+  (unless (version<= agent-shell--acp-minimum-version acp-package-version)
+    (error "Please update acp.el to version %s or newer"
+           agent-shell--acp-minimum-version))
   (when (boundp 'agent-shell--transcript-file-path-function)
     (user-error "'agent-shell--transcript-file-path-function is retired.
 

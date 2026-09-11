@@ -6999,5 +6999,22 @@ Then [after](https://after.com/y)
     (agent-shell-previous-item)
     (should (eq (char-after) ?A))))
 
+(ert-deftest agent-shell-dependency-floors-match-package-requires-test ()
+  "Runtime dependency floors match the versions `Package-Requires\' declares.
+
+`agent-shell--start\' refuses to run against a dependency older than its
+floor.  Nothing derives those floors from the header, so this pairs them:
+bumping one and not the other leaves the check accepting a version the
+package declares unsupported."
+  (require 'find-func)
+  (require 'lisp-mnt)
+  (let ((declared (with-temp-buffer
+                    (insert-file-contents (find-library-name "agent-shell"))
+                    (read (string-join (lm-header-multiline "package-requires") " ")))))
+    (should (equal (cadr (assq 'shell-maker declared))
+                   agent-shell--shell-maker-minimum-version))
+    (should (equal (cadr (assq 'acp declared))
+                   agent-shell--acp-minimum-version))))
+
 (provide 'agent-shell-tests)
 ;;; agent-shell-tests.el ends here
