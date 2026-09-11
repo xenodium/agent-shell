@@ -6,6 +6,10 @@
 
 ;;; Code:
 
+(defconst agent-shell-tests--directory
+  (file-name-directory (or load-file-name buffer-file-name))
+  "Directory holding this test file.")
+
 (ert-deftest agent-shell-make-environment-variables-test ()
   "Test `agent-shell-make-environment-variables' function."
   ;; Test basic key-value pairs
@@ -7006,10 +7010,10 @@ Then [after](https://after.com/y)
 floor.  Nothing derives those floors from the header, so this pairs them:
 bumping one and not the other leaves the check accepting a version the
 package declares unsupported."
-  (require 'find-func)
   (require 'lisp-mnt)
   (let ((declared (with-temp-buffer
-                    (insert-file-contents (find-library-name "agent-shell"))
+                    (insert-file-contents (expand-file-name "../agent-shell.el"
+                                                            agent-shell-tests--directory))
                     (read (string-join (lm-header-multiline "package-requires") " ")))))
     (should (equal (cadr (assq 'shell-maker declared))
                    agent-shell--shell-maker-minimum-version))
