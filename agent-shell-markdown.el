@@ -157,8 +157,8 @@
   '((t nil))
   "Face for plain (non-zebra) table data rows.
 Carries no attributes of its own, so default rendering is unchanged.
-It exists so face-remapping setups such as `mixed-pitch-mode' can pin
-every table row to the same font and keep columns aligned."
+Allows face-remapping setups such as `mixed-pitch-mode' to pin every
+table row to the same font, keeping columns aligned."
   :group 'agent-shell-markdown)
 
 (defface agent-shell-markdown-source-block

@@ -2958,11 +2958,10 @@ after" nil)))))
                 'agent-shell-markdown-table-row))))
 
 (ert-deftest agent-shell-markdown-table-every-data-row-carries-a-face ()
-  ;; Plain data rows carry `agent-shell-markdown-table-row' and
-  ;; alternating rows `agent-shell-markdown-table-zebra'.  A row with
-  ;; no face at all falls through to `default', which face-remapping
-  ;; setups such as `mixed-pitch-mode' cannot pin to a fixed-pitch
-  ;; font, so that row drifts out of line with the rest of the table.
+  ;; Plain data rows carry the row face and alternating rows the zebra
+  ;; face, so no data row is left unfaced.  `mixed-pitch-mode' and
+  ;; similar remap fonts per face, so an unfaced row can't be kept in
+  ;; the table's font and misaligns.
   (let ((cell-faces
          (lambda (markdown)
            (with-temp-buffer
