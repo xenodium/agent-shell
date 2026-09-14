@@ -28,6 +28,7 @@ With agent-shell, you can interact with any ACP-driven agent like:
 - [[https://docs.x.ai/docs/overview][Grok Build]] (xAI)
 - [[https://cursor.com/docs/cli][Cursor]]
 - [[https://www.kimi.com/code][Kimi Code CLI]]
+- [[#minimax-code-mcode][MiniMax Code (MCode)]] (custom configuration)
 - [[https://www.codebuddy.ai][CodeBuddy]]
 - [[https://kiro.dev][Kiro CLI]]
 - [[https://github.com/QwenLM/qwen-code][Qwen Code]]
@@ -724,6 +725,37 @@ Huge thanks for /gdindi/ for finding and and describing this in https://github.c
 *** Customizing Available Agents
 
 By default, =agent-shell= includes configurations for all supported agents (Claude Agent, Gemini CLI, Codex, Goose, Grok Build, Cursor, CodeBuddy, Qwen Code, and Auggie). You can customize which agents are available through the =agent-shell-agent-configs= variable.
+
+**** MiniMax Code (MCode)
+:PROPERTIES:
+:CUSTOM_ID: minimax-code-mcode
+:END:
+
+Install the [[https://agent.minimax.io][MiniMax Code]] CLI using its [[https://www.npmjs.com/package/@minimax-ai/code][installation instructions]], including the Node.js requirements and npm script permissions, then run =mcode login= in a terminal. Ensure =mcode= is available in Emacs' =exec-path=.
+
+Add this command to your configuration to start MCode through the existing custom-agent API:
+
+#+begin_src emacs-lisp
+(defun my-agent-shell-mcode ()
+  "Start MiniMax Code through ACP."
+  (interactive)
+  (require 'agent-shell)
+  (agent-shell-start
+   :config
+   (agent-shell-make-agent-config
+    :identifier 'mcode
+    :mode-line-name "MCode"
+    :buffer-name "MCode"
+    :shell-prompt "MCode> "
+    :shell-prompt-regexp "MCode> "
+    :client-maker (lambda (buffer)
+                    (agent-shell--make-acp-client
+                     :command "mcode"
+                     :command-params '("acp")
+                     :context-buffer buffer)))))
+#+end_src
+
+Run =M-x my-agent-shell-mcode= to start a session. Authentication is handled by the CLI login above.
 
 ** Usage
 
