@@ -39,6 +39,7 @@
 ;;; Code:
 
 (require 'map)
+(require 'agent-shell-prompt)
 (eval-when-compile
   (require 'cl-lib))
 
@@ -52,7 +53,6 @@
 (declare-function agent-shell--insert-to-shell-buffer "agent-shell")
 (declare-function agent-shell--append-transcript "agent-shell")
 (declare-function agent-shell--indent-markdown-headers "agent-shell")
-(declare-function agent-shell--live-input-prompt-p "agent-shell")
 (declare-function agent-shell--reset-undo-history "agent-shell")
 (declare-function agent-shell--make-boxed-message "agent-shell")
 (declare-function agent-shell--send-request "agent-shell")
@@ -103,7 +103,11 @@ in progress), the request is immediately rejected with an error."
     ;; agent label on the marker) mislabels it as a user `Me' turn.
     (when-let* ((buffer (map-elt state :buffer)))
       (with-current-buffer buffer
-        (shell-maker-insert-end-of-prompt-marker)))
+        ;; A persistent prompt survives the removal above, and the marker
+        ;; appends at `point-max', which is below it.  Narrow so the
+        ;; boundary lands where the pushed content will render.
+        (agent-shell--with-buffer-narrowed-to (agent-shell--live-prompt-start)
+          (shell-maker-insert-end-of-prompt-marker))))
     ;; Mark busy so requests are queued rather than sent mid-push.
     ;; Cleared on session_push_end via `shell-maker-finish-output'.
     (setq shell-maker--busy t)
@@ -113,8 +117,14 @@ in progress), the request is immediately rejected with an error."
     (map-put! state :last-entry-type "session/push")))
 
 (defun agent-shell-experimental--remove-trailing-prompt ()
-  "Remove the trailing empty shell prompt if it is at end of buffer."
-  (when-let* ((comint-last-prompt)
+  "Remove the trailing empty shell prompt if it is at end of buffer.
+
+No-op under `agent-shell--persistent-prompt', where the shell is meant
+to keep a prompt at the buffer end at all times: the push renders above
+it, and deleting it here would take any unsubmitted input with it and
+leave the shell with nowhere to type."
+  (when-let* (((not agent-shell--persistent-prompt))
+              (comint-last-prompt)
               (prompt-start (car comint-last-prompt))
               (prompt-end (cdr comint-last-prompt))
               ((= (marker-position prompt-end) (point-max))))
@@ -351,24 +361,13 @@ send it as input."
                  (agent-shell--indent-markdown-headers prompt))
    :file-path agent-shell--transcript-file)
   (with-current-buffer (map-elt state :buffer)
-    ;; Narrow to everything above a live input prompt so both inserts land
-    ;; there, and flip the prompt-start marker's insertion type so it
-    ;; advances past the new text rather than being stranded inside it.
-    ;; `shell-maker-insert-end-of-prompt-marker' documents this narrowing as
+    ;; Both inserts land above a live input prompt.
+    ;; `shell-maker-insert-end-of-prompt-marker' documents that narrowing as
     ;; the way to synthesize history above a live prompt.
-    (let* ((late-prompt-start (and (not (shell-maker-busy))
-                                   comint-last-prompt
-                                   (marker-position (car comint-last-prompt))
-                                   (agent-shell--live-input-prompt-p comint-last-prompt)
-                                   (car comint-last-prompt)))
-           (orig-insertion-type (and late-prompt-start
-                                     (marker-insertion-type late-prompt-start))))
-      (when late-prompt-start
-        (set-marker-insertion-type late-prompt-start t))
-      (unwind-protect
-          (save-restriction
-            (when late-prompt-start
-              (narrow-to-region (point-min) (marker-position late-prompt-start)))
+    (let ((late-prompt-start (and (or agent-shell--persistent-prompt
+                                      (not (shell-maker-busy)))
+                                  (agent-shell--live-prompt-start))))
+      (agent-shell--with-buffer-narrowed-to late-prompt-start
             (agent-shell--update-text
              :state state
              :block-id (format "%s-steered-user_message_chunk"
@@ -386,8 +385,6 @@ send it as input."
               (let ((inhibit-read-only t))
                 (goto-char (point-max))
                 (insert "\n"))))
-        (when late-prompt-start
-          (set-marker-insertion-type late-prompt-start orig-insertion-type)))
       (when late-prompt-start
         ;; Rendering above the prompt pushed any unsubmitted input down, so
         ;; undo entries recorded for it point at the shifted text.

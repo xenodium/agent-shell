@@ -5,7 +5,7 @@
 ;; Author: Alvaro Ramirez https://xenodium.com
 ;; URL: https://github.com/xenodium/agent-shell
 ;; Version: 0.76.1
-;; Package-Requires: ((emacs "29.1") (shell-maker "0.97.3") (acp "0.15.1"))
+;; Package-Requires: ((emacs "29.1") (shell-maker "0.98.0") (acp "0.15.1"))
 
 (defconst agent-shell--version "0.76.1")
 
@@ -14,7 +14,7 @@
 ;; header on install; those that only resolve dependency names (straight.el,
 ;; for one) leave `agent-shell--start' as the sole check, so keep these two
 ;; in sync with it.
-(defconst agent-shell--shell-maker-minimum-version "0.97.3")
+(defconst agent-shell--shell-maker-minimum-version "0.98.0")
 
 (defconst agent-shell--acp-minimum-version "0.15.1")
 
@@ -90,6 +90,7 @@
 (require 'agent-shell-opencode)
 (require 'agent-shell-pi)
 (require 'agent-shell-project)
+(require 'agent-shell-prompt)
 (require 'agent-shell-prompt-queue)
 (require 'agent-shell-qwen)
 (require 'agent-shell-styles)
@@ -1306,13 +1307,18 @@ With \\[universal-argument] \\[universal-argument] prefix ARG, prompt to pick an
     (agent-shell--dwim))))
 
 (defun agent-shell-submit ()
-  "Submit the current input to the agent.
+  "Submit the current input to the agent, or queue it while the agent is busy.
 
 The prompt is shown early (before the ACP session is ready) so users
 can type while the agent initializes.  Gate the actual send on the
 session being ready: when it is not, error with `Busy, please wait'
 before the input is committed, so the typed text stays editable
 instead of being echoed into the transcript and rejected later.
+
+Once the session is up, `agent-shell--persistent-prompt' keeps a prompt
+at the buffer end for the whole turn, so submitting mid-turn queues the
+text (see `agent-shell-prompt-queue') and clears the input.  The queue
+drains when the turn ends.
 
 This owns the `agent-shell-submit' name because shell-maker's
 per-start aliasing is disabled (see the `:alias-commands nil' call in
@@ -1323,7 +1329,10 @@ per-start aliasing is disabled (see the `:alias-commands nil' call in
   (unless (or (map-nested-elt agent-shell--state '(:session :id))
               (eq agent-shell-session-strategy 'new-deferred))
     (user-error "Busy, please wait"))
-  (shell-maker-submit))
+  (if (and agent-shell--persistent-prompt (shell-maker-busy))
+      (when-let* ((prompt (agent-shell--take-prompt-input)))
+        (agent-shell--prompt-queue-enqueue :prompt prompt))
+    (shell-maker-submit)))
 
 (defun agent-shell--display-and-insert-context (shell-buffer text)
   "Display SHELL-BUFFER and insert TEXT into it."
@@ -3015,7 +3024,11 @@ Clears STATE's `:expanded-activity-group'."
                     (not (equal (map-nested-elt acp-notification '(params update sessionUpdate))
                                 "user_message_chunk")))
            (with-current-buffer (map-elt state :buffer)
-             (shell-maker-insert-end-of-prompt-marker)))
+             ;; The marker appends at `point-max', which with a prompt held
+             ;; at the buffer end is below it.  Narrow so it closes the
+             ;; replayed prompt it belongs to instead.
+             (agent-shell--with-buffer-narrowed-to (agent-shell--live-prompt-start)
+               (shell-maker-insert-end-of-prompt-marker))))
          (cond
           ;; Pending-restore: accumulate notifications during
           ;; session/load and suppress normal rendering.  Once the
@@ -4829,6 +4842,9 @@ variable (see makunbound)"))
       ;; the `session-strategy' check in `agent-shell--start-acp-session',
       ;; the `prompt'/`new'/`latest' subscriptions below, and
       ;; `agent-shell--insert-to-shell-buffer'.
+      ;; Keep that prompt there for the rest of the session, not just until
+      ;; the first submission (see `agent-shell--persistent-prompt').
+      (setq-local shell-maker-persistent-prompt agent-shell--persistent-prompt)
       ;; Show the prompt immediately, before bootstrapping, so shell
       ;; always has a prompt to type into regardless of strategy.
       (shell-maker-finish-output :config shell-maker--config :success nil)
@@ -4950,25 +4966,6 @@ nothing when BLOCK-ID names no rendered group header."
       (agent-shell-ui-set-group-collapsed-by-id
        :namespace-id namespace-id :block-id block-id :collapsed t :no-undo t))))
 
-(defun agent-shell--live-input-prompt-p (prompt)
-  "Non-nil when PROMPT is a live input prompt at the end of the buffer.
-PROMPT is a `comint-last-prompt' cons of (start . end) markers.  It's
-live when nothing follows it (empty input area) or when everything
-between its end and `point-max' is user input rather than agent output.
-This tells a real prompt awaiting input, possibly with unsubmitted typed
-text, apart from a stale prompt left mid-buffer while output streams
-below it (where `comint-last-prompt' still points at the previous
-prompt).  Output carries a `field' of `output'; typed input does not."
-  (let ((end (marker-position (cdr prompt)))
-        (max (point-max)))
-    ;; When narrowed above the prompt, `end' sits past the accessible
-    ;; `point-max' and `text-property-any' would get inverted bounds.
-    ;; Treat that as not-live so callers fall back to inserting at the
-    ;; narrowed `point-max' (still above the prompt).
-    (and (<= end max)
-         (or (= end max)
-             (not (text-property-any end max 'field 'output))))))
-
 (defun agent-shell--reset-undo-history ()
   "Reset `buffer-undo-list' to undo the active prompt's input only.
 
@@ -5040,11 +5037,19 @@ NAVIGATION for navigation style, EXPANDED to show block expanded
 by default, RENDER-BODY-IMAGES to enable inline image rendering in
 body, ABOVE-LAST-PROMPT to land content above the active prompt
 instead of after it (typical for notifications arriving out of
-turn).  Programmatic fragment updates do not enter undo history.
+turn).  Ignored while `agent-shell--persistent-prompt' is on, where a
+prompt is live for the whole turn and everything renders above it.
+Programmatic fragment updates do not enter undo history.
 
 GROUP-ID nests this block under a collapsible group header, materialized
 from GROUP-LABEL on first use (see `agent-shell-ui-make-fragment-model'),
 with GROUP-EXPANDED as the group's initial fold state."
+  ;; A persistent prompt is live for the whole turn, so there is always one
+  ;; to render above and every write goes there.  Callers decide
+  ;; ABOVE-LAST-PROMPT from whether the shell is busy, which only tells
+  ;; them about the out-of-turn case.
+  (when agent-shell--persistent-prompt
+    (setq above-last-prompt t))
   (when label-right
     (setq label-right (string-trim label-right)))
   ;; Convert non-standard multiline single-backtick code spans to fenced
@@ -5134,28 +5139,13 @@ with GROUP-EXPANDED as the group's initial fold state."
            (saved-mark (mark t))
            (saved-mark-active mark-active)
            (saved-window-start (and window (window-start window)))
-           ;; Caller is asking us to land content above the active
-           ;; prompt (typical for notifications arriving after
-           ;; `end_turn').  Narrow above the prompt so the fragment
-           ;; system inserts there, and flip the prompt-start marker's
-           ;; insertion-type so it advances past the new text rather
-           ;; than ending up stranded inside it.  Anchor on the
-           ;; prompt-start so unsubmitted typed input is pushed down with
-           ;; the prompt.  Falls back to the normal in-line path when no
-           ;; live input prompt sits at the buffer end.
+           ;; Land the content above the active prompt.  Falls back to the
+           ;; normal in-line path when no live prompt sits at the buffer
+           ;; end, which only happens with the persistent prompt off: with
+           ;; it on, `agent-shell--live-prompt-start' signals instead.
            (late-prompt-start (and above-last-prompt
-                                   comint-last-prompt
-                                   (marker-position (car comint-last-prompt))
-                                   (agent-shell--live-input-prompt-p comint-last-prompt)
-                                   (car comint-last-prompt)))
-           (orig-insertion-type (and late-prompt-start
-                                     (marker-insertion-type late-prompt-start))))
-      (when late-prompt-start
-        (set-marker-insertion-type late-prompt-start t))
-      (unwind-protect
-       (save-restriction
-        (when late-prompt-start
-          (narrow-to-region (point-min) (marker-position late-prompt-start)))
+                                   (agent-shell--live-prompt-start))))
+      (agent-shell--with-buffer-narrowed-to late-prompt-start
         (shell-maker-with-auto-scroll-edit
          (when-let* ((range (agent-shell-ui-update-fragment
                              (agent-shell-ui-make-fragment-model
@@ -5218,8 +5208,6 @@ with GROUP-EXPANDED as the group's initial fold state."
                                              :external-renderers nil)
                (widen))))
          (run-hook-with-args 'agent-shell-section-functions range))))
-       (when late-prompt-start
-         (set-marker-insertion-type late-prompt-start orig-insertion-type)))
       ;; Late-arrival inserts run under a narrow that ends at
       ;; `comint-last-prompt'.  The auto-scroll branch of
       ;; `shell-maker-with-auto-scroll-edit' goes to the narrowed
@@ -5250,7 +5238,11 @@ with GROUP-EXPANDED as the group's initial fold state."
 Uses STATE's request count as namespace unless NAMESPACE-ID is given.
 BLOCK-ID uniquely identifies the entry.
 TEXT is the string to insert or append.
-APPEND and CREATE-NEW control update behavior."
+APPEND and CREATE-NEW control update behavior.
+
+Lands above the live prompt while `agent-shell--persistent-prompt' is on,
+the same as `agent-shell--update-fragment'.  Without it this appends at
+`point-max', which mid-turn is past whatever the user is typing."
   (let ((ns (or namespace-id (map-elt state :request-count))))
     (when-let* (((map-elt state :buffer))
                 (viewport-buffer (agent-shell-viewport--buffer
@@ -5268,6 +5260,10 @@ APPEND and CREATE-NEW control update behavior."
            :create-new create-new
            :no-undo t))))
     (with-current-buffer (map-elt state :buffer)
+      (let ((auto-scroll (eobp))
+            (late-prompt-start (and agent-shell--persistent-prompt
+                                    (agent-shell--live-prompt-start))))
+        (agent-shell--with-buffer-narrowed-to late-prompt-start
       (shell-maker-with-auto-scroll-edit
        (agent-shell-ui-update-text
         :namespace-id ns
@@ -5275,7 +5271,17 @@ APPEND and CREATE-NEW control update behavior."
         :text text
         :append append
         :create-new create-new
-        :no-undo t)))))
+            :no-undo t)))
+        ;; The auto-scroll branch above goes to the narrowed `point-max'
+        ;; (the prompt's first char), leaving point stranded there once the
+        ;; narrowing is dropped.  Put it back at the real end, where the
+        ;; user was.
+        (when (and late-prompt-start auto-scroll)
+          (goto-char (point-max)))
+        ;; Rendering above the prompt pushed any unsubmitted input down, so
+        ;; the undo entries recorded for it point at the shifted text.
+        (when late-prompt-start
+          (agent-shell--reset-undo-history))))))
 
 (defun agent-shell-toggle-logging ()
   "Toggle logging."
@@ -7698,6 +7704,7 @@ pending-restore state once replay completes."
               ;; notification (say `available_commands_update') emits the
               ;; marker unnarrowed, landing it after the live prompt.
               (when (equal (map-elt state :last-entry-type) "user_message_chunk")
+                (agent-shell--with-buffer-narrowed-to (agent-shell--live-prompt-start)
                 (shell-maker-insert-end-of-prompt-marker)
                 (let ((inhibit-read-only t))
                   (goto-char (point-max))
@@ -7705,7 +7712,7 @@ pending-restore state once replay completes."
                                       'field 'output
                                       'read-only t
                                       'front-sticky '(read-only)
-                                      'rear-nonsticky '(field read-only))))
+                                        'rear-nonsticky '(field read-only)))))
                 (map-put! state :last-entry-type nil))))
         (map-put! state :active-requests saved-active-requests))
       ;; Replay renders history as a live turn would, so the last replayed
@@ -11003,7 +11010,7 @@ and queue it via `agent-shell-prompt-queue'."
   (unless (derived-mode-p 'agent-shell-mode)
     (error "Not in a shell"))
   (cond
-   ;; At prompt + not busy: behave as regular editing.
+   ;; Composing at the live prompt: behave as regular editing.
    ((agent-shell--typing-at-prompt-p)
     (self-insert-command 1))
    ;; Region active and not at prompt: quote into prompt or queue.
@@ -11022,12 +11029,17 @@ and queue it via `agent-shell-prompt-queue'."
     (self-insert-command 1))))
 
 (defun agent-shell--typing-at-prompt-p ()
-  "Return non-nil when a character key was typed at the latest prompt.
+  "Return non-nil when a character key was typed at the live prompt.
 Single-character bindings in `agent-shell-mode-map' (`n', `+', ...)
 consult this to insert the character while a prompt is being
-composed, acting as commands anywhere else in the shell."
-  (and (not (shell-maker-busy))
-       (shell-maker-point-at-last-prompt-p)
+composed, acting as commands anywhere else in the shell.
+
+Where point is decides it, not whether the shell is busy: with
+`agent-shell--persistent-prompt' a prompt is composed for the whole turn,
+so type-ahead starting with a bound character has to reach the buffer.
+Without it there is no live prompt to compose into mid-turn, and this
+answers nil regardless."
+  (and (agent-shell--point-in-live-input-p)
        (integerp last-command-event)
        (> (length (this-command-keys-vector)) 0)
        ;; Ensure invoked using a key binding.

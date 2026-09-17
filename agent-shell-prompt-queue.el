@@ -32,6 +32,7 @@
 (require 'map)
 (require 'ring)
 (require 'agent-shell-faces)
+(require 'agent-shell-prompt)
 (eval-when-compile (require 'cl-lib))
 
 (declare-function agent-shell--insert-to-shell-buffer "agent-shell")
@@ -80,10 +81,20 @@ TODO: Remove after 2026-08-28."
   (when-let* ((pending (map-elt agent-shell--state :pending-prompts))
               (next-prompt (car pending)))
     (map-put! agent-shell--state :pending-prompts (cdr pending))
-    (agent-shell--insert-to-shell-buffer
-     :text next-prompt
-     :submit t
-     :no-focus t)))
+    ;; The turn just ended, so the persistent prompt may hold text the user
+    ;; started typing and has not submitted.  Submitting the queued prompt
+    ;; inserts at `point-max', which would put it ahead of that draft and
+    ;; send the two as one message.  Set the draft aside and type it back
+    ;; into the prompt the submission leaves behind.
+    (let ((draft (and agent-shell--persistent-prompt
+                      (agent-shell--take-prompt-input))))
+      (agent-shell--insert-to-shell-buffer
+       :text next-prompt
+       :submit t
+       :no-focus t)
+      (when draft
+        (goto-char (point-max))
+        (insert draft)))))
 
 (defun agent-shell--prompt-queue-display ()
   "Display pending prompts in the shell buffer if queue is not empty."

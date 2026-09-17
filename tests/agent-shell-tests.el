@@ -4680,6 +4680,12 @@ down."
           ;; vacuous and this passes either way.
           (set-window-buffer (selected-window) shell-buf)
           (insert (make-string 200 ?\n))
+          ;; The prompt the fragment renders above, which a shell always has
+          ;; waiting for input (see `agent-shell--persistent-prompt').
+          (let ((prompt-start (point-max)))
+            (insert "Claude> ")
+            (setq-local comint-last-prompt (cons (copy-marker prompt-start)
+                                                 (copy-marker (point-max)))))
           (goto-char (point-max))
           (agent-shell--display-attached-files (list "/tmp/one.el"))
           (should (eobp))
@@ -6060,6 +6066,210 @@ prompt and the prompt end sits past the accessible `point-max'."
           ;; Must not raise `Args out of range' and must report not-live.
           (should-not (agent-shell--live-input-prompt-p prompt)))))))
 
+(ert-deftest agent-shell--live-input-prompt-p-zero-length-test ()
+  "A collapsed prompt span is not a prompt.
+
+`erase-buffer' and `comint-clear-buffer' leave `comint-last-prompt'
+behind with both markers on the same position rather than unsetting it.
+Reading that as a live prompt would have `shell-maker-finish-output'
+skip the prompt a freshly cleared buffer is waiting for."
+  (with-temp-buffer
+    (insert "output\n> ")
+    (erase-buffer)
+    (should-not (agent-shell--live-input-prompt-p
+                 (cons (copy-marker (point-min) nil)
+                       (copy-marker (point-min) nil))))))
+
+(cl-defun agent-shell-tests--with-persistent-prompt-shell (body &key busy)
+  "Call BODY in a shell buffer holding a live prompt, mid-turn when BUSY.
+
+Stands up the least shell the prompt paths need: `comint-mode' for the
+markers shell-maker's writers set, a `cat' process for the process mark,
+and a prompt printed through the output filter so `comint-last-prompt'
+brackets it the way a real one does.  BODY is called with no arguments
+and its value returned."
+  (let* ((buffer (generate-new-buffer " *agent-shell-persistent-prompt-test*"))
+         (fake-process (start-process "fake-agent" buffer "cat")))
+    (set-process-query-on-exit-flag fake-process nil)
+    (unwind-protect
+        (with-current-buffer buffer
+          (comint-mode)
+          (setq-local comint-prompt-regexp "^Claude> ")
+          (setq major-mode 'agent-shell-mode)
+          (setq-local agent-shell--state (agent-shell--make-state :buffer buffer))
+          (setq-local agent-shell--persistent-prompt t)
+          (cl-letf (((symbol-function 'shell-maker--process) (lambda () fake-process))
+                    ((symbol-function 'shell-maker-busy) (lambda (&rest _) busy)))
+            ;; A turn already submitted, with the prompt the shell prints
+            ;; as soon as the input is dispatched.
+            (shell-maker--output-filter fake-process "Claude> ")
+            (let ((inhibit-read-only t))
+              (goto-char (point-max))
+              (insert (propertize "list the files<shell-maker-end-of-prompt>\n"
+                                  'field 'output)))
+            (shell-maker--output-filter fake-process "Claude> ")
+            (goto-char (point-max))
+            (funcall body)))
+      (when (process-live-p fake-process)
+        (delete-process fake-process))
+      (kill-buffer buffer))))
+
+(ert-deftest agent-shell--take-prompt-input-test ()
+  "Taking the input empties the prompt without removing it.
+
+Submitting mid-turn queues what was typed and leaves the shell with
+somewhere to keep typing, so the prompt itself has to survive."
+  (should (equal
+           (agent-shell-tests--with-persistent-prompt-shell
+            (lambda ()
+              (insert "  just the filenames  ")
+              (list (agent-shell--take-prompt-input)
+                    (buffer-substring-no-properties (point-min) (point-max))
+                    ;; Nothing left to take on a second call.
+                    (agent-shell--take-prompt-input))))
+           (list "just the filenames"
+                 (concat "Claude> list the files<shell-maker-end-of-prompt>\n"
+                         "Claude> ")
+                 nil))))
+
+(ert-deftest agent-shell-submit-queues-while-busy-test ()
+  "Submitting mid-turn queues the text and clears the input.
+
+This is the whole point of keeping a prompt at the buffer end: typing
+into a busy shell is type-ahead, not an error to refuse."
+  (should (equal
+           (agent-shell-tests--with-persistent-prompt-shell
+            (lambda ()
+              (map-put! agent-shell--state :session '((:id . "session-1")))
+              (insert "just the filenames")
+              (agent-shell-submit)
+              (list (map-elt agent-shell--state :pending-prompts)
+                    (buffer-substring-no-properties (point-min) (point-max))))
+            :busy t)
+           (list '("just the filenames")
+                 (concat "Claude> list the files<shell-maker-end-of-prompt>\n"
+                         "Claude> ")))))
+
+(ert-deftest agent-shell--update-fragment-renders-above-live-prompt-test ()
+  "Output rendered mid-turn lands above the prompt, not past the input.
+
+The prompt is live for the whole turn now, so a fragment appended at
+`point-max' would land below (and after) whatever the user is typing."
+  (let ((text (agent-shell-tests--with-persistent-prompt-shell
+               (lambda ()
+                 (insert "typed but not submitted")
+                 (agent-shell--update-fragment
+                  :state agent-shell--state
+                  :block-id "answer"
+                  :body "Listing"
+                  :create-new t)
+                 (buffer-substring-no-properties (point-min) (point-max)))
+               :busy t)))
+    (should (string-match-p "Listing" text))
+    (should (string-suffix-p "Claude> typed but not submitted" text))))
+
+(ert-deftest agent-shell--point-in-live-input-p-test ()
+  "Single-character keys stay typable at the prompt while the agent works.
+
+`n' and `p' are bound to item navigation, and self-insert instead when a
+prompt is being composed.  That used to mean `not busy', which with a
+prompt live for the whole turn hijacked exactly the keys type-ahead
+needs: a follow-up starting with `n' could not be typed.  Point, not
+busy state, decides it."
+  (should (equal
+           (agent-shell-tests--with-persistent-prompt-shell
+            (lambda ()
+              (list :empty-input (and (agent-shell--point-in-live-input-p) t)
+                    :after-typing (progn (insert "no")
+                                         (and (agent-shell--point-in-live-input-p) t))
+                    ;; Up in the transcript the keys are commands again.
+                    :in-output (progn (goto-char (point-min))
+                                      (and (agent-shell--point-in-live-input-p) t))))
+            :busy t)
+           '(:empty-input t :after-typing t :in-output nil))))
+
+(ert-deftest agent-shell--point-in-live-input-p-stale-prompt-test ()
+  "A prompt with output streaming below it is not somewhere to type.
+
+Without `agent-shell--persistent-prompt' that is what a busy shell looks
+like: `comint-last-prompt' still points at the submitted prompt, and
+point sits at the end of the output rather than in an input area."
+  (with-temp-buffer
+    (insert "Claude> ")
+    (let ((prompt (cons (copy-marker (point-min) nil) (copy-marker (point) nil))))
+      (setq-local comint-last-prompt prompt)
+      (let ((output-start (point)))
+        (insert "streaming answer")
+        (put-text-property output-start (point) 'field 'output))
+      (goto-char (point-max))
+      (should-not (agent-shell--point-in-live-input-p)))))
+
+(ert-deftest agent-shell--with-buffer-narrowed-to-restores-point-test ()
+  "Rendering above the prompt leaves point where the user had it.
+
+Narrowing clamps point to the prompt's start and an appending BODY
+leaves it there, so without restoring it the cursor jumps out of a
+half-typed prompt and lands ahead of the text already typed."
+  (should (equal
+           (agent-shell-tests--with-persistent-prompt-shell
+            (lambda ()
+              (insert "half typed")
+              (list :typing-at-prompt
+                    (progn
+                      (agent-shell--with-buffer-narrowed-to (agent-shell--live-prompt-start)
+                        (let ((inhibit-read-only t))
+                          (goto-char (point-max))
+                          (insert "streamed\n")))
+                      (= (point) (point-max)))
+                    ;; Reading further up: point stays on the same text,
+                    ;; which the insertion above it has shifted along.
+                    :reading-scrollback
+                    (progn
+                      (goto-char (point-min))
+                      (agent-shell--with-buffer-narrowed-to (agent-shell--live-prompt-start)
+                        (let ((inhibit-read-only t))
+                          (goto-char (point-max))
+                          (insert "more\n")))
+                      (= (point) (point-min)))))
+            :busy t)
+           '(:typing-at-prompt t :reading-scrollback t))))
+
+(ert-deftest agent-shell-experimental--steered-prompt-keeps-point-test ()
+  "A steered prompt renders above the prompt without moving point.
+
+Point sat at the end of a half-typed prompt and came back on the
+prompt's first character, with the user's own draft ahead of it."
+  (should (equal (map-elt (agent-shell-tests--render-steered-prompt
+                           "just the filenames" :draft "my draft")
+                          :point-at-end)
+                 t)))
+
+(ert-deftest agent-shell--live-prompt-start-asserts-missing-prompt-test ()
+  "A missing prompt is an error rather than a write into the input area.
+
+Everything renders above the prompt while `agent-shell--persistent-prompt'
+is on, so a lost prompt means the next write lands wherever the user
+happens to be typing.  Failing names the write that lost it."
+  (with-temp-buffer
+    (setq-local comint-last-prompt nil)
+    (let ((agent-shell--persistent-prompt nil))
+      (should-not (agent-shell--live-prompt-start)))
+    (let ((agent-shell--persistent-prompt t))
+      (should-error (agent-shell--live-prompt-start)))))
+
+(ert-deftest agent-shell--live-prompt-start-tolerates-outer-narrowing-test ()
+  "Already narrowed above the prompt is not a missing prompt.
+
+Callers nest: a fragment writer narrows above the prompt and the text
+writer it calls asks again.  Nothing can land below the prompt from
+inside that narrowing, so there is nothing to assert about."
+  (agent-shell-tests--with-persistent-prompt-shell
+   (lambda ()
+     (save-restriction
+       (narrow-to-region (point-min) (marker-position (car comint-last-prompt)))
+       (should-not (agent-shell--live-prompt-start))))
+   :busy t))
+
 (ert-deftest agent-shell--make-error-handler-keeps-live-prompt-test ()
   "An error arriving out of turn must not print a second prompt.
 
@@ -6354,31 +6564,30 @@ a real button."
                                      :boxed nil :action #'ignore)))))
 
 (ert-deftest agent-shell--typing-at-prompt-p-test ()
-  "A character key typed at an idle prompt is input, not a command."
+  "A character key typed at the live prompt is input, not a command.
+
+Busy state does not enter into it.  A prompt stays live for the whole
+turn (see `agent-shell--persistent-prompt'), and type-ahead starting
+with a bound character like `n' has to reach the buffer rather than
+navigate.  Where point is decides it, which
+`agent-shell--point-in-live-input-p' answers."
   (let ((last-command-event ?+)
         (this-command 'agent-shell-image-scale-increase))
     (cl-letf (((symbol-function 'this-command-keys-vector) (lambda () [?+]))
               ((symbol-function 'key-binding)
                (lambda (&rest _) 'agent-shell-image-scale-increase)))
-      (cl-letf (((symbol-function 'shell-maker-busy) (lambda (&rest _) nil))
-                ((symbol-function 'shell-maker-point-at-last-prompt-p)
+      ;; Composing at the live prompt, idle or mid-turn alike.
+      (cl-letf (((symbol-function 'agent-shell--point-in-live-input-p)
                  (lambda (&rest _) t)))
         (should (agent-shell--typing-at-prompt-p)))
       ;; Away from the prompt (reading output), it's a command.
-      (cl-letf (((symbol-function 'shell-maker-busy) (lambda (&rest _) nil))
-                ((symbol-function 'shell-maker-point-at-last-prompt-p)
+      (cl-letf (((symbol-function 'agent-shell--point-in-live-input-p)
                  (lambda (&rest _) nil)))
-        (should-not (agent-shell--typing-at-prompt-p)))
-      ;; Busy shell: the prompt isn't taking input.
-      (cl-letf (((symbol-function 'shell-maker-busy) (lambda (&rest _) t))
-                ((symbol-function 'shell-maker-point-at-last-prompt-p)
-                 (lambda (&rest _) t)))
         (should-not (agent-shell--typing-at-prompt-p)))))
   ;; Invoked as M-x rather than by its key: a command, even at the prompt.
   (let ((last-command-event nil)
         (this-command 'agent-shell-image-scale-increase))
-    (cl-letf (((symbol-function 'shell-maker-busy) (lambda (&rest _) nil))
-              ((symbol-function 'shell-maker-point-at-last-prompt-p)
+    (cl-letf (((symbol-function 'agent-shell--point-in-live-input-p)
                (lambda (&rest _) t)))
       (should-not (agent-shell--typing-at-prompt-p)))))
 
@@ -6756,14 +6965,20 @@ fragment) and `interrupted' (the running turn cancelled)."
   (should (equal (agent-shell-tests--steer-outcome :outcome "promptRequired" :busy t)
                  '(reported interrupted))))
 
-(cl-defun agent-shell-tests--render-steered-prompt (prompt &key idle)
+(cl-defun agent-shell-tests--render-steered-prompt (prompt &key idle draft)
   "Render PROMPT into a bare shell buffer mid-turn.
 
-IDLE renders as though the turn ended while the steer was in flight, so
-a live input prompt already sits at the buffer end.
+IDLE renders as though the turn ended while the steer was in flight.  A
+live input prompt sits at the buffer end either way: the shell keeps one
+there for the whole turn (see `agent-shell--persistent-prompt'), so the
+steer renders above it whether or not the turn has ended.
+
+DRAFT is typed at that prompt first, standing for a prompt the user is
+part way through composing when the steer lands.
 
 Returns an alist of the resulting buffer text, the `:last-entry-type'
-left behind, and the `:events' the render emitted."
+left behind, the `:events' the render emitted, and `:point-at-end',
+non-nil when point came back to where the draft was being typed."
   (let* ((buffer (generate-new-buffer " *agent-shell-steer-render-test*"))
          (fake-process (start-process "fake-agent" buffer "cat")))
     (set-process-query-on-exit-flag fake-process nil)
@@ -6789,10 +7004,12 @@ left behind, and the `:events' the render emitted."
               (let ((inhibit-read-only t))
                 (goto-char (point-max))
                 (insert "list the files<shell-maker-end-of-prompt>\nListing "))
-              ;; The turn ended while the steer was in flight, so the shell
-              ;; already printed the next prompt and is waiting on input.
-              (when idle
-                (shell-maker--output-filter fake-process "\nClaude> "))
+              ;; The prompt the shell keeps at the buffer end, waiting on
+              ;; input for as long as the turn runs.
+              (shell-maker--output-filter fake-process "\nClaude> ")
+              (when draft
+                (goto-char (point-max))
+                (insert draft))
               (let ((events nil))
                 (agent-shell-subscribe-to
                  :shell-buffer (current-buffer)
@@ -6800,6 +7017,7 @@ left behind, and the `:events' the render emitted."
                 (agent-shell-experimental--render-steered-prompt :state state :prompt prompt)
                 (list (cons :text (buffer-substring-no-properties (point-min) (point-max)))
                       (cons :last-entry-type (map-elt state :last-entry-type))
+                      (cons :point-at-end (= (point) (point-max)))
                       (cons :events (nreverse events)))))))
       (when (process-live-p fake-process)
         (delete-process fake-process))
@@ -6811,25 +7029,22 @@ Neither adapter echoes a steered prompt back, so it is rendered here or
 it is nowhere.  The end-of-prompt marker closes it: chat mode reads the
 last prompt with no marker after it as the live one, and the prompt bar
 hides that."
-  (let ((rendered (agent-shell-tests--render-steered-prompt "just the filenames")))
-    (should (equal (map-elt rendered :text)
-                   (concat "Claude> list the files<shell-maker-end-of-prompt>\n"
-                           "Listing \n\n"
-                           "Claude> [steer] just the filenames"
-                           "<shell-maker-end-of-prompt>")))
-    ;; Not "user_message_chunk": that asks the notification dispatch to
-    ;; insert an end-of-prompt marker of its own on the next update.
-    (should-not (equal (map-elt rendered :last-entry-type) "user_message_chunk")))
-  ;; The turn can end while the steer is in flight, leaving a live input
-  ;; prompt at the buffer end.  Rendering there would put the prompt in
-  ;; comint's input area, where submitting sends it as input.
-  (let ((rendered (agent-shell-tests--render-steered-prompt "just the filenames" :idle t)))
+  ;; A live input prompt sits at the buffer end for the whole turn, and
+  ;; whether the turn has ended by the time the agent answers makes no
+  ;; difference: rendering into that prompt would put the steer in comint's
+  ;; input area, where submitting sends it as input, so it renders above.
+  (dolist (idle '(nil t))
+    (let ((rendered (agent-shell-tests--render-steered-prompt "just the filenames"
+                                                              :idle idle)))
     (should (equal (map-elt rendered :text)
                    (concat "Claude> list the files<shell-maker-end-of-prompt>\n"
                            "Listing \n\n"
                            "Claude> [steer] just the filenames"
                            "<shell-maker-end-of-prompt>\n"
-                           "Claude> ")))))
+                             "Claude> ")))
+      ;; Not "user_message_chunk": that asks the notification dispatch to
+      ;; insert an end-of-prompt marker of its own on the next update.
+      (should-not (equal (map-elt rendered :last-entry-type) "user_message_chunk")))))
 
 (ert-deftest agent-shell-experimental--steered-prompt-emits-input-submitted-test ()
   "A steered prompt announces itself as input the user submitted.
