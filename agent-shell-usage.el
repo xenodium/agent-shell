@@ -61,6 +61,15 @@ Only appears when the ACP server provides usage information."
                  (const :tag "Detailed" detailed))
   :group 'agent-shell)
 
+(defcustom agent-shell-show-cost-indicator nil
+  "Whether to show the session's cumulative cost in the header.
+
+When non-nil, the header shows the cost reported by the agent, for
+example \"$0.42\", after the context usage indicator.  Only appears
+once the ACP server reports a cost above zero."
+  :type 'boolean
+  :group 'agent-shell)
+
 (cl-defun agent-shell--save-usage (&key state acp-usage)
   "Update usage STATE from PromptResponse ACP-USAGE field.
 Extracts cumulative token counts from the response."
@@ -161,14 +170,7 @@ When MULTILINE is non-nil, format as right-aligned labeled rows."
            (if (> n 0)
                (format " (%s total)" (agent-shell--format-number-compact n))
              "")))
-        (cost
-         (concat
-          (if (map-elt usage :cost-currency)
-              (map-elt usage :cost-currency)
-            "$")
-          (if (and (map-elt usage :cost-amount) (> (map-elt usage :cost-amount) 0))
-              (format "%.2f" (map-elt usage :cost-amount))
-            "0.00"))))
+        (cost (agent-shell--format-cost usage)))
     (if multiline
         (concat
          (propertize " Context: "
@@ -196,6 +198,34 @@ When MULTILINE is non-nil, format as right-aligned labeled rows."
                    'face 'agent-shell-secondary
                    'font-lock-face 'agent-shell-secondary)
        cost))))
+
+(defun agent-shell--format-cost (usage)
+  "Format USAGE's cost as currency followed by amount.
+
+Dollars are the common case, so USD (or no currency at all) renders
+as \"$\".  Any other ISO 4217 code is kept as reported.
+
+For example, :cost-amount 0.4237 with :cost-currency \"USD\" gives
+\"$0.42\", with \"CHF\" gives \"CHF 0.42\", and no cost gives \"$0.00\"."
+  (concat (if (member (map-elt usage :cost-currency) '(nil "USD"))
+              "$"
+            (concat (map-elt usage :cost-currency) " "))
+          (format "%.2f" (or (map-elt usage :cost-amount) 0))))
+
+(defun agent-shell--cost-indicator ()
+  "Return the session's cumulative cost for the header, or nil.
+
+Shown only when `agent-shell-show-cost-indicator' is non-nil and the
+ACP server has reported a cost above zero, so agents that never
+report cost leave the header unchanged.
+
+For example, a session at 0.4237 USD gives \"$0.42\"."
+  (when-let* ((agent-shell-show-cost-indicator)
+              (usage (map-elt (agent-shell--state) :usage))
+              ((> (or (map-elt usage :cost-amount) 0) 0)))
+    (propertize (agent-shell--format-cost usage)
+                'face 'agent-shell-secondary
+                'help-echo (agent-shell--format-usage usage))))
 
 (defun agent-shell--context-usage-face (percentage)
   "Return the face for context usage at PERCENTAGE.

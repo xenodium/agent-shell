@@ -1123,6 +1123,7 @@ always go to Evil modes if you need to with ~C-z~).
 | agent-shell-show-busy-indicator               | Non-nil to show the busy indicator animation in the header and mode line.       |
 | agent-shell-show-config-icons                 | Whether to show icons in agent config selection.                                |
 | agent-shell-show-context-usage-indicator      | Whether and how to show the context usage indicator.                            |
+| agent-shell-show-cost-indicator               | Whether to show the session's cumulative cost in the header.                    |
 | agent-shell-show-session-id                   | Non-nil to display the session ID in the header and session selection.          |
 | agent-shell-show-usage-at-turn-end            | Whether to display usage information when agent turn ends.                      |
 | agent-shell-show-welcome-message              | Non-nil to show welcome message.                                                |

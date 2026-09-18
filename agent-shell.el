@@ -5687,6 +5687,7 @@ defaulting to the frame width."
                      (frame-char-height)))
     (:background-mode . ,(frame-parameter nil 'background-mode))
     (:context-indicator . ,(agent-shell--context-usage-indicator))
+    (:cost-indicator . ,(agent-shell--cost-indicator))
     (:busy-indicator-frame . ,(agent-shell--busy-indicator-frame))
     (:position . ,position)
     (:status . ,status)
@@ -5817,7 +5818,7 @@ keeps entries fresh."
                                            'face 'agent-shell-key-binding)
                                " "
                                (map-elt help-hint :description))))
-         (text-header (format " %s%s%s%s%s ➤ %s%s%s%s%s"
+         (text-header (format " %s%s%s%s%s ➤ %s%s%s%s%s%s"
                               (cond
                                ((and (map-elt header-model :position)
                                      (map-elt header-model :status))
@@ -5880,6 +5881,9 @@ keeps entries fresh."
                                               " ➤ "
                                             " ")
                                           (map-elt header-model :context-indicator))
+                                "")
+                              (if (map-elt header-model :cost-indicator)
+                                  (concat " ➤ " (map-elt header-model :cost-indicator))
                                 "")
                               (if (and (map-elt header-model :status)
                                        (not (map-elt header-model :position)))
@@ -5992,6 +5996,20 @@ keeps entries fresh."
                                                                               'default)))
                                                                 (dx . "8"))
                                                               (format-mode-line (map-elt header-model :context-indicator)))))
+                                ;; Cost (optional)
+                                (when (map-elt header-model :cost-indicator)
+                                  (dom-append-child text-node
+                                                    (dom-node 'tspan
+                                                              `((fill . ,(agent-shell--svg-fill-color 'default))
+                                                                (dx . "8"))
+                                                              "➤"))
+                                  (dom-append-child text-node
+                                                    (dom-node 'tspan
+                                                              `((fill . ,(agent-shell--svg-fill-color
+                                                                          (or (get-text-property 0 'face (map-elt header-model :cost-indicator))
+                                                                              'default)))
+                                                                (dx . "8"))
+                                                              (substring-no-properties (map-elt header-model :cost-indicator)))))
                                 text-node))
              ;; Bottom text line
              (svg--append svg (let ((text-node (dom-node 'text

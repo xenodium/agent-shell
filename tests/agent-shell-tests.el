@@ -4323,6 +4323,111 @@ other unknown ones."
       (let ((agent-shell-show-context-usage-indicator nil))
         (should-not (agent-shell--context-usage-indicator))))))
 
+;;; Tests for agent-shell--cost-indicator
+
+(ert-deftest agent-shell--format-cost-test ()
+  "Test `agent-shell--format-cost' renders USD as $ and keeps other codes."
+  (should (equal "$0.42" (agent-shell--format-cost
+                          '((:cost-amount . 0.4237) (:cost-currency . "USD")))))
+  (should (equal "$1.50" (agent-shell--format-cost '((:cost-amount . 1.5)))))
+  (should (equal "CHF 0.42" (agent-shell--format-cost
+                             '((:cost-amount . 0.42) (:cost-currency . "CHF")))))
+  (should (equal "$0.00" (agent-shell--format-cost nil))))
+
+(ert-deftest agent-shell--cost-indicator-test ()
+  "Test `agent-shell--cost-indicator' shows the cost in the secondary face."
+  (let ((agent-shell--state
+         (list (cons :buffer (current-buffer))
+               (cons :usage (list (cons :cost-amount 0.4237)
+                                  (cons :cost-currency "USD"))))))
+    (cl-letf (((symbol-function 'agent-shell--state)
+               (lambda () agent-shell--state)))
+      (let ((agent-shell-show-cost-indicator t))
+        (let ((result (agent-shell--cost-indicator)))
+          (should (equal "$0.42" (substring-no-properties result)))
+          (should (eq (get-text-property 0 'face result) 'agent-shell-secondary))
+          (should (get-text-property 0 'help-echo result)))))))
+
+(ert-deftest agent-shell--cost-indicator-nil-test ()
+  "Test `agent-shell--cost-indicator' is nil when disabled or without cost."
+  (cl-letf (((symbol-function 'agent-shell--state)
+             (lambda () agent-shell--state)))
+    (let ((agent-shell-show-cost-indicator nil)
+          (agent-shell--state (list (cons :usage (list (cons :cost-amount 0.4237))))))
+      (should-not (agent-shell--cost-indicator)))
+    (let ((agent-shell-show-cost-indicator t)
+          (agent-shell--state (list (cons :usage (list (cons :cost-amount 0.0))))))
+      (should-not (agent-shell--cost-indicator)))
+    (let ((agent-shell-show-cost-indicator t)
+          (agent-shell--state (list (cons :usage nil))))
+      (should-not (agent-shell--cost-indicator)))))
+
+(ert-deftest agent-shell--make-header-text-includes-cost-test ()
+  "Test `agent-shell--make-header' text mode includes the cost indicator."
+  (with-temp-buffer
+    (setq-local agent-shell--state
+                `((:agent-config . ((:buffer-name . "Claude Code")
+                                    (:icon-name . nil)))
+                  (:session . ((:id . "abc")
+                               (:model-id . nil)
+                               (:models . nil)
+                               (:mode-id . nil)
+                               (:modes . nil)))
+                  (:usage . ((:cost-amount . 0.4237)
+                             (:cost-currency . "USD")))))
+    (cl-letf (((symbol-function 'agent-shell--state)
+               (lambda () agent-shell--state))
+              ((symbol-function 'agent-shell--context-usage-indicator)
+               (lambda () nil))
+              ((symbol-function 'agent-shell--busy-indicator-frame)
+               (lambda () nil)))
+      (let ((agent-shell-header-style 'text)
+            (agent-shell--header-cache nil)
+            (agent-shell-show-cost-indicator t))
+        (should (string-match-p "➤ \\$0\\.42"
+                                (substring-no-properties
+                                 (agent-shell--make-header agent-shell--state)))))
+      ;; Disabled: cost absent
+      (let ((agent-shell-header-style 'text)
+            (agent-shell--header-cache nil)
+            (agent-shell-show-cost-indicator nil))
+        (should-not (string-match-p "\\$0\\.42"
+                                    (substring-no-properties
+                                     (agent-shell--make-header agent-shell--state))))))))
+
+(ert-deftest agent-shell--make-header-graphical-includes-cost-test ()
+  "Test graphical header draws the cost in the secondary face color."
+  (skip-unless (image-type-available-p 'svg))
+  (with-temp-buffer
+    (setq-local agent-shell--state
+                `((:agent-config . ((:buffer-name . "Test")
+                                    (:icon-name . nil)))
+                  (:session . ((:id . "abc")
+                               (:model-id . nil)
+                               (:models . nil)
+                               (:mode-id . nil)
+                               (:modes . nil)))
+                  (:usage . ((:cost-amount . 0.4237)
+                             (:cost-currency . "USD")))))
+    (cl-letf (((symbol-function 'agent-shell--state)
+               (lambda () agent-shell--state))
+              ((symbol-function 'agent-shell--context-usage-indicator)
+               (lambda () nil))
+              ((symbol-function 'agent-shell--busy-indicator-frame)
+               (lambda () nil))
+              ((symbol-function 'agent-shell--session-id-indicator)
+               (lambda () nil)))
+      (let* ((agent-shell-header-style 'graphical)
+             (agent-shell--header-cache nil)
+             (agent-shell-show-cost-indicator t)
+             (header (agent-shell--make-header agent-shell--state))
+             (svg-data (plist-get (cdr (get-text-property 1 'display header))
+                                  :data)))
+        (should (string-match-p
+                 (format "<tspan[^>]*fill=\"%s\"[^>]*>\\$0\\.42</tspan>"
+                         (agent-shell--svg-fill-color 'agent-shell-secondary))
+                 svg-data))))))
+
 ;;; Tests for agent-shell--permission-title
 
 (ert-deftest agent-shell--permission-title-read-shows-filename-test ()
