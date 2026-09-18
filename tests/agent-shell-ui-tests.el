@@ -235,6 +235,25 @@ Returns the buffer.  Caller must kill it."
           (should (agent-shell-ui-tests--fragment-collapsed-p "ns" "1")))
       (kill-buffer buf))))
 
+(ert-deftest agent-shell-ui-isearch-filter-preserves-match-data-test ()
+  "Expanding an isearch match preserves the search's match data."
+  (let ((buf (agent-shell-ui-tests--make-buffer-with-fragments
+              '(((:namespace-id . "ns") (:block-id . "1")
+                 (:label-left . "A") (:body . "body a"))))))
+    (unwind-protect
+        (with-current-buffer buf
+          (goto-char (point-min))
+          (search-forward "body")
+          (let ((beg (match-beginning 0))
+                (end (match-end 0)))
+            (add-hook 'agent-shell-ui-post-expand-fragment-at-point-hook
+                      (lambda () (string-match "b" "body")) nil t)
+            (should (agent-shell-ui--isearch-filter-predicate beg end))
+            (should (= beg (match-beginning 0)))
+            (should (= end (match-end 0)))
+            (should-not (agent-shell-ui-tests--fragment-collapsed-p "ns" "1"))))
+      (kill-buffer buf))))
+
 (ert-deftest agent-shell-ui-toggle-survives-surgical-replace-test ()
   "Toggle target stays consistent after `--surgical-replace-body'.
 
