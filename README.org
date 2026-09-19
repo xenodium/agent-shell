@@ -30,6 +30,7 @@ With agent-shell, you can interact with any ACP-driven agent like:
 - [[https://www.kimi.com/code][Kimi Code CLI]]
 - [[https://www.codebuddy.ai][CodeBuddy]]
 - [[https://kiro.dev][Kiro CLI]]
+- [[https://qoder.com][Qoder CLI]]
 - [[https://github.com/QwenLM/qwen-code][Qwen Code]]
 - [[https://docs.augmentcode.com/cli/overview][Auggie]]
 - [[https://github.com/mistralai/mistral-vibe][Mistral Vibe]]
@@ -197,6 +198,27 @@ curl -fsSL https://cli.kiro.dev/install | bash
 #+end_src
 
 See https://kiro.dev/docs/cli/acp/ for details.
+
+*** Qoder CLI
+
+Install Qoder CLI following the [[https://docs.qoder.com/cli/installation][Qoder installation instructions]],
+then log in once:
+
+#+begin_src bash
+qoder login
+#+end_src
+
+Qoder CLI includes an ACP server.  Start it from =agent-shell= with
+=M-x agent-shell-qoder-start-agent=; the backend launches:
+
+#+begin_src bash
+qoder --acp
+#+end_src
+
+Qoder uses the CLI's existing login state, so a Qoder subscription can be used
+without configuring a separate model API key.  For non-interactive
+authentication, set =QODER_PERSONAL_ACCESS_TOKEN=...= in
+=agent-shell-qoder-environment=.  See the [[https://docs.qoder.com/cli/acp][Qoder ACP documentation]].
 
 *** Qwen Code
 
@@ -782,6 +804,7 @@ Start a specific agent shell session directly:
 - =M-x agent-shell-xai-start-grok= - Start a Grok Build (xAI) agent session
 - =M-x agent-shell-cursor-start-agent= - Start a Cursor agent session
 - =M-x agent-shell-kiro-start-agent= - Start a Kiro CLI agent session
+- =M-x agent-shell-qoder-start-agent= - Start a Qoder CLI agent session
 - =M-x agent-shell-mistral-start-vibe= - Start a Mistral Vibe agent session
 - =M-x agent-shell-qwen-start= - Start a Qwen Code agent session
 - =M-x agent-shell-droid-start-agent= - Start a Factory Droid agent session
@@ -1081,6 +1104,8 @@ always go to Evil modes if you need to with ~C-z~).
 | agent-shell-kiro-default-model-id             | Default Kiro model ID.                                                          |
 | agent-shell-kiro-default-session-mode-id      | Default Kiro session mode ID.                                                   |
 | agent-shell-kiro-environment                  | Environment variables for the Kiro CLI client.                                  |
+| agent-shell-qoder-acp-command                 | Command and parameters for the Qoder CLI ACP server.                            |
+| agent-shell-qoder-environment                 | Environment variables for the Qoder CLI ACP server.                              |
 | agent-shell-list-edit-mode-hook               | Hook run after entering or leaving ‘agent-shell-list-edit-mode’.                |
 | agent-shell-markdown-render-function          | Function called to render markdown in the current narrowed buffer.              |
 | agent-shell-mcp-servers                       | List of MCP servers to initialize when creating a new session.                  |
@@ -1227,6 +1252,7 @@ always go to Evil modes if you need to with ~C-z~).
 |                                                       | agent-shell-jump-to-latest-permission-button-row        | Jump to the latest permission button row.                                     |
 |                                                       | agent-shell-kimi-start-agent                            | Start an interactive Kimi Code agent shell.                                   |
 |                                                       | agent-shell-kiro-start-agent                            | Start an interactive Kiro agent shell.                                        |
+|                                                       | agent-shell-qoder-start-agent                           | Start an interactive Qoder agent shell.                                       |
 |                                                       | agent-shell-list-edit-dedent-line                       | De-indent the current list item.                                              |
 |                                                       | agent-shell-list-edit-indent-line                       | Indent the current list item.                                                 |
 |                                                       | agent-shell-list-edit-mode                              | Minor mode for editing markdown-style lists.                                  |
