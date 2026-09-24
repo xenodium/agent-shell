@@ -860,16 +860,24 @@ it, so removing the form would erase the only account of what was asked."
 ;;; Capability
 
 (ert-deftest agent-shell-elicitation-capability-advertises-form-only-test ()
-  "The handshake advertises `form' and stays silent about `url'.
+  "The handshake advertises `form' elicitation while the feature is enabled.
 
-An empty `elicitation' object would mean zero modes, so the `form' key
-has to be there for the capability to say anything at all.
-
-Sent only while the feature is enabled: unadvertised, a conforming
-agent never raises a form to begin with."
+Unadvertised, a conforming agent never raises a form to begin with."
   (cl-flet ((elicitation ()
-              (map-nested-elt (agent-shell--make-initialize-request)
-                              '(:params clientCapabilities elicitation))))
+              (let (sent)
+                (with-temp-buffer
+                  (let ((agent-shell--state (list (cons :buffer (current-buffer)))))
+                    (cl-letf (((symbol-function
+                                'agent-shell--update-bootstrapping-fragment)
+                               #'ignore)
+                              ((symbol-function 'agent-shell--send-request)
+                               (cl-function
+                                (lambda (&key request &allow-other-keys)
+                                  (setq sent request)))))
+                      (agent-shell--initiate-handshake
+                       :shell-buffer (current-buffer)
+                       :on-initiated #'ignore))))
+                (map-nested-elt sent '(:params clientCapabilities elicitation)))))
     (let ((agent-shell-elicitation--experimental-feature-enabled t))
       (should (equal (json-serialize (elicitation)) "{\"form\":{}}")))
     (should-not (elicitation))))
