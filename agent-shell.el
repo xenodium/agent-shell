@@ -9875,7 +9875,8 @@ Returns an alist with insertion details or nil otherwise:
                                (point-max)))
                (insert-end nil))
           (with-current-buffer shell-buffer
-            (when (shell-maker-busy)
+            (when (and (shell-maker-busy)
+                       (or submit (not (agent-shell--prompt-input-start))))
               (user-error "Busy, try later"))
             (save-excursion
               (save-restriction

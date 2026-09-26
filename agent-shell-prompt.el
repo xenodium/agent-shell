@@ -174,7 +174,8 @@ typed text after it (see `agent-shell--live-input-prompt-p')."
 
 Reads without disturbing the buffer, so a caller can decide whether the
 prompt is going anywhere before clearing it with
-`agent-shell--clear-prompt-input'.
+`agent-shell--clear-prompt-input'.  Keeps text properties, including
+pasted image previews, when the prompt is queued or steered.
 
 For example, in a buffer ending with
 
@@ -183,7 +184,7 @@ For example, in a buffer ending with
 returns \"list the files\"."
   (when-let* ((start (agent-shell--prompt-input-start))
               ((< start (point-max)))
-              (input (string-trim (buffer-substring-no-properties start (point-max))))
+              (input (string-trim (buffer-substring start (point-max))))
               ((not (string-empty-p input))))
     input))
 

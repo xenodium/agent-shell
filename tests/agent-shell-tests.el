@@ -6542,6 +6542,29 @@ and its value returned."
         (delete-process fake-process))
       (kill-buffer buffer))))
 
+(ert-deftest agent-shell-queued-image-keeps-preview-test ()
+  "A pasted image keeps its preview through busy queueing and submission."
+  (agent-shell-tests--with-persistent-prompt-shell
+   (lambda ()
+     (insert "describe ")
+     (agent-shell-insert :text (propertize "@screenshot.png" 'display 'preview)
+                         :no-focus t
+                         :shell-buffer (current-buffer))
+     (agent-shell-submit)
+     (let* ((queued (car (map-elt agent-shell--state :pending-prompts)))
+            (at (string-match "@screenshot.png" queued)))
+       (should (eq (get-text-property at 'display queued) 'preview)))
+     (should-not (agent-shell--prompt-input))
+     (cl-letf (((symbol-function 'shell-maker-busy) (lambda (&rest _) nil))
+               ((symbol-function 'shell-maker-submit) #'comint-send-input))
+       (agent-shell--prompt-queue-process-next))
+     (goto-char (marker-position comint-last-input-start))
+     (should (search-forward "@screenshot.png" comint-last-input-end t))
+     (should (eq (get-text-property (- (point) (length "@screenshot.png"))
+                                    'display)
+                 'preview)))
+   :busy t))
+
 (ert-deftest agent-shell--take-prompt-input-test ()
   "Taking the input empties the prompt without removing it.
 
@@ -7445,7 +7468,7 @@ non-nil when point came back to where the draft was being typed."
                  :shell-buffer (current-buffer)
                  :on-event (lambda (event) (push event events)))
                 (agent-shell-experimental--render-steered-prompt :state state :prompt prompt)
-                (list (cons :text (buffer-substring-no-properties (point-min) (point-max)))
+                (list (cons :text (buffer-substring (point-min) (point-max)))
                       (cons :last-entry-type (map-elt state :last-entry-type))
                       (cons :point-at-end (= (point) (point-max)))
                       (cons :events (nreverse events)))))))
@@ -7475,6 +7498,16 @@ hides that."
       ;; Not "user_message_chunk": that asks the notification dispatch to
       ;; insert an end-of-prompt marker of its own on the next update.
       (should-not (equal (map-elt rendered :last-entry-type) "user_message_chunk")))))
+
+(ert-deftest agent-shell-experimental--steered-image-preview-test ()
+  "A steered image mention is displayed in the posted user message."
+  (let* ((rendered (agent-shell-tests--render-steered-prompt
+                    (concat "look " (propertize "@/tmp/example.png"
+                                                'display 'preview))))
+         (text (map-elt rendered :text)))
+    (should (eq (get-text-property (string-match "@/tmp/example.png" text)
+                                   'display text)
+                'preview))))
 
 (ert-deftest agent-shell-experimental--steered-prompt-emits-input-submitted-test ()
   "A steered prompt announces itself as input the user submitted.

@@ -375,7 +375,7 @@ send it as input."
              :text (concat (propertize (map-nested-elt state '(:agent-config :shell-prompt))
                                        'font-lock-face 'agent-shell-prompt
                                        'field 'output)
-                           (propertize (concat "[steer] " (substring-no-properties prompt))
+                           (propertize (concat "[steer] " prompt)
                                        'font-lock-face 'agent-shell-input))
              :create-new t)
             (shell-maker-insert-end-of-prompt-marker)

@@ -117,7 +117,9 @@ Remove: M-x agent-shell-prompt-queue-remove
                    (mapconcat
                     (lambda (idx-prompt)
                       (let ((idx (cdr idx-prompt))
-                            (first-line (car (split-string (car idx-prompt) "\n" t))))
+                            (first-line (car (split-string
+                                              (substring-no-properties (car idx-prompt))
+                                              "\n" t))))
                         (format "  %d: \"%s\""
                                 (1+ idx)
                                 (truncate-string-to-width first-line 80 nil nil "..."))))
@@ -159,7 +161,9 @@ messages:
                        'face (map-elt row :face))
            "  "
            (truncate-string-to-width
-            (or (car (split-string (map-elt row :prompt) "\n" t)) "")
+            (or (car (split-string
+                      (substring-no-properties (map-elt row :prompt))
+                      "\n" t)) "")
             available nil nil t)))
         (append
          (when active-prompt
@@ -400,7 +404,8 @@ either remove all or select a specific prompt to remove."
                       (seq-map-indexed
                        (lambda (prompt idx)
                          (cons (format "%d: %s" (1+ idx)
-                                       (truncate-string-to-width prompt 60 nil nil "..."))
+                                       (truncate-string-to-width
+                                        (substring-no-properties prompt) 60 nil nil "..."))
                                idx))
                        pending)))
             (selection (cdr (assoc (completing-read "Remove: " choices nil t) choices))))
