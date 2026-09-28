@@ -8012,5 +8012,103 @@ it in the current window."
                 (should-not (eq (selected-window) origin))))))
       (kill-buffer shell-buffer))))
 
+(ert-deftest agent-shell-project-buffers-uses-given-cwd-test ()
+  "Test that `agent-shell-project-buffers' matches buffers against CWD."
+  (let ((in-project (generate-new-buffer "in-project-shell"))
+        (other-project (generate-new-buffer "other-project-shell")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'agent-shell-buffers)
+                   (lambda () (list in-project other-project)))
+                  ((symbol-function 'agent-shell-cwd)
+                   (lambda ()
+                     (if (eq (current-buffer) in-project)
+                         "/path/to/project/"
+                       "/path/to/elsewhere/"))))
+          ;; Given a CWD, buffers are matched against it rather than
+          ;; against the current buffer's own CWD.
+          (should (equal (agent-shell-project-buffers "/path/to/project/")
+                         (list in-project)))
+          (should (equal (agent-shell-project-buffers "/path/to/nowhere/")
+                         nil))
+          ;; Without a CWD, it is computed in the current buffer.
+          (with-current-buffer in-project
+            (should (equal (agent-shell-project-buffers)
+                           (list in-project)))))
+      (kill-buffer in-project)
+      (kill-buffer other-project))))
+
+(ert-deftest agent-shell--shell-buffer-returns-project-shell-test ()
+  "Test that `agent-shell--shell-buffer' finds an existing project shell."
+  (let ((agent-shell-cwd-function (lambda () "/path/to/project/"))
+        (existing (generate-new-buffer "existing-shell"))
+        (started nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'agent-shell-buffers)
+                   (lambda () (list existing)))
+                  ((symbol-function 'agent-shell--start)
+                   (lambda (&rest _)
+                     (setq started t)
+                     (generate-new-buffer "fake-shell"))))
+          (with-temp-buffer
+            (should (eq (agent-shell--shell-buffer) existing))
+            (should-not started)))
+      (kill-buffer existing))))
+
+(ert-deftest agent-shell--shell-buffer-computes-cwd-once-test ()
+  "Test that creating a shell resolves `agent-shell-cwd-function' only once.
+
+The function may be expensive or interactive (prompting for a
+directory, say), so `agent-shell--shell-buffer' must compute the CWD
+once and hand it to `agent-shell--start' rather than have every helper
+along the way recompute it."
+  (let* ((cwd-calls 0)
+         (agent-shell-session-strategy 'prompt)
+         (agent-shell-cwd-function (lambda ()
+                                     (setq cwd-calls (1+ cwd-calls))
+                                     "/path/to/project/"))
+         (start-args nil)
+         (fake-shell nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'agent-shell-buffers)
+                   (lambda () nil))
+                  ((symbol-function 'agent-shell--auto-preferred-config)
+                   (lambda () (agent-shell-make-agent-config :buffer-name "Fake")))
+                  ((symbol-function 'agent-shell--start)
+                   (lambda (&rest args)
+                     (setq start-args args)
+                     (setq fake-shell (generate-new-buffer "fake-shell")))))
+          (with-temp-buffer
+            (should (eq (agent-shell--shell-buffer) fake-shell))
+            (should (equal cwd-calls 1))
+            (should (equal (plist-get start-args :cwd) "/path/to/project/"))))
+      (when (buffer-live-p fake-shell)
+        (kill-buffer fake-shell)))))
+
+(ert-deftest agent-shell--start-cwd-test ()
+  "Test that `agent-shell--start' starts the shell in CWD when given.
+
+Only when CWD is nil does it fall back to computing `agent-shell-cwd'."
+  (let* ((cwd-calls 0)
+         (agent-shell-cwd-function (lambda ()
+                                     (setq cwd-calls (1+ cwd-calls))
+                                     "/computed/dir/"))
+         (config (agent-shell-make-agent-config
+                  :buffer-name "Fake"
+                  :shell-prompt "Fake> "
+                  :shell-prompt-regexp "Fake> ")))
+    ;; Capture the `default-directory' the shell would start in, bailing
+    ;; out before any of the shell machinery runs.
+    (cl-letf (((symbol-function 'shell-maker-start-v2)
+               (lambda (&rest _)
+                 (throw 'agent-shell-tests--started default-directory))))
+      (should (equal (catch 'agent-shell-tests--started
+                       (agent-shell--start :config config :cwd "/passed/dir/"))
+                     "/passed/dir/"))
+      (should (equal cwd-calls 0))
+      (should (equal (catch 'agent-shell-tests--started
+                       (agent-shell--start :config config))
+                     "/computed/dir/"))
+      (should (equal cwd-calls 1)))))
+
 (provide 'agent-shell-tests)
 ;;; agent-shell-tests.el ends here
