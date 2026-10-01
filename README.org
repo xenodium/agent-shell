@@ -1155,6 +1155,7 @@ always go to Evil modes if you need to with ~C-z~).
 | agent-shell-openai-codex-acp-command          | Command and parameters for the OpenAI Codex client.                             |
 | agent-shell-openai-codex-environment          | Environment variables for the OpenAI Codex client.                              |
 | agent-shell-openai-default-model-id           | Default Codex model ID.                                                         |
+| agent-shell-openai-default-reasoning-effort   | Default Codex reasoning effort.                                                |
 | agent-shell-openai-default-session-mode-id    | Default Codex session mode ID.                                                  |
 | agent-shell-opencode-acp-command              | Command and parameters for the OpenCode client.                                 |
 | agent-shell-opencode-authentication           | Configuration for OpenCode authentication.                                      |
