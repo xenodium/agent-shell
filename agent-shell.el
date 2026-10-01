@@ -1272,6 +1272,7 @@ OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
         (cons :sleep-token nil)
         (cons :active-requests nil)
         (cons :pending-prompts nil)
+        (cons :transcript-error nil)
         (cons :usage (list (cons :total-tokens 0)
                            (cons :input-tokens 0)
                            (cons :output-tokens 0)
@@ -8706,7 +8707,8 @@ reads the buffer's prompt capabilities."
      :text (format "## User (%s)\n\n%s\n\n"
                    (format-time-string "%F %T")
                    (agent-shell--indent-markdown-headers expanded-prompt))
-     :file-path agent-shell--transcript-file)
+     :file-path agent-shell--transcript-file
+     :retry t)
 
     (when-let* ((viewport-buffer (agent-shell-viewport--buffer
                                   :shell-buffer shell-buffer
@@ -11013,22 +11015,26 @@ For example:
 (defun agent-shell--ensure-transcript-file ()
   "Return the transcript file path, creating it with header if needed.
 
-Also recreates the file and its directory if deleted mid-session, as
-long as the shell's working directory still exists.  On failure,
-disable the transcript for this shell and return nil."
+Also recreates the file and its directory if deleted mid-session.  A
+transcript inside the shell's working directory is not recreated once
+that directory is gone (e.g. a deleted worktree).  On failure, suspend
+the transcript and return nil."
   (unless (derived-mode-p 'agent-shell-mode)
     (user-error "Not in an agent-shell buffer"))
   (when-let* ((filepath agent-shell--transcript-file)
               (dir (file-name-directory filepath)))
-    (unless (file-exists-p filepath)
+    (if (file-exists-p filepath)
+        filepath
       (condition-case err
           (let ((agent-name (or (map-nested-elt agent-shell--state '(:agent-config :mode-line-name))
                                 (map-nested-elt agent-shell--state '(:agent-config :buffer-name))
                                 "Unknown Agent"))
                 (session-id (map-nested-elt agent-shell--state '(:session :id)))
                 (model-id (map-nested-elt agent-shell--state '(:session :model-id))))
-            (unless (file-directory-p (agent-shell-cwd))
-              (error "%s no longer exists" (agent-shell-cwd)))
+            (when-let* ((cwd (file-name-as-directory (agent-shell-cwd)))
+                        ((string-prefix-p cwd dir))
+                        ((not (file-directory-p cwd))))
+              (error "%s no longer exists" cwd))
             (make-directory dir t)
             (write-region
              (format "# Agent Shell Transcript
@@ -11051,11 +11057,26 @@ disable the transcript for this shell and return nil."
                        ""))
              nil filepath nil 'no-message)
             (message "Created %s"
-                     (agent-shell--shorten-paths filepath t)))
+                     (agent-shell--shorten-paths filepath t))
+            filepath)
         (error
-         (setq-local agent-shell--transcript-file nil)
-         (message "Transcript disabled: %s" (error-message-string err)))))
-    agent-shell--transcript-file))
+         (agent-shell--suspend-transcript :error err)
+         nil)))))
+
+(cl-defun agent-shell--suspend-transcript (&key error)
+  "Stop writing the transcript after ERROR until the next prompt.
+
+Only the first failure in a row warns.  It also restores shell-maker's
+save-on-kill prompt, so killing the buffer offers to save its contents
+while the transcript is incomplete."
+  (unless (map-elt agent-shell--state :transcript-error)
+    (kill-local-variable 'shell-maker-prompt-before-killing-buffer)
+    (defalias 'agent-shell-save-session-transcript #'shell-maker-save-session-transcript)
+    (display-warning 'agent-shell
+                     (format "Transcript paused: %s
+Retrying on next prompt."
+                             (error-message-string error))))
+  (map-put! agent-shell--state :transcript-error (error-message-string error)))
 
 (defun agent-shell--indent-markdown-headers (text)
   "Indent markdown headers in TEXT by 2 levels for transcript hierarchy.
@@ -11096,14 +11117,23 @@ For example:
     (mapconcat #'identity (nreverse result) "\n")))
 
 
-(cl-defun agent-shell--append-transcript (&key text file-path)
-  "Append TEXT to the transcript at FILE-PATH."
-  (when (and file-path (agent-shell--ensure-transcript-file))
+(cl-defun agent-shell--append-transcript (&key text file-path retry)
+  "Append TEXT to the transcript at FILE-PATH.
+
+Skip writing while the transcript is suspended, unless RETRY is
+non-nil (used at the start of each turn)."
+  (when (and file-path
+             (or retry (not (map-elt agent-shell--state :transcript-error)))
+             (agent-shell--ensure-transcript-file))
     (condition-case err
-        (write-region text nil file-path t 'no-message)
+        (progn
+          (write-region text nil file-path t 'no-message)
+          (when (map-elt agent-shell--state :transcript-error)
+            (map-put! agent-shell--state :transcript-error nil)
+            (message "Transcript resumed: %s"
+                     (agent-shell--shorten-paths file-path t))))
       (error
-       (setq-local agent-shell--transcript-file nil)
-       (message "Transcript disabled: %s" (error-message-string err))))))
+       (agent-shell--suspend-transcript :error err)))))
 
 (cl-defun agent-shell--separate-transcript-after-agent-message (&key last-entry-type file-path)
   "Append a blank-line separator to the transcript at FILE-PATH.

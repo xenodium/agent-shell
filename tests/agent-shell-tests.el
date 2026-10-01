@@ -2595,6 +2595,7 @@ driven by a single helper on both paths."
         (with-temp-buffer
           (setq major-mode 'agent-shell-mode)
           (setq default-directory (file-name-as-directory root))
+          (setq-local agent-shell--state (agent-shell--make-state))
           (setq-local agent-shell--transcript-file file)
           (agent-shell--append-transcript :text "before\n" :file-path file)
           (delete-directory (expand-file-name ".agent-shell" root) t)
@@ -2605,30 +2606,82 @@ driven by a single helper on both paths."
             (should (string-suffix-p "after\n" (buffer-string)))))
       (delete-directory root t))))
 
-(ert-deftest agent-shell--append-transcript-disables-when-project-deleted-test ()
-  "Disable the transcript with a single message when the project is deleted."
+(ert-deftest agent-shell--append-transcript-suspends-when-project-deleted-test ()
+  "Suspend the transcript with a single warning when the project is deleted."
   (let* ((root (make-temp-file "agent-shell-transcript" t))
          (file (expand-file-name ".agent-shell/transcripts/t.md" root))
-         (messages nil))
+         (warnings nil))
     (unwind-protect
         (with-temp-buffer
           (setq major-mode 'agent-shell-mode)
           (setq default-directory (file-name-as-directory root))
+          (setq-local agent-shell--state (agent-shell--make-state))
           (setq-local agent-shell--transcript-file file)
+          (setq-local shell-maker-prompt-before-killing-buffer nil)
           (agent-shell--append-transcript :text "before\n"
                                           :file-path agent-shell--transcript-file)
           (delete-directory root t)
-          (cl-letf (((symbol-function 'message)
-                     (lambda (&rest args) (push (apply #'format args) messages))))
+          (cl-letf (((symbol-function 'display-warning)
+                     (lambda (_type message &rest _) (push message warnings))))
             (dotimes (_ 3)
               (agent-shell--append-transcript :text "after\n"
-                                              :file-path agent-shell--transcript-file)))
-          (should-not agent-shell--transcript-file)
+                                              :file-path agent-shell--transcript-file))
+            (agent-shell--append-transcript :text "retry\n"
+                                            :file-path agent-shell--transcript-file
+                                            :retry t))
+          (should (equal agent-shell--transcript-file file))
+          (should (map-elt agent-shell--state :transcript-error))
           (should-not (file-exists-p root))
-          (should (= (length messages) 1))
-          (should (string-prefix-p "Transcript disabled:" (car messages))))
+          (should (= (length warnings) 1))
+          (should (string-prefix-p "Transcript paused:" (car warnings)))
+          (should-not (local-variable-p 'shell-maker-prompt-before-killing-buffer)))
       (when (file-exists-p root)
         (delete-directory root t)))))
+
+(ert-deftest agent-shell--append-transcript-resumes-on-retry-test ()
+  "Resume a suspended transcript once a retried write succeeds."
+  (let* ((root (make-temp-file "agent-shell-transcript" t))
+         (file (expand-file-name ".agent-shell/transcripts/t.md" root)))
+    (unwind-protect
+        (with-temp-buffer
+          (setq major-mode 'agent-shell-mode)
+          (setq default-directory (file-name-as-directory root))
+          (setq-local agent-shell--state (agent-shell--make-state))
+          (setq-local agent-shell--transcript-file file)
+          (delete-directory root t)
+          (cl-letf (((symbol-function 'display-warning) #'ignore))
+            (agent-shell--append-transcript :text "lost\n" :file-path file))
+          (should (map-elt agent-shell--state :transcript-error))
+          (make-directory root)
+          (agent-shell--append-transcript :text "skipped\n" :file-path file)
+          (should-not (file-exists-p file))
+          (agent-shell--append-transcript :text "resumed\n" :file-path file :retry t)
+          (should-not (map-elt agent-shell--state :transcript-error))
+          (with-temp-buffer
+            (insert-file-contents file)
+            (should (string-suffix-p "resumed\n" (buffer-string)))))
+      (when (file-exists-p root)
+        (delete-directory root t)))))
+
+(ert-deftest agent-shell--append-transcript-outside-deleted-project-test ()
+  "Recreate a transcript stored outside the project even if it is deleted."
+  (let* ((root (make-temp-file "agent-shell-transcript" t))
+         (project (expand-file-name "project" root))
+         (file (expand-file-name "data/transcripts/t.md" root)))
+    (unwind-protect
+        (with-temp-buffer
+          (make-directory project)
+          (setq major-mode 'agent-shell-mode)
+          (setq default-directory (file-name-as-directory project))
+          (setq-local agent-shell--state (agent-shell--make-state))
+          (setq-local agent-shell--transcript-file file)
+          (delete-directory project t)
+          (agent-shell--append-transcript :text "after\n" :file-path file)
+          (should-not (map-elt agent-shell--state :transcript-error))
+          (with-temp-buffer
+            (insert-file-contents file)
+            (should (string-suffix-p "after\n" (buffer-string)))))
+      (delete-directory root t))))
 
 (ert-deftest agent-shell-mcp-servers-test ()
   "Test `agent-shell-mcp-servers' function normalization."
