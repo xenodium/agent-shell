@@ -138,6 +138,26 @@ For no authentication (when managed externally):
         (t
          nil)))
 
+(defcustom agent-shell-antigravity-default-model-id
+  nil
+  "Default Antigravity model ID.
+
+Must be one of the model ID's displayed under \"Available models\"
+when starting a new shell.
+
+Can be set to either a string or a function that returns a string."
+  :type '(choice (const nil) string function)
+  :group 'agent-shell)
+
+(defcustom agent-shell-antigravity-default-session-mode-id
+  nil
+  "Default Antigravity session mode ID.
+
+Must be one of the session mode ID's displayed under \"Available session modes\"
+when starting a new shell."
+  :type '(choice (const nil) string)
+  :group 'agent-shell)
+
 (defun agent-shell-antigravity-make-agent-config ()
   "Create an Antigravity agent configuration.
 
@@ -154,6 +174,10 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :authenticate-request-maker #'agent-shell-antigravity--authenticate-request
    :client-maker (lambda (buffer)
                    (agent-shell-antigravity-make-client :buffer buffer))
+   :default-model-id (lambda () (if (functionp agent-shell-antigravity-default-model-id)
+                                    (funcall agent-shell-antigravity-default-model-id)
+                                  agent-shell-antigravity-default-model-id))
+   :default-session-mode-id (lambda () agent-shell-antigravity-default-session-mode-id)
    :install-instructions "See https://antigravity.google/docs/ide/extensions for installation."))
 
 (defun agent-shell-antigravity--authenticate-request ()
