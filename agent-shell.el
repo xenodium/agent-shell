@@ -9433,6 +9433,11 @@ If the shell is busy with no live prompt, it is queued instead."
                             (use-local-map map))
                           (current-buffer)))
          (window-config (current-window-configuration))
+         ;; Run the command in the shell buffer's directory, not the
+         ;; calling buffer's (they differ when invoked from a viewport),
+         ;; and through its file handler, so remote (TRAMP) shells
+         ;; execute there instead of silently running locally.
+         (default-directory (buffer-local-value 'default-directory shell-buffer))
          (proc (make-process
                 :name command
                 :buffer output-buffer
@@ -9444,6 +9449,7 @@ If the shell is busy with no live prompt, it is queued instead."
                                   ;; (all into output buffer)
                                   (format "%s 2>&1" command))))
                 :connection-type 'pipe
+                :file-handler t
                 :filter
                 (lambda (proc output)
                   (when (buffer-live-p (process-buffer proc))

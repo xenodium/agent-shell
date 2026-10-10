@@ -7302,6 +7302,42 @@ too, where the buffer is read-only."
           (should (string-empty-p (buffer-string))))
       (kill-buffer viewport-buffer))))
 
+(ert-deftest agent-shell-insert-shell-command-output-runs-in-shell-directory-test ()
+  "Command runs in the shell buffer's directory, via its file handler.
+
+The calling buffer can sit in a different directory (a viewport), and
+remote shells need `make-process' to go through the file handler, or the
+command runs locally instead of on the remote host."
+  (let ((shell-buffer (generate-new-buffer " *agent-shell-command-directory-test*"))
+        process-directory
+        process-file-handler)
+    (unwind-protect
+        (with-temp-buffer
+          (setq major-mode 'agent-shell-viewport-view-mode)
+          (setq default-directory "/home/user/")
+          (with-current-buffer shell-buffer
+            (setq default-directory "/ssh:user@host:/project/"))
+          (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "pwd"))
+                    ((symbol-function 'agent-shell--current-shell)
+                     (lambda (&rest _) shell-buffer))
+                    ((symbol-function 'agent-shell-viewport--buffer)
+                     (lambda (&rest _) (current-buffer)))
+                    ((symbol-function 'agent-shell--build-command-for-execution)
+                     #'identity)
+                    ((symbol-function 'make-process)
+                     (lambda (&rest args)
+                       (setq process-directory default-directory)
+                       (setq process-file-handler (plist-get args :file-handler))
+                       (make-symbol "fake-proc")))
+                    ((symbol-function 'set-process-query-on-exit-flag) #'ignore)
+                    ((symbol-function 'run-at-time) #'ignore))
+            (agent-shell-insert-shell-command-output))
+          (should (equal process-directory "/ssh:user@host:/project/"))
+          (should process-file-handler)
+          (when-let ((output-buffer (get-buffer "*pwd*")))
+            (kill-buffer output-buffer)))
+      (kill-buffer shell-buffer))))
+
 (ert-deftest agent-shell--insert-to-shell-buffer-deferred-returns-nil-test ()
   "Text held until `prompt-ready' reports no insertion details yet."
   (with-temp-buffer
