@@ -10748,7 +10748,8 @@ TEXT is the error message."
 
 (defun agent-shell--get-flymake-error-context ()
   "Get flymake error at point, ready for sending to agent."
-  (when-let* ((diagnostics (flymake-diagnostics (point))))
+  (when-let* (((bound-and-true-p flymake-mode))
+              (diagnostics (flymake-diagnostics (point))))
     (mapconcat
      (lambda (diagnostic)
        (let* ((buffer (flymake-diagnostic-buffer diagnostic))

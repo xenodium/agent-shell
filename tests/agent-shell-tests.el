@@ -9438,5 +9438,44 @@ A directory that does not exist is an error, rather than leaving
         (when (file-directory-p dir)
           (delete-directory dir))))))
 
+(defun agent-shell-tests--make-flymake-diagnostic (buffer beg end text type)
+  "Make a flymake diagnostic in BUFFER from BEG to END, with TEXT and TYPE.
+
+Emacs 31 made TYPE a mandatory fourth argument and moved TEXT into INFO."
+  (if (equal (func-arity #'flymake-make-diagnostic) '(4 . 5))
+      (flymake-make-diagnostic buffer beg end text type)
+    (flymake-make-diagnostic buffer beg end type text)))
+
+(ert-deftest agent-shell--get-flymake-error-context-at-point-test ()
+  "Report the flymake diagnostic at point when Flymake is on."
+  (with-temp-buffer
+    (insert "first line\nsecond line\n")
+    (goto-char (+ (point-min) 6))
+    (let ((flymake-mode t)
+          (diagnostic (agent-shell-tests--make-flymake-diagnostic
+                       (current-buffer) (point-min) 10
+                       "unused variable" 'warning)))
+      (cl-letf (((symbol-function 'flymake-diagnostics)
+                 (lambda (&optional _beg _end) (list diagnostic))))
+        (should (string-match-p "unused variable"
+                                (agent-shell--get-flymake-error-context)))))))
+
+(ert-deftest agent-shell--get-flymake-error-context-ignores-inactive-flymake-test ()
+  "Return nothing from the flymake branch when `flymake-mode' is off.
+
+Flycheck's `flycheck-eglot-mode' turns Flymake off but advises
+`flymake-diagnostics' to answer with every cached diagnostic ending
+at or after point, which puts diagnostics from other lines at point."
+  (with-temp-buffer
+    (insert "first line\nsecond line\n")
+    (goto-char (point-min))
+    (let ((flymake-mode nil)
+          (diagnostic (agent-shell-tests--make-flymake-diagnostic
+                       (current-buffer) 12 18
+                       "unused variable" 'warning)))
+      (cl-letf (((symbol-function 'flymake-diagnostics)
+                 (lambda (&optional _beg _end) (list diagnostic))))
+        (should-not (agent-shell--get-flymake-error-context))))))
+
 (provide 'agent-shell-tests)
 ;;; agent-shell-tests.el ends here
