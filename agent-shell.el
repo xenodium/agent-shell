@@ -9313,6 +9313,10 @@ reads the buffer's prompt capabilities."
                                                    :shell-buffer shell-buffer
                                                    :existing-only t)))
                        (with-current-buffer viewport-buffer
+                         ;; Streaming renders into the viewport too, so it
+                         ;; holds back the same trailing markup.
+                         (when (derived-mode-p 'agent-shell-viewport-view-mode)
+                           (agent-shell--render-deferred-markup))
                          (agent-shell-viewport--update-header)))
                      (cond
                       (success

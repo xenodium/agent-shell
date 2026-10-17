@@ -9438,5 +9438,59 @@ A directory that does not exist is an error, rather than leaving
         (when (file-directory-p dir)
           (delete-directory dir))))))
 
+(ert-deftest agent-shell--send-command-renders-deferred-markup-in-viewport-test ()
+  "Test the end of a turn renders the viewport's held-back markup too.
+
+Streaming renders into the viewport alongside the shell, holding back a
+list item on the last line until its newline arrives.  A response
+ending in one never gets that newline, so the viewport's copy stays raw
+unless the turn's end renders it there as well."
+  (let* ((captured-on-success nil)
+         (shell-buffer (current-buffer))
+         (viewport-buffer (generate-new-buffer "*agent-shell-test-viewport*"))
+         (agent-shell--state (list (cons :buffer shell-buffer)
+                                   (cons :event-subscriptions nil)
+                                   (cons :client 'test-client)
+                                   (cons :session (list (cons :id "test-session") (cons :title nil)))
+                                   (cons :last-entry-type nil)
+                                   (cons :tool-calls nil)
+                                   (cons :usage (list (cons :total-tokens 0)))
+                                   (cons :idle-timer nil)))
+         (agent-shell-show-busy-indicator nil)
+         (agent-shell-show-usage-at-turn-end nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'agent-shell--state)
+                   (lambda () agent-shell--state))
+                  ((symbol-function 'agent-shell--send-request)
+                   (lambda (&rest args)
+                     (setq captured-on-success (plist-get args :on-success))))
+                  ((symbol-function 'agent-shell-viewport--buffer)
+                   (lambda (&rest _) viewport-buffer))
+                  ((symbol-function 'agent-shell-viewport--initialize)
+                   (lambda (&rest _)))
+                  ((symbol-function 'agent-shell-viewport--update-header)
+                   (lambda (&rest _)))
+                  ((symbol-function 'agent-shell--finish-output)
+                   (lambda (&rest _)))
+                  ((symbol-function 'agent-shell--prompt-queue-process-next)
+                   (lambda (&rest _))))
+          (with-current-buffer viewport-buffer
+            (agent-shell-viewport-view-mode))
+          (agent-shell--send-command
+           :prompt "Hello"
+           :shell-buffer shell-buffer)
+          (with-current-buffer viewport-buffer
+            (let ((inhibit-read-only t))
+              (insert (propertize "Done.\n\n- Last item"
+                                  'agent-shell-ui-section 'body))))
+          (should captured-on-success)
+          (funcall captured-on-success '((stopReason . "end_turn")))
+          (with-current-buffer viewport-buffer
+            (goto-char (point-max))
+            (beginning-of-line)
+            (should (get-text-property (point) 'agent-shell-markdown-list-rendered))
+            (should-not (looking-at-p "- "))))
+      (kill-buffer viewport-buffer))))
+
 (provide 'agent-shell-tests)
 ;;; agent-shell-tests.el ends here
