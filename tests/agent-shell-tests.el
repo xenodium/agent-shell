@@ -7275,6 +7275,210 @@ such a body layers its own faces ahead of the base one."
                     :acp-notification '((some-key . "some-value")))
                   '((adapted . t) (some-key . "some-value"))))))
 
+(ert-deftest agent-shell--subscribe-to-client-events-notification-adapter-test ()
+  "Test notification adapter results through the client subscription."
+  (dolist (logging '(nil t))
+    (dolist (result '(no-adapter original adapted nil :handled))
+      (with-temp-buffer
+        (let* ((acp-logging-enabled logging)
+               (notification '((method . "session/update")))
+               (adapted '((method . "session/update") (adapted . t)))
+               (adapter-calls 0)
+               (dispatched nil)
+               (state (agent-shell--make-state
+                       :buffer (current-buffer)
+                       :agent-config
+                       (agent-shell-make-agent-config
+                        :identifier 'test
+                        :notification-adapter
+                        (unless (eq result 'no-adapter)
+                          (lambda (&rest arguments)
+                            (should (eq (plist-get arguments :acp-notification)
+                                        notification))
+                            (setq adapter-calls (1+ adapter-calls))
+                            (pcase result
+                              ('original notification)
+                              ('adapted adapted)
+                              (_ result))))))))
+          (map-put! state :client (acp-make-client
+                                  :command "unused"
+                                  :context-buffer (current-buffer)))
+          (cl-letf (((symbol-function 'agent-shell--on-notification)
+                     (lambda (&rest arguments)
+                       (should (eq (plist-get arguments :state) state))
+                       (should (eq (current-buffer) (map-elt state :buffer)))
+                       (push (plist-get arguments :acp-notification) dispatched))))
+            (agent-shell--subscribe-to-client-events :state state)
+            (dolist (handler (map-nested-elt state '(:client :notification-handlers)))
+              (funcall handler notification)))
+          (should (= adapter-calls (if (eq result 'no-adapter) 0 1)))
+          (should (equal dispatched
+                         (pcase result
+                           ((or 'no-adapter 'original) (list notification))
+                           ('adapted (list adapted))
+                           (_ (list result))))))))))
+
+(ert-deftest agent-shell--subscribe-to-client-events-notification-handler-test ()
+  "Test adaptation before handling and nil/non-nil handler results."
+  (dolist (logging '(nil t))
+    (dolist (result '(no-adapter original adapted nil))
+      (dolist (handled '(nil t claimed 0))
+        (with-temp-buffer
+          (let* ((acp-logging-enabled logging)
+                 (notification '((method . "_example/status")))
+                 (adapted '((method . "_example/status") (adapted . t)))
+                 (expected (pcase result
+                             ((or 'no-adapter 'original) notification)
+                             ('adapted adapted)))
+                 (calls nil)
+                 (context (current-buffer))
+                 (handler-state nil)
+                 (state (agent-shell--make-state
+                         :buffer (current-buffer)
+                         :agent-config
+                         (agent-shell-make-agent-config
+                          :identifier 'test
+                          :notification-adapter
+                          (unless (eq result 'no-adapter)
+                            (lambda (&rest arguments)
+                              (should (eq (plist-get arguments :acp-notification)
+                                          notification))
+                              (push 'adapter calls)
+                              expected))
+                          :notification-handler
+                          (lambda (event)
+                            (should (eq (current-buffer) context))
+                            (setq handler-state (map-elt event :state))
+                            (should (eq (map-elt event :acp-notification) expected))
+                            (push 'handler calls)
+                            handled)))))
+            (should (functionp (map-nested-elt state '(:agent-config :notification-handler))))
+            (map-put! state :client (acp-make-client
+                                    :command "unused"
+                                    :context-buffer (current-buffer)))
+            (cl-letf (((symbol-function 'agent-shell--on-notification)
+                       (lambda (&rest arguments)
+                         (should (eq (plist-get arguments :state) state))
+                         (should (eq (plist-get arguments :acp-notification) expected))
+                         (push 'core calls))))
+              (agent-shell--subscribe-to-client-events :state state)
+              (dolist (handler (map-nested-elt state '(:client :notification-handlers)))
+                (funcall handler notification)))
+            (should (eq handler-state state))
+            (should (equal (reverse calls)
+                           (append (unless (eq result 'no-adapter) '(adapter))
+                                   '(handler)
+                                   (unless handled '(core)))))))))))
+
+(ert-deftest agent-shell--subscribe-to-client-events-handled-observers-test ()
+  "Test that handling adapted events preserves original ACP subscribers."
+  (dolist (logging '(nil t))
+    (with-temp-buffer
+      (let* ((acp-logging-enabled logging)
+             (notification '((method . "_example/status")))
+             (adapted '((method . "_example/status") (adapted . t)))
+             (before-calls 0)
+             (after-calls 0)
+             (handler-calls 0)
+             (dispatch-calls 0)
+             (client (acp-make-client :command "unused"
+                                      :context-buffer (current-buffer)))
+             (state (agent-shell--make-state
+                     :buffer (current-buffer)
+                     :agent-config
+                     (agent-shell-make-agent-config
+                      :identifier 'test
+                      :notification-adapter (lambda (&rest _) adapted)
+                      :notification-handler
+                      (lambda (event)
+                        (should (eq (map-elt event :acp-notification) adapted))
+                        (setq handler-calls (1+ handler-calls))
+                        t)))))
+        (map-put! state :client client)
+        (acp-subscribe-to-notifications
+         :client client
+         :on-notification (lambda (event)
+                            (should (eq event notification))
+                            (setq before-calls (1+ before-calls))))
+        (cl-letf (((symbol-function 'agent-shell--on-notification)
+                   (lambda (&rest _) (setq dispatch-calls (1+ dispatch-calls)))))
+          (agent-shell--subscribe-to-client-events :state state)
+          (acp-subscribe-to-notifications
+           :client client
+           :on-notification (lambda (event)
+                              (should (eq event notification))
+                              (setq after-calls (1+ after-calls))))
+          (dolist (handler (map-elt client :notification-handlers))
+            (funcall handler notification)))
+        (should (= before-calls 1))
+        (should (= after-calls 1))
+        (should (= handler-calls 1))
+        (should (= dispatch-calls 0))))))
+
+(ert-deftest agent-shell--subscribe-to-client-events-handler-bookkeeping-test ()
+  "Test that a consuming handler owns bookkeeping normally done by core."
+  (dolist (result '(unhandled handled maintained))
+    (with-temp-buffer
+      (let* ((acp-logging-enabled nil)
+             (notification '((method . "_example/status")))
+             (previous-time '(0 1 0 0))
+             (notification-time '(0 2 0 0))
+             (state (agent-shell--make-state
+                     :buffer (current-buffer)
+                     :agent-config
+                     (agent-shell-make-agent-config
+                      :identifier 'test
+                      :notification-handler
+                      (lambda (event)
+                        (when (eq result 'maintained)
+                          (map-put! (map-elt event :state) :last-activity-time
+                                    (current-time)))
+                        (not (eq result 'unhandled)))))))
+        (map-put! state :last-activity-time previous-time)
+        (map-put! state :client (acp-make-client
+                                :command "unused"
+                                :context-buffer (current-buffer)))
+        (agent-shell--subscribe-to-client-events :state state)
+        (cl-letf (((symbol-function 'current-time) (lambda () notification-time)))
+          (dolist (handler (map-nested-elt state '(:client :notification-handlers)))
+            (funcall handler notification)))
+        (should (equal (map-elt state :last-activity-time)
+                       (if (eq result 'handled) previous-time notification-time)))))))
+
+(ert-deftest agent-shell--subscribe-to-client-events-handler-isolation-test ()
+  "Test a provider handler stays confined to its configured state/client."
+  (let ((handled nil)
+        (dispatched nil))
+    (cl-letf (((symbol-function 'agent-shell--on-notification)
+               (lambda (&rest arguments)
+                 (push (plist-get arguments :state) dispatched))))
+      (dolist (identifier '(handled-provider other-provider))
+        (with-temp-buffer
+          (let ((state (agent-shell--make-state
+                        :buffer (current-buffer)
+                        :agent-config
+                        (agent-shell-make-agent-config
+                         :identifier identifier
+                         :notification-handler
+                         (when (eq identifier 'handled-provider)
+                           (lambda (event)
+                             (push (map-elt event :state) handled)
+                             t))))))
+            (map-put! state :client (acp-make-client
+                                    :command "unused"
+                                    :context-buffer (current-buffer)))
+            (agent-shell--subscribe-to-client-events :state state)
+            (dolist (handler (map-nested-elt state '(:client :notification-handlers)))
+              (funcall handler '((method . "_example/status"))))))))
+    (should (= (length handled) 1))
+    (should (= (length dispatched) 1))
+    (should (eq (map-nested-elt (car handled) '(:agent-config :identifier))
+                'handled-provider))
+    (should (eq (map-nested-elt (car dispatched) '(:agent-config :identifier))
+                'other-provider))
+    (should-not (eq (map-elt (car handled) :client)
+                    (map-elt (car dispatched) :client)))))
+
 (ert-deftest agent-shell--buffer-name-prefix-test ()
   "Test `agent-shell--buffer-name-prefix' across formats."
   (let ((agent-shell-buffer-name-format 'default))

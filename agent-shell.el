@@ -754,6 +754,7 @@ Each element can be:
                                               session-meta
                                               mcp-servers
                                               notification-adapter
+                                              notification-handler
                                               icon-name
                                               install-instructions)
   "Create an agent configuration alist.
@@ -787,7 +788,16 @@ Keyword arguments:
 - MCP-SERVERS: Optional list of MCP servers for this agent, taking
   precedence over the global `agent-shell-mcp-servers'.  Same shape as
   that variable.
-- NOTIFICATION-ADAPTER: Optional function to modify/normalize `notification'
+- NOTIFICATION-ADAPTER: Optional function called with `:acp-notification'.
+  Return the original or a normalized notification for further handling.
+- NOTIFICATION-HANDLER: Optional function called after adaptation with a
+  single alist containing `:state' and `:acp-notification'.  Return non-nil
+  if handled, or nil to continue with core notification handling.
+  For example, handle \"_example/status\" and return t, but return nil
+  for \"session/update\" to let core handle standard updates.
+  Handling a notification takes over all core bookkeeping for it,
+  including updating the state's `:last-activity-time'.  Independent
+  ACP subscribers and traffic logging still receive the original event.
 - ICON-NAME: Name of the icon to use
 - INSTALL-INSTRUCTIONS: Instructions to show when executable is not found
 
@@ -807,6 +817,7 @@ Returns an alist with all specified values."
     (:session-meta . ,session-meta)
     (:mcp-servers . ,mcp-servers)
     (:notification-adapter . ,notification-adapter)            ;; function
+    (:notification-handler . ,notification-handler)            ;; function
     (:icon-name . ,icon-name)
     (:install-instructions . ,install-instructions)))
 
@@ -2896,6 +2907,21 @@ original ACP-NOTIFICATION."
             ((functionp adapter)))
       (funcall adapter :acp-notification acp-notification)
     acp-notification))
+
+(cl-defun agent-shell--notification-handled-p (&key state acp-notification)
+  "Return non-nil if STATE's provider handles adapted ACP-NOTIFICATION.
+
+Call the optional `:notification-handler' with one event alist:
+
+  ((:state . STATE) (:acp-notification . ACP-NOTIFICATION))
+
+A non-nil result skips all core notification handling and bookkeeping.
+For example, return t after handling \"_example/status\", or nil to let
+core handle a standard \"session/update\" notification."
+  (when-let* ((handler (map-nested-elt state '(:agent-config :notification-handler)))
+              ((functionp handler)))
+    (funcall handler `((:state . ,state)
+                      (:acp-notification . ,acp-notification)))))
 
 (defun agent-shell--format-tool-call-input (acp-raw-input)
   "Format ACP-RAW-INPUT from a tool call as a fenced code block.
@@ -8754,13 +8780,16 @@ The agent config's `:mcp-servers' take precedence over the global
   (acp-subscribe-to-notifications
    :client (map-elt state :client)
    :on-notification (lambda (acp-notification)
-                      (agent-shell--on-notification
-                       :state state
-                       :acp-notification
-                       (agent-shell--adapt-notification
-                        :state state
-                        :acp-notification acp-notification)
-                       )))
+                      (let ((adapted-notification
+                             (agent-shell--adapt-notification
+                              :state state
+                              :acp-notification acp-notification)))
+                        (unless (agent-shell--notification-handled-p
+                                 :state state
+                                 :acp-notification adapted-notification)
+                          (agent-shell--on-notification
+                           :state state
+                           :acp-notification adapted-notification)))))
   (acp-subscribe-to-requests
    :client (map-elt state :client)
    :on-request (lambda (acp-request)

@@ -779,6 +779,24 @@ Huge thanks for /gdindi/ for finding and and describing this in https://github.c
 
 By default, =agent-shell= includes configurations for all supported agents (Claude Agent, Gemini CLI, Codex, Goose, Grok Build, Cursor, CodeBuddy, Qwen Code, and Auggie). You can customize which agents are available through the =agent-shell-agent-configs= variable.
 
+*** Handling provider notifications
+
+Provider implementations can set =:notification-handler= in =agent-shell-make-agent-config= to handle custom ACP notifications. The callback runs after =:notification-adapter= and receives an event alist containing =:state= and the adapted =:acp-notification=. Return non-nil when handled, or nil to continue with core notification handling.
+
+#+begin_src emacs-lisp
+  (agent-shell-make-agent-config
+   :identifier 'example
+   :notification-handler
+   (lambda (event)
+     (when (equal (map-nested-elt event '(:acp-notification method))
+                  "_example/status")
+       (message "%s" (map-nested-elt event '(:acp-notification params text)))
+       (map-put! (map-elt event :state) :last-activity-time (current-time))
+       t)))
+#+end_src
+
+Handling a notification bypasses all core bookkeeping for it, which becomes the provider's responsibility. The example maintains =:last-activity-time= and leaves standard notifications such as =session/update= to core by returning nil. Independent ACP subscribers and traffic logging still receive the original notification. See =C-h f agent-shell-make-agent-config= for the configuration options.
+
 ** Usage
 
 *** Quick Start
