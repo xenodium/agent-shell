@@ -6564,6 +6564,39 @@ interaction (e.g. \"1/2\" after switching to the latest interaction)."
             (should (eq (get-text-property prompt-start 'font-lock-face)
                         'agent-shell-viewport-prompt))))))))
 
+(ert-deftest agent-shell-viewport-edit-mode-starts-with-empty-undo-history-test ()
+  "Undo in compose must not bring back pages shown in view mode.
+
+Major-mode changes keep `buffer-undo-list', so each view page's
+`erase-buffer' and insert stayed undoable after switching to compose."
+  (let ((agent-shell-file-completion-enabled nil)
+        (viewport-buffer (generate-new-buffer "*agent-shell undo test* [viewport]")))
+    (unwind-protect
+        (with-current-buffer viewport-buffer
+          (cl-letf (((symbol-function 'agent-shell-viewport--position)
+                     (lambda (&rest _) nil))
+                    ((symbol-function 'agent-shell-viewport--update-header)
+                     (lambda (&rest _))))
+            (buffer-enable-undo)
+            (agent-shell-viewport-view-mode)
+            (agent-shell-viewport--initialize :prompt "page 1\n" :response "one")
+            (undo-boundary)
+            (agent-shell-viewport--initialize :prompt "page 2\n" :response "two")
+            (undo-boundary)
+            (agent-shell-viewport-edit-mode)
+            (agent-shell-viewport--initialize)
+            (undo-boundary)
+            (setq last-command nil)
+            (should-error (undo) :type 'user-error)
+            (should (string-empty-p (buffer-string)))
+            ;; Typing in compose stays undoable.
+            (insert "draft")
+            (undo-boundary)
+            (setq last-command nil)
+            (undo)
+            (should (string-empty-p (buffer-string)))))
+      (kill-buffer viewport-buffer))))
+
 (ert-deftest agent-shell--refresh-session-title-skips-when-list-unsupported ()
   "Test `agent-shell--refresh-session-title' sends no request without `list'.
 

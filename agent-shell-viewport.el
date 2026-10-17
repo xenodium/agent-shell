@@ -1679,6 +1679,9 @@ For example, offer to kill associated shell session."
   (agent-shell-viewport--update-header)
   (let ((inhibit-read-only t))
     (erase-buffer))
+  ;; A major-mode change keeps `buffer-undo-list', so without this undo
+  ;; in compose brings back the pages view mode erased and inserted.
+  (setq buffer-undo-list nil)
   (add-hook 'kill-buffer-hook #'agent-shell-viewport--clean-up nil t))
 
 (define-derived-mode agent-shell-viewport-view-mode text-mode "Agent Shell Viewport (View)"
