@@ -1388,11 +1388,9 @@ With \\[universal-argument] \\[universal-argument] prefix ARG, prompt to pick an
 (defun agent-shell-submit (&optional arg)
   "Submit the current input to the agent, or queue it while the agent is busy.
 
-The prompt is shown early (before the ACP session is ready) so users
-can type while the agent initializes.  Gate the actual send on the
-session being ready: when it is not, error with `Starting agent, please wait'
-before the input is committed, so the typed text stays editable
-instead of being echoed into the transcript and rejected later.
+The prompt is shown before the ACP session is ready.  Input submitted
+while starting or restoring a session is queued and sent automatically
+once initialization succeeds.
 
 Submitting mid-turn hands the text to
 `agent-shell-busy-submit-default-function' and clears the input, which
@@ -1412,10 +1410,7 @@ per-start aliasing is disabled (see the `:alias-commands nil' call in
   (interactive "P")
   (unless (derived-mode-p 'agent-shell-mode)
     (user-error "Not in an agent shell"))
-  (unless (or (map-nested-elt agent-shell--state '(:session :id))
-              (eq agent-shell-session-strategy 'new-deferred))
-    (user-error "Starting agent, please wait"))
-  (if (shell-maker-busy)
+  (if (or (not (agent-shell-initialized-p)) (shell-maker-busy))
       (when-let* ((prompt (agent-shell--prompt-input)))
         (agent-shell--busy-submit :prompt prompt :override arg)
         (agent-shell--clear-prompt-input))
@@ -2534,9 +2529,7 @@ See also `agent-shell-confirm-interrupt'."
                            :reason "User cancelled"))))
         (t
          ;; No session id means the agent is still bootstrapping, so there
-         ;; is no turn to cancel.  Refuse exactly as `agent-shell-submit'
-         ;; does while the session is coming up: the shell is not ready,
-         ;; and waiting is the answer to both.
+         ;; is no turn to cancel.  Input can be queued until startup ends.
          ;;
          ;; Shutting the client down here instead left the shell with
          ;; neither a client nor a session, and nothing re-bootstraps one,
@@ -2701,7 +2694,6 @@ Flow:
     (unless (derived-mode-p 'agent-shell-mode)
       (error "Not in a shell"))
     (when (and command
-               (not (eq agent-shell-session-strategy 'new-deferred))
                (not (map-nested-elt (agent-shell--state) '(:session :id))))
       (user-error "Starting agent, please wait"))
     (map-put! (agent-shell--state) :request-count
@@ -2808,9 +2800,10 @@ Flow:
              ;; `setf' inserts the key into state made before it existed.
              (setf (map-elt agent-shell--state :init-finished) t)
              (agent-shell--emit-event :event 'init-finished))
-           ;; Send ACP prompt request
-           (when (and command (not (string-empty-p (string-trim command))))
-             (agent-shell--send-command :prompt command :shell-buffer shell-buffer))))))
+           (if command
+               (unless (string-empty-p (string-trim command))
+                 (agent-shell--send-command :prompt command :shell-buffer shell-buffer))
+             (agent-shell--prompt-queue-process-next))))))
 
 (cl-defun agent-shell--on-error (&key state acp-error)
   "Handle ACP-ERROR with SHELL an STATE."
@@ -5301,12 +5294,10 @@ variable (see makunbound)"))
       ;; (see `agent-shell--validate-session-strategy'), but the branches
       ;; were left behind temporarily.  Sites to clean up: this branch,
       ;; the `restart' branch (`strategy' let-binding),
-      ;; the prompt-readiness guards in `agent-shell--handle' and
-      ;; `agent-shell-viewport-compose-send', `agent-shell--shell-buffer'
-      ;; (the deferred picker), `agent-shell--initiate-session-list-and-load',
+      ;; `agent-shell--shell-buffer' (the deferred picker),
+      ;; `agent-shell--initiate-session-list-and-load',
       ;; the `session-strategy' check in `agent-shell--start-acp-session',
-      ;; the `prompt'/`new'/`latest' subscriptions below, and
-      ;; `agent-shell--insert-to-shell-buffer'.
+      ;; and the `prompt'/`new'/`latest' subscriptions below.
       ;; Show the prompt immediately, before bootstrapping, so shell
       ;; always has a prompt to type into regardless of strategy.  It then
       ;; stays for the rest of the session, not just until the first
@@ -10501,41 +10492,46 @@ Returns an alist with insertion details or nil otherwise:
     (user-error "No text provided to insert"))
   (let* ((shell-buffer (or shell-buffer
                            (agent-shell--shell-buffer :no-create t))))
-    (if (with-current-buffer shell-buffer
-          (or (map-nested-elt agent-shell--state '(:session :id))
-              (eq agent-shell-session-strategy 'new-deferred)
-              ;; Inserting text now is also possible if there's
-              ;; a prompt available to insert text into.
-              (and (not submit) comint-last-prompt)))
-        ;; Displaying before with-current-buffer below
-        ;; ensures window is selected, thus window-point
-        ;; is also updated after insertion.
-        (let* ((inhibit-read-only t)
-               (insert-start (if no-focus
-                                 (with-current-buffer shell-buffer
-                                   (point-max))
-                               (agent-shell--display-buffer shell-buffer)
-                               (point-max)))
-               (insert-end nil))
-          (with-current-buffer shell-buffer
-            (when (and (shell-maker-busy)
-                       (or submit (not (agent-shell--prompt-input-start))))
-              (user-error "Busy, try later"))
-            (save-excursion
-              (save-restriction
-                (goto-char insert-start)
-                (unless submit
-                  (insert "\n\n"))
-                (insert text)
-                (setq insert-end (point))
-                (narrow-to-region insert-start insert-end)
-                ;; TODO: Render prompt markdown?
-                ))
-            (when submit
-              (shell-maker-submit)))
-          `((:buffer . ,shell-buffer)
-            (:start . ,insert-start)
-            (:end . ,insert-end)))
+    (cond
+     ((and submit (with-current-buffer shell-buffer (not (agent-shell-initialized-p))))
+      (with-current-buffer shell-buffer
+        (agent-shell--prompt-queue-enqueue :prompt text))
+      nil)
+     ((with-current-buffer shell-buffer
+        (or (map-nested-elt agent-shell--state '(:session :id))
+            ;; Inserting text now is also possible if there's
+            ;; a prompt available to insert text into.
+            (and (not submit) comint-last-prompt)))
+      ;; Displaying before with-current-buffer below
+      ;; ensures window is selected, thus window-point
+      ;; is also updated after insertion.
+      (let* ((inhibit-read-only t)
+             (insert-start (if no-focus
+                               (with-current-buffer shell-buffer
+                                 (point-max))
+                             (agent-shell--display-buffer shell-buffer)
+                             (point-max)))
+             (insert-end nil))
+        (with-current-buffer shell-buffer
+          (when (and (shell-maker-busy)
+                     (or submit (not (agent-shell--prompt-input-start))))
+            (user-error "Busy, try later"))
+          (save-excursion
+            (save-restriction
+              (goto-char insert-start)
+              (unless submit
+                (insert "\n\n"))
+              (insert text)
+              (setq insert-end (point))
+              (narrow-to-region insert-start insert-end)
+              ;; TODO: Render prompt markdown?
+              ))
+          (when submit
+            (shell-maker-submit)))
+        `((:buffer . ,shell-buffer)
+          (:start . ,insert-start)
+          (:end . ,insert-end))))
+     (t
       (let ((token nil))
         (setq token
               (agent-shell-subscribe-to
@@ -10546,7 +10542,7 @@ Returns an alist with insertion details or nil otherwise:
                            (agent-shell--insert-to-shell-buffer
                             :text text :submit submit
                             :no-focus no-focus :shell-buffer shell-buffer))))
-        nil))))
+        nil)))))
 
 (cl-defun agent-shell-insert (&key text submit no-focus shell-buffer)
   "Insert TEXT into the agent shell at `point-max'.
