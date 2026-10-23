@@ -7451,6 +7451,61 @@ A handled notification skips core but still records activity."
                      ("Claude> " "[steer] steered")
                      ("Claude> " "draft"))))))
 
+(ert-deftest agent-shell--prompt-runs-resume-test ()
+  "`agent-shell--prompt-runs' resumes from the current turn.
+A busy shell streams the response between the submitted prompt and the
+live one below it: that keeps the cache, and the result matches a full
+scan."
+  (with-temp-buffer
+    (let ((prompt (propertize "Claude> " 'font-lock-face
+                              'comint-highlight-prompt)))
+      (insert prompt "hello\nhi\n" prompt "again\n")
+      (let ((response (point)))
+        (insert "\n" prompt)
+        (agent-shell--prompt-runs)
+        (let ((floor agent-shell--prompt-runs-floor))
+          (should (= floor (car (nth 1 (agent-shell--prompt-runs)))))
+          (goto-char response)
+          (insert "sure, streaming")
+          (should (= floor agent-shell--prompt-runs-floor))
+          (let ((runs (agent-shell--prompt-runs)))
+            (should (= 3 (length runs)))
+            (setq agent-shell--prompt-runs-floor nil)
+            (should (equal runs (agent-shell--prompt-runs)))))))))
+
+(ert-deftest agent-shell--prompt-runs-invalidate-test ()
+  "A change at or before the cached prompt run forces a full rescan.
+For example, `clear' erases the buffer, and a session reload rewrites
+earlier turns."
+  (with-temp-buffer
+    (let ((prompt (propertize "Claude> " 'font-lock-face
+                              'comint-highlight-prompt)))
+      (insert prompt "hello\nhi\n" prompt "again\n" prompt)
+      (agent-shell--prompt-runs)
+      (goto-char (point-min))
+      (insert prompt "first\n")
+      (should-not agent-shell--prompt-runs-floor)
+      (should (= 4 (length (agent-shell--prompt-runs))))
+      (erase-buffer)
+      (should-not (agent-shell--prompt-runs))
+      (insert prompt)
+      (should (equal (list (cons (point-min) (point-max)))
+                     (agent-shell--prompt-runs))))))
+
+(ert-deftest agent-shell--prompt-runs-narrowed-test ()
+  "A narrowed scan sees only the accessible region and keeps the cache."
+  (with-temp-buffer
+    (let ((prompt (propertize "Claude> " 'font-lock-face
+                              'comint-highlight-prompt)))
+      (insert prompt "one\n" prompt "two\n" prompt)
+      (let ((runs (agent-shell--prompt-runs))
+            (floor agent-shell--prompt-runs-floor))
+        (save-restriction
+          (narrow-to-region (cdr (nth 1 runs)) (point-max))
+          (should (equal (last runs) (agent-shell--prompt-runs))))
+        (should (= floor agent-shell--prompt-runs-floor))
+        (should (equal runs (agent-shell--prompt-runs)))))))
+
 (ert-deftest agent-shell--live-input-prompt-p-narrowed-above-prompt-test ()
   "Guard against inverted `text-property-any' bounds while narrowed.
 Regression for session restore inserting the truncated-history note

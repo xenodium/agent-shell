@@ -179,6 +179,55 @@ while \\='default returns nil."
     (or (memq 'comint-highlight-prompt faces)
         (memq 'agent-shell-prompt faces))))
 
+(defvar-local agent-shell--prompt-runs-floor nil
+  "Start of the next-to-last prompt run found, or nil to rescan everything.
+Text before it is unchanged since that scan, so
+`agent-shell--prompt-runs' resumes from here.")
+
+(defvar-local agent-shell--prompt-runs-cache nil
+  "Prompt runs before `agent-shell--prompt-runs-floor', in buffer order.")
+
+(defun agent-shell--prompt-runs ()
+  "Return each prompt-face run in the current buffer as a list of (BEG . END).
+In buffer order.
+
+Resumes from the next-to-last prompt run found by the previous call: a
+busy shell streams the response between the submitted prompt and the
+live one below it, leaving earlier turns alone.  A change at or before
+that run resets the scan (see `agent-shell--invalidate-prompt-runs').
+A narrowed buffer is scanned in full and leaves the cache alone."
+  (let* ((narrowed (buffer-narrowed-p))
+         (floor (and (not narrowed) agent-shell--prompt-runs-floor)))
+    (unless (and floor
+                 (<= floor (point-max))
+                 (agent-shell--prompt-face-p
+                  (get-text-property floor 'font-lock-face)))
+      (setq floor nil))
+    (let ((runs (and floor (reverse agent-shell--prompt-runs-cache)))
+          (pos (or floor (point-min))))
+      (while (< pos (point-max))
+        (let ((run-end (or (next-single-property-change pos 'font-lock-face)
+                           (point-max))))
+          (when (agent-shell--prompt-face-p
+                 (get-text-property pos 'font-lock-face))
+            (push (cons pos run-end) runs))
+          (setq pos run-end)))
+      (unless narrowed
+        (let ((kept (or (cdr runs) runs)))
+          (setq agent-shell--prompt-runs-floor (caar kept)
+                agent-shell--prompt-runs-cache (reverse (cdr kept))))
+        (add-hook 'after-change-functions
+                  #'agent-shell--invalidate-prompt-runs nil t))
+      (nreverse runs))))
+
+(defun agent-shell--invalidate-prompt-runs (beg _end _length)
+  "Drop the cached prompt runs when a change at BEG reaches them.
+Added to `after-change-functions'."
+  (when (and agent-shell--prompt-runs-floor
+             (<= beg agent-shell--prompt-runs-floor))
+    (setq agent-shell--prompt-runs-floor nil
+          agent-shell--prompt-runs-cache nil)))
+
 (defun agent-shell-prompt-ranges ()
   "Return the range of each prompt in the current buffer, in buffer order.
 
@@ -210,16 +259,7 @@ returns:
     (:input-start . 9) (:input-end . 12))
    ((:prompt-start . 45) (:prompt-end . 53)
     (:input-start . 53) (:input-end . 58)))"
-  (let ((runs '())
-        (pos (point-min)))
-    (while (< pos (point-max))
-      (let ((run-end (or (next-single-property-change pos 'font-lock-face)
-                         (point-max))))
-        (when (agent-shell--prompt-face-p
-               (get-text-property pos 'font-lock-face))
-          (push (cons pos run-end) runs))
-        (setq pos run-end)))
-    (setq runs (nreverse runs))
+  (let ((runs (agent-shell--prompt-runs)))
     (seq-mapn
      (lambda (run next)
        (let* ((limit (or (car next) (point-max)))
