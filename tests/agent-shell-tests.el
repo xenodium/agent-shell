@@ -555,6 +555,197 @@ image-rendering path as `![alt](uri)'."
            "first\n\nsecond"))
   (should (equal (agent-shell--tool-call-update-output-markdown nil) "")))
 
+(ert-deftest agent-shell-tool-output-deltas-survive-completion-test ()
+  "Keep interleaved command output in both fragments and the transcript."
+  (dolist (status '("completed" "failed"))
+    (let ((state (agent-shell--make-state))
+          fragments transcripts)
+      (cl-letf (((symbol-function 'agent-shell--update-fragment)
+                 (lambda (&rest args)
+                   (setf (map-elt fragments (plist-get args :block-id))
+                         (plist-get args :body))))
+                ((symbol-function 'agent-shell--append-transcript)
+                 (lambda (&rest args) (push (plist-get args :text) transcripts)))
+                ((symbol-function 'agent-shell--refresh-activity-group-header) #'ignore)
+                ((symbol-function 'agent-shell--sync-activity-group-fold) #'ignore)
+                ((symbol-function 'agent-shell--delete-fragment) #'ignore)
+                ((symbol-function 'agent-shell--cancel-idle-timer) #'ignore)
+                ((symbol-function 'agent-shell--emit-event) #'ignore)
+                ((symbol-function 'agent-shell-make-tool-call-label)
+                 (lambda (&rest _) '((:status . "done") (:title . "command")))))
+        (dolist (update
+                 `(((toolCallId . "one") (status . "in_progress")
+                    (rawInput (command . "printf one"))
+                    (_meta (terminal_output_delta (terminal_id . "one") (data . "first\n"))))
+                   ((toolCallId . "two") (status . "in_progress")
+                    (_meta (terminal_output_delta (terminal_id . "two") (data . "other\n"))))
+                   ((toolCallId . "one")
+                    (_meta (terminal_output_delta (terminal_id . "one") (data . "second\n"))
+                           (terminal_exit (terminal_id . "one") (exit_code . 0))))
+                   ((toolCallId . "one") (status . ,status))
+                   ((toolCallId . "two") (status . "completed"))))
+          (agent-shell--on-notification
+           :state state
+           :acp-notification
+           `((method . "session/update")
+             (params (update (sessionUpdate . "tool_call_update") ,@update)))))
+        (should (equal (map-elt fragments "one")
+                       "```console\nprintf one\n```\n\nfirst\nsecond"))
+        (should (equal (map-elt fragments "two") "other"))
+        (should (string-search "first\nsecond" (seq-elt transcripts 1)))
+        (should (string-search "other" (seq-first transcripts)))
+        ;; A later metadata-only update must not erase the completed output.
+        (agent-shell--on-notification
+         :state state
+         :acp-notification
+         '((method . "session/update")
+           (params (update (sessionUpdate . "tool_call_update")
+                           (toolCallId . "one") (title . "Renamed command")))))
+        (should (string-suffix-p "first\nsecond" (map-elt fragments "one")))))))
+
+(ert-deftest agent-shell-tool-output-completed-delta-test ()
+  "Display output delivered only with a command's completion."
+  (let ((state (agent-shell--make-state))
+        chat transcript)
+    (cl-letf (((symbol-function 'agent-shell--update-fragment)
+               (lambda (&rest args) (setq chat (plist-get args :body))))
+              ((symbol-function 'agent-shell--append-transcript)
+               (lambda (&rest args) (setq transcript (plist-get args :text))))
+              ((symbol-function 'agent-shell--refresh-activity-group-header) #'ignore)
+              ((symbol-function 'agent-shell--sync-activity-group-fold) #'ignore)
+              ((symbol-function 'agent-shell--delete-fragment) #'ignore)
+              ((symbol-function 'agent-shell--cancel-idle-timer) #'ignore)
+              ((symbol-function 'agent-shell--emit-event) #'ignore)
+              ((symbol-function 'agent-shell-make-tool-call-label)
+               (lambda (&rest _) '((:status . "done") (:title . "command")))))
+      (agent-shell--on-notification
+       :state state
+       :acp-notification
+       '((method . "session/update")
+         (params (update (sessionUpdate . "tool_call_update")
+                         (toolCallId . "one") (status . "completed")
+                         (_meta (terminal_output_delta (terminal_id . "one")
+                                                       (data . "visible output\n"))
+                                (terminal_exit (terminal_id . "one") (exit_code . 0)))))))
+      (should (equal chat "visible output"))
+      (should (string-search "visible output" transcript)))))
+
+(ert-deftest agent-shell-tool-output-snapshots-replace-deltas-test ()
+  "Prefer complete output snapshots without duplicating streamed text."
+  (let ((delta '((_meta (terminal_output_delta (data . "again\n"))))))
+    (should (equal (agent-shell--tool-call-update-output-markdown delta "again\n")
+                   "again\nagain\n"))
+    (should (equal
+             (agent-shell--tool-call-update-output-markdown
+              (append '((rawOutput (formatted_output . "complete\n"))) delta)
+              "partial\n")
+             "complete\n"))
+    (should (equal
+             (agent-shell--tool-call-update-output-markdown
+              (append '((content . [((type . "content")
+                                     (content (type . "text") (text . "snapshot")))])
+                        (rawOutput (formatted_output . "raw"))) delta)
+              "partial\n")
+             "snapshot")))
+  (should (equal (agent-shell--tool-call-update-output-markdown
+                  '((rawOutput (formatted_output . ""))) "old")
+                 ""))
+  (should (equal (agent-shell--tool-call-update-output-markdown
+                  '((_meta (terminal_output_delta (data . 42)))) "kept")
+                 "kept"))
+  (should (equal (agent-shell--tool-call-update-output-markdown nil "kept") "kept")))
+
+(ert-deftest agent-shell-tool-output-deltas-expand-and-navigate-test ()
+  "Expand and read streamed output from live updates and restored history."
+  (dolist (replay '(nil t))
+    (save-window-excursion
+      (with-temp-buffer
+        (setq major-mode 'agent-shell-mode)
+        (use-local-map agent-shell-mode-map)
+        (switch-to-buffer (current-buffer))
+        (setq-local agent-shell--state
+                    (agent-shell--make-state :buffer (current-buffer)
+                                             :agent-config '((:shell-prompt . "Test> "))))
+        (when replay
+          (map-put! agent-shell--state :supports-session-load t)
+          (map-put! agent-shell--state :pending-restore (agent-shell--make-pending-restore)))
+        (setq-local shell-maker--config
+                    (agent-shell--make-shell-maker-config :prompt "Test> "))
+        (setq-local comint-last-output-start (copy-marker (point)))
+        (insert (propertize "Test> " 'field 'prompt))
+        (setq-local comint-last-prompt (cons (copy-marker 1) (copy-marker (point))))
+        (let ((agent-shell-tool-use-expand-by-default nil)
+              (agent-shell-activity-group-expand-by-default t)
+              (process (make-pipe-process :name "agent-shell-output-test"
+                                          :buffer (current-buffer) :noquery t
+                                          :sentinel #'ignore)))
+          (unwind-protect
+              (cl-letf (((symbol-function 'shell-maker--process) (lambda () process))
+                        ((symbol-function 'agent-shell--append-transcript) #'ignore)
+                        ((symbol-function 'agent-shell--create-bootstrapping-placeholders) #'ignore))
+                (dolist (update
+                         '(((status . "in_progress") (kind . "execute")
+                            (title . "Run command") (rawInput (command . "printf result"))
+                            (_meta (terminal_output_delta (data . "first output line\n"))))
+                           ((status . "completed")
+                            (_meta (terminal_output_delta (data . "last output line\n"))))))
+                  (agent-shell--on-notification
+                   :state agent-shell--state
+                   :acp-notification
+                   `((method . "session/update")
+                     (params (update (sessionUpdate . "tool_call_update")
+                                     (toolCallId . "command") ,@update)))))
+                (when replay (agent-shell--render-pending-restore agent-shell--state))
+                (goto-char (point-min))
+                (search-forward "first output line")
+                (let* ((output (match-beginning 0))
+                       (block (agent-shell-ui--block-range :position output)))
+                  (should (invisible-p output))
+                  (goto-char (map-elt block :start))
+                  (should (eq (key-binding (kbd "RET")) #'agent-shell-ui-toggle-fragment))
+                  (call-interactively (key-binding (kbd "RET")))
+                  (should-not (invisible-p output))
+                  (redisplay t)
+                  (when (display-graphic-p)
+                    (should (pos-visible-in-window-p output)))
+                  (let ((moves 0))
+                    (while (and (< (point) output) (< moves 12))
+                      (call-interactively #'next-line)
+                      (setq moves (1+ moves)))
+                    (should (string-search "first output line"
+                                           (buffer-substring-no-properties
+                                            (line-beginning-position) (line-end-position)))))
+                  (call-interactively #'next-line)
+                  (should (string-search "last output line"
+                                         (buffer-substring-no-properties
+                                          (line-beginning-position) (line-end-position))))))
+            (delete-process process)))))))
+
+(ert-deftest agent-shell-tool-output-turn-end-clears-accumulator-test ()
+  "Retain displayed output while releasing state after completion or cancel."
+  (dolist (reason '("end_turn" "cancelled"))
+    (agent-shell-tests--with-persistent-prompt-shell
+     (lambda ()
+       (let ((agent-shell-show-busy-indicator nil)
+             (agent-shell-show-usage-at-turn-end nil)
+             on-success)
+         (cl-letf (((symbol-function 'agent-shell--send-request)
+                    (lambda (&rest args) (setq on-success (plist-get args :on-success))))
+                   ((symbol-function 'agent-shell--prompt-queue-process-next) #'ignore)
+                   ((symbol-function 'shell-maker--write-input-ring-history) #'ignore))
+           (agent-shell--send-command :prompt "Run command" :shell-buffer (current-buffer))
+           (agent-shell--on-notification
+            :state agent-shell--state
+            :acp-notification
+            '((method . "session/update")
+              (params (update (sessionUpdate . "tool_call_update")
+                              (toolCallId . "one") (status . "in_progress")
+                              (_meta (terminal_output_delta (data . "Retained output")))))))
+           (should (map-elt agent-shell--state :tool-calls))
+           (funcall on-success `((stopReason . ,reason)))
+           (should-not (map-elt agent-shell--state :tool-calls))
+           (should (string-search "Retained output" (buffer-string)))))))))
+
 (ert-deftest agent-shell--truncate-tool-output-lines-test ()
   "Keep short lines intact and shorten only long tool output lines."
   (let* ((long-line (concat (make-string agent-shell--tool-output-max-line-length ?a)

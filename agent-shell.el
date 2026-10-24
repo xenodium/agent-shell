@@ -1306,7 +1306,7 @@ OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
         (cons :expanded-activity-group nil)
         (cons :request-count 0)
         (cons :last-activity-time nil)
-        (cons :tool-calls nil)
+        (cons :tool-calls nil) ; Each call retains :output-markdown for output deltas.
         (cons :elicitations nil)
         (cons :available-commands nil)
         (cons :available-modes nil)
@@ -3645,7 +3645,12 @@ Clears STATE's `:expanded-activity-group'."
             state
             (map-nested-elt acp-notification '(params update toolCallId))
             (append (list (cons :status (map-nested-elt acp-notification '(params update status)))
-                          (cons :content (map-nested-elt acp-notification '(params update content))))
+                          (cons :content (map-nested-elt acp-notification '(params update content)))
+                          (cons :output-markdown
+                                (agent-shell--tool-call-update-output-markdown
+                                 (map-nested-elt acp-notification '(params update))
+                                 (map-nested-elt state
+                                                 `(:tool-calls ,(map-nested-elt acp-notification '(params update toolCallId)) :output-markdown)))))
                     ;; The initial tool_call notification often has a
                     ;; generic title (eg. "grep", "bash", "Read").
                     ;; The tool_call_update may have a more descriptive
@@ -3696,8 +3701,8 @@ Clears STATE's `:expanded-activity-group'."
            (let* ((diffs (map-nested-elt state `(:tool-calls ,(map-nested-elt acp-notification '(params update toolCallId)) :diffs)))
                   (output (concat
                            "\n\n"
-                           (agent-shell--tool-call-update-output-markdown
-                            (map-nested-elt acp-notification '(params update)))
+                           (map-nested-elt state
+                                           `(:tool-calls ,(map-nested-elt acp-notification '(params update toolCallId)) :output-markdown))
                            "\n\n"))
                   (diff-text (agent-shell--format-diffs-as-text diffs))
                   (body-text (agent-shell--truncate-tool-output-lines
@@ -9038,14 +9043,21 @@ end, with an omitted-character count between them.  For example, a
                (split-string output "\n")
                "\n")))
 
-(defun agent-shell--tool-call-update-output-markdown (acp-update)
+(defun agent-shell--tool-call-update-output-markdown (acp-update &optional previous-output)
   "Return markdown output for ACP-UPDATE, a `tool_call_update' update.
 
 Renders the update's `content' blocks (where the ACP spec carries tool
 output) via `agent-shell--content-block-to-markdown'.  Falls back to
-`rawOutput.formatted_output' when there are no content blocks.
+`rawOutput.formatted_output' when the rendered content is empty.
 
-Returns an empty string when neither carries output.
+Otherwise append `_meta.terminal_output_delta.data' to PREVIOUS-OUTPUT.
+These Codex output chunks can arrive before completion or with the final
+update.  Complete content or raw output replaces the accumulated output;
+a status-only update preserves it.  PREVIOUS-OUTPUT belongs to the same
+tool call and is nil before its first output update.
+
+Returns an empty string when neither the update nor PREVIOUS-OUTPUT
+carries output.
 
 Examples:
 
@@ -9056,7 +9068,11 @@ Examples:
 
   (agent-shell--tool-call-update-output-markdown
    \\='((rawOutput . ((formatted_output . \"total 0\\n\")))))
-  => \"total 0\\n\""
+  => \"total 0\\n\"
+
+  (agent-shell--tool-call-update-output-markdown
+   \\='((_meta (terminal_output_delta (data . \"world\\n\")))) \"hello\\n\")
+  => \"hello\\nworld\\n\""
   (let ((content (mapconcat #'agent-shell--content-block-to-markdown
                             (seq-keep (lambda (item) (map-elt item 'content))
                                       (map-elt acp-update 'content))
@@ -9065,12 +9081,14 @@ Examples:
         ;; and leaves content empty, so completed shell command blocks
         ;; render blank without this fallback.
         ;; See https://github.com/xenodium/agent-shell/pull/763
-        (raw-output (map-nested-elt acp-update '(rawOutput formatted_output))))
+        (raw-output (map-nested-elt acp-update '(rawOutput formatted_output)))
+        (delta (map-nested-elt acp-update '(_meta terminal_output_delta data))))
     (cond ((not (string-empty-p content)) content)
           ;; `rawOutput' is agent-defined free-form JSON, so only
           ;; render formatted_output when it's actually a string.
           ((stringp raw-output) raw-output)
-          (t ""))))
+          ((stringp delta) (concat previous-output delta))
+          (t (or previous-output "")))))
 
 (defun agent-shell--content-block-to-markdown (acp-content-block)
   "Return markdown for a `session/update' ACP-CONTENT-BLOCK.
