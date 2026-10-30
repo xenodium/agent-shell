@@ -21,7 +21,7 @@
 ;;; Commentary:
 ;;
 ;; Queue prompts while an `agent-shell' is busy and manage the pending
-;; queue (submit, view, resume, remove).
+;; queue (submit, view, resume, remove, pop back to the prompt).
 ;;
 ;; Report issues at https://github.com/xenodium/agent-shell/issues
 ;;
@@ -177,6 +177,7 @@ because the user has just seen that list elsewhere."
                      (concat (agent-shell--prompt-queue-summary) "\n\n"))
                    "Resume: M-x agent-shell-prompt-queue-resume
 Remove: M-x agent-shell-prompt-queue-remove
+Edit: M-x agent-shell-prompt-queue-pop
 ")
      :create-new t
      :above-last-prompt (not (shell-maker-busy)))))
@@ -481,6 +482,70 @@ either remove all or select a specific prompt to remove."
                               (length (map-elt agent-shell--state :pending-prompts))))
         (map-put! agent-shell--state :pending-prompts nil)
         (message "Removed all pending prompts")))))
+
+(defun agent-shell-prompt-queue-pop (&optional pop-index)
+  "Move a pending prompt out of the queue and back into the shell prompt.
+
+Takes the most recently queued prompt, or the one at POP-INDEX, off the
+queue and puts it at the live prompt for editing, without submitting it.
+The running turn is left alone.  Useful when a prompt was queued by
+mistake (say, meant to be steered with \\[agent-shell-submit-override]).
+
+With \\[universal-argument], pick which pending prompt to move.
+
+Acts on the current project's shell, resolving it via
+`agent-shell--shell-buffer' so this works even when invoked outside a
+shell buffer.  Text already typed at the prompt is kept, below the
+moved prompt.
+
+For example, given:
+
+  :pending-prompts (\"just the filenames\" \"sorted by size\")
+
+and the shell ending
+
+  Claude> no paths
+
+leaves :pending-prompts (\"just the filenames\") and the shell ending
+
+  Claude> sorted by size
+
+  no paths"
+  (interactive
+   (with-current-buffer (agent-shell--shell-buffer :no-create t)
+     (agent-shell--prompt-queue-migrate)
+     (when (seq-empty-p (map-elt agent-shell--state :pending-prompts))
+       (user-error "No pending prompts"))
+     (when current-prefix-arg
+       (let ((choices (seq-map-indexed
+                       (lambda (prompt idx)
+                         (cons (format "%d: %s" (1+ idx)
+                                       (truncate-string-to-width
+                                        (substring-no-properties prompt) 60 nil nil "..."))
+                               idx))
+                       (map-elt agent-shell--state :pending-prompts))))
+         (list (cdr (assoc (completing-read "Move to prompt: " choices nil t)
+                           choices)))))))
+  (with-current-buffer (agent-shell--shell-buffer :no-create t)
+    (agent-shell--prompt-queue-migrate)
+    (let* ((pending (map-elt agent-shell--state :pending-prompts))
+           (pop-index (or pop-index (1- (seq-length pending)))))
+      (when (seq-empty-p pending)
+        (user-error "No pending prompts"))
+      (unless (agent-shell--prompt-input-start)
+        (user-error "No prompt to move it to"))
+      (let ((draft (agent-shell--take-prompt-input)))
+        (map-put! agent-shell--state :pending-prompts
+                  (append (seq-take pending pop-index)
+                          (seq-drop pending (1+ pop-index))))
+        (goto-char (point-max))
+        (insert (nth pop-index pending))
+        (when draft
+          (insert "\n\n" draft)))
+      (agent-shell--display-buffer (current-buffer))
+      (goto-char (point-max))
+      (message "Moved to prompt (%d remaining)"
+               (seq-length (map-elt agent-shell--state :pending-prompts))))))
 
 (defun agent-shell--prompt-queue-confirm-kill-buffer ()
   "Return non-nil if the current shell may be killed.

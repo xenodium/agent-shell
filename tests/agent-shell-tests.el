@@ -8014,6 +8014,61 @@ and its value returned."
             :busy t)
            (list "just the filenames" '("sorted by size")))))
 
+(ert-deftest agent-shell-prompt-queue-pop-test ()
+  "Popping moves the latest queued prompt back into the prompt, unsubmitted.
+
+What was typed at the prompt meanwhile is kept below it, and the other
+queued prompts stay queued."
+  (should (equal
+           (agent-shell-tests--with-persistent-prompt-shell
+            (lambda ()
+              (insert "just the filenames")
+              (agent-shell-submit)
+              (insert "sorted by size")
+              (agent-shell-submit)
+              (insert "no paths")
+              (cl-letf (((symbol-function 'agent-shell--shell-buffer)
+                         (lambda (&rest _) (current-buffer)))
+                        ((symbol-function 'agent-shell--display-buffer) #'ignore))
+                (agent-shell-prompt-queue-pop))
+              (list (map-elt agent-shell--state :pending-prompts)
+                    (agent-shell--prompt-input)))
+            :busy t)
+           (list '("just the filenames")
+                 "sorted by size\n\nno paths"))))
+
+(ert-deftest agent-shell-prompt-queue-pop-index-test ()
+  "Popping a given index takes that prompt, leaving the rest in order."
+  (should (equal
+           (agent-shell-tests--with-persistent-prompt-shell
+            (lambda ()
+              (insert "just the filenames")
+              (agent-shell-submit)
+              (insert "sorted by size")
+              (agent-shell-submit)
+              (cl-letf (((symbol-function 'agent-shell--shell-buffer)
+                         (lambda (&rest _) (current-buffer)))
+                        ((symbol-function 'agent-shell--display-buffer) #'ignore))
+                (agent-shell-prompt-queue-pop 0))
+              (list (map-elt agent-shell--state :pending-prompts)
+                    (agent-shell--prompt-input)))
+            :busy t)
+           (list '("sorted by size")
+                 "just the filenames"))))
+
+(ert-deftest agent-shell-prompt-queue-pop-empty-test ()
+  "Popping with nothing queued refuses and leaves the prompt alone."
+  (should (equal
+           (agent-shell-tests--with-persistent-prompt-shell
+            (lambda ()
+              (insert "no paths")
+              (cl-letf (((symbol-function 'agent-shell--shell-buffer)
+                         (lambda (&rest _) (current-buffer))))
+                (should-error (agent-shell-prompt-queue-pop) :type 'user-error))
+              (agent-shell--prompt-input))
+            :busy t)
+           "no paths")))
+
 (ert-deftest agent-shell--prompt-queue-summary-test ()
   "Pending prompts are listed by first line, numbered, under their count."
   (let ((agent-shell--state (list (cons :pending-prompts
