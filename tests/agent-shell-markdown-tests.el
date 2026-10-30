@@ -4465,6 +4465,20 @@ plainer `#L10-24' both have to land."
           (should-not (agent-shell-markdown--parse-local-link (concat file "#L2xy"))))
       (delete-file file))))
 
+(ert-deftest agent-shell-markdown--parse-local-link-remote-url-test ()
+  "Test `agent-shell-markdown--parse-local-link' leaves remote URLs alone.
+
+With `url-handler-mode' on, `file-exists-p' on an https URL makes a
+network request, so remote URLs must be rejected before it runs."
+  (cl-letf (((symbol-function 'file-exists-p)
+             (lambda (file)
+               (error "Unexpected `file-exists-p' on %s" file))))
+    (should-not (agent-shell-markdown--parse-local-link
+                 "https://gitlab.com/group/project/-/merge_requests/7338"))
+    (should-not (agent-shell-markdown--parse-local-link "http://example.com/foo.el#L10"))
+    (should-not (agent-shell-markdown--parse-local-link "ftp://example.com/foo.el:3"))
+    (should-not (agent-shell-markdown--parse-local-link "git+ssh://example.com/repo"))))
+
 (ert-deftest agent-shell-markdown--open-local-link-selects-range-test ()
   "Test `agent-shell-markdown--open-local-link' selects a linked range.
 
