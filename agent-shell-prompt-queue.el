@@ -43,6 +43,7 @@
 (declare-function agent-shell--state "agent-shell")
 (declare-function agent-shell--echo "agent-shell")
 (declare-function agent-shell-status "agent-shell")
+(declare-function agent-shell-initialized-p "agent-shell")
 (declare-function agent-shell-steering-supported-p "agent-shell")
 (declare-function agent-shell-experimental--send-steering "agent-shell-experimental")
 (declare-function agent-shell-completion--setup-minibuffer "agent-shell-completion")
@@ -107,25 +108,31 @@ and leaves :pending-prompts empty.  With merging off, submits
   (unless (derived-mode-p 'agent-shell-mode)
     (error "Not in a shell"))
   (agent-shell--prompt-queue-migrate)
-  (when-let* ((pending (map-elt agent-shell--state :pending-prompts))
+  (when-let* (((agent-shell-initialized-p))
+              (pending (map-elt agent-shell--state :pending-prompts))
               (count (if agent-shell-prompt-queue-merge
                          (seq-length pending)
                        1)))
     (map-put! agent-shell--state :pending-prompts (seq-drop pending count))
-    ;; The turn just ended, so the persistent prompt may hold text the user
-    ;; started typing and has not submitted.  Submitting the queued prompt
-    ;; inserts at `point-max', which would put it ahead of that draft and
-    ;; send the two as one message.  Set the draft aside and type it back
-    ;; into the prompt the submission leaves behind.
-    (let ((draft (and agent-shell-persistent-prompt-enabled
-                      (agent-shell--take-prompt-input))))
-      (agent-shell--insert-to-shell-buffer
-       :text (string-join (seq-take pending count) "\n\n")
-       :submit t
-       :no-focus t)
+    ;; Keep an unsubmitted draft out of the queued turn.  Without a
+    ;; persistent prompt, it must wait until the turn finishes.
+    (let ((draft (agent-shell--take-prompt-input))
+          restore)
+      (setq restore
+            (lambda ()
+              (when (and draft (agent-shell--prompt-input-start))
+                (remove-hook 'shell-maker-finish-output-hook restore t)
+                (goto-char (point-max))
+                (insert draft)
+                (setq draft nil))))
       (when draft
-        (goto-char (point-max))
-        (insert draft)))))
+        (add-hook 'shell-maker-finish-output-hook restore nil t))
+      (unwind-protect
+          (agent-shell--insert-to-shell-buffer
+           :text (string-join (seq-take pending count) "\n\n")
+           :submit t
+           :no-focus t)
+        (funcall restore)))))
 
 (defun agent-shell--prompt-queue-summary ()
   "Return the pending prompts as a numbered list, headed by their count.
@@ -243,7 +250,8 @@ as \"active\" and the queued prompts, PROMPT included, as \"queued\"."
             (append (map-elt agent-shell--state :pending-prompts)
                     (list prompt)))
   (agent-shell--prompt-queue-echo
-   :active-prompt (when (and (bound-and-true-p comint-input-ring)
+   :active-prompt (when (and (agent-shell-initialized-p)
+                             (bound-and-true-p comint-input-ring)
                              (not (ring-empty-p comint-input-ring)))
                     (ring-ref comint-input-ring 0))
    :pending-prompts (map-elt agent-shell--state :pending-prompts)))
@@ -390,15 +398,15 @@ agent may drop in order to change course."
   "Submit PROMPT into the running turn, however the user has asked for.
 
 Routes through `agent-shell-busy-submit-override-function' when OVERRIDE,
-otherwise `agent-shell-busy-submit-default-function'.  Callers check that
-a turn is running: with none, there is nothing to queue behind or steer
-into, and the prompt is just submitted.
+otherwise `agent-shell-busy-submit-default-function'.  While the session
+is starting, always queue PROMPT until initialization succeeds.  Callers
+check that the shell is starting or a turn is running.
 
 Signals whatever the chosen function signals, so callers holding text the
 user typed can put it back."
-  (funcall (if override
-               agent-shell-busy-submit-override-function
-             agent-shell-busy-submit-default-function)
+  (funcall (cond ((not (agent-shell-initialized-p)) #'agent-shell-busy-submit-queue)
+                 (override agent-shell-busy-submit-override-function)
+                 (t agent-shell-busy-submit-default-function))
            prompt))
 
 (defun agent-shell-prompt-queue (prompt)
@@ -407,8 +415,9 @@ user typed can put it back."
 Read PROMPT from the minibuffer and act on the current project's shell,
 resolving it via `agent-shell--shell-buffer' so this works even when
 invoked outside a shell buffer.  If the shell is busy, add PROMPT to the
-pending prompts queue.  Otherwise, submit it immediately.  Queued prompts
-are automatically sent when the current prompt completes, merged into a
+pending prompts queue.  Starting or restoring a session also queues PROMPT
+until initialization succeeds.  Otherwise, submit it immediately.
+Queued prompts are sent when the current prompt completes, merged into a
 single prompt unless `agent-shell-prompt-queue-merge' is nil.  When it is
 cancelled instead, you are asked whether to continue with them.
 
@@ -438,7 +447,7 @@ shell buffer."
     (agent-shell--prompt-queue-migrate)
     (when (seq-empty-p (map-elt agent-shell--state :pending-prompts))
       (user-error "No pending prompts"))
-    (if (shell-maker-busy)
+    (if (or (not (agent-shell-initialized-p)) (shell-maker-busy))
         (message "Shell is busy, prompts will auto-resume when ready")
       (agent-shell--prompt-queue-process-next))))
 

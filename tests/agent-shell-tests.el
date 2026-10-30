@@ -1372,7 +1372,8 @@ turn is running: mid-turn through `agent-shell--busy-submit', otherwise
 straight to the shell."
   (let ((agent-shell-header-style 'graphical)
         queued dismissed)
-    (cl-letf (((symbol-function 'agent-shell-viewport--shell-buffer)
+    (cl-letf (((symbol-function 'agent-shell-initialized-p) (lambda () t))
+              ((symbol-function 'agent-shell-viewport--shell-buffer)
                (lambda (&rest _) (current-buffer)))
               ((symbol-function 'agent-shell--busy-submit)
                (lambda (&rest args) (setq queued (plist-get args :prompt))))
@@ -7936,8 +7937,9 @@ skip the prompt a freshly cleared buffer is waiting for."
                  (cons (copy-marker (point-min) nil)
                        (copy-marker (point-min) nil))))))
 
-(cl-defun agent-shell-tests--with-persistent-prompt-shell (body &key busy)
-  "Call BODY in a shell buffer holding a live prompt, mid-turn when BUSY.
+(cl-defun agent-shell-tests--with-persistent-prompt-shell (body &key busy starting)
+  "Call BODY in a shell holding a prompt, mid-turn when BUSY.
+When STARTING, the shell has not established a session yet.
 
 Stands up the least shell the prompt paths need: `comint-mode' for the
 markers shell-maker's writers set, a `cat' process for the process mark,
@@ -7954,11 +7956,8 @@ and its value returned."
           (setq-local comint-prompt-regexp "^Claude> ")
           (setq major-mode 'agent-shell-mode)
           (setq-local agent-shell--state (agent-shell--make-state :buffer buffer))
-          ;; A shell cannot be mid-turn without a session, and
-          ;; `agent-shell-submit' refuses without one.  Set on the alist
-          ;; `agent-shell--make-state' just built, so nothing is shared
-          ;; between runs.
-          (map-put! (map-elt agent-shell--state :session) :id "session-1")
+          (map-put! (map-elt agent-shell--state :session) :id (unless starting "session-1"))
+          (map-put! agent-shell--state :init-finished (not starting))
           (cl-letf (((symbol-function 'shell-maker--process) (lambda () fake-process))
                     ((symbol-function 'shell-maker-busy) (lambda (&rest _) busy)))
             ;; A turn already submitted, with the prompt the shell prints
@@ -7974,6 +7973,143 @@ and its value returned."
       (when (process-live-p fake-process)
         (delete-process fake-process))
       (kill-buffer buffer))))
+
+(ert-deftest agent-shell-submit-queues-during-startup-test ()
+  "Starting shells queue even when the override normally steers."
+  (agent-shell-tests--with-persistent-prompt-shell
+   (lambda ()
+     (let ((agent-shell-busy-submit-override-function
+            (lambda (_) (ert-fail "Must queue during startup"))))
+       (insert "first prompt")
+       (agent-shell-submit t)
+       (should-not (agent-shell--prompt-input))
+       (insert "second prompt")
+       (agent-shell-submit))
+     (should (equal (map-elt agent-shell--state :pending-prompts)
+                    '("first prompt" "second prompt"))))
+   :starting t))
+
+(ert-deftest agent-shell-prompt-queue-during-startup-test ()
+  "The queue command reuses insertion's startup handling."
+  (agent-shell-tests--with-persistent-prompt-shell
+   (lambda ()
+     (cl-letf (((symbol-function 'agent-shell--shell-buffer)
+                (lambda (&rest _) (current-buffer))))
+       (agent-shell-prompt-queue "queued prompt"))
+     (should (equal (map-elt agent-shell--state :pending-prompts)
+                    '("queued prompt"))))
+   :starting t))
+
+(ert-deftest agent-shell-startup-queue-waits-for-default-settings-test ()
+  "A session ID alone is not enough to send queued prompts."
+  (agent-shell-tests--with-persistent-prompt-shell
+   (lambda ()
+     (map-put! agent-shell--state :init-finished nil)
+     (map-put! agent-shell--state :initialized t)
+     (map-put! agent-shell--state :client
+               '((:request-handlers . t) (:notification-handlers . t)
+                 (:error-handlers . t)))
+     (map-put! agent-shell--state :agent-config
+               `((:default-model-id . ,(lambda () "model"))))
+     (let (finish-settings sent)
+       (cl-letf (((symbol-function 'agent-shell--set-default-model)
+                  (lambda (&rest args)
+                    (setq finish-settings (plist-get args :on-model-changed))))
+                 ((symbol-function 'shell-maker-submit)
+                  (lambda () (setq sent (agent-shell--take-prompt-input)))))
+         (agent-shell--handle :shell-buffer (current-buffer))
+         (insert "queued prompt")
+         (agent-shell-submit)
+         (insert "unfinished draft")
+
+         (agent-shell--prompt-queue-process-next)
+         (should-not sent)
+         (should (equal (map-elt agent-shell--state :pending-prompts)
+                        '("queued prompt")))
+
+         (funcall finish-settings)
+         (should (equal sent "queued prompt"))
+         (should-not (map-elt agent-shell--state :pending-prompts))
+         (should (equal (agent-shell--prompt-input) "unfinished draft")))))))
+
+(ert-deftest agent-shell-prompt-queue-preserves-nonpersistent-draft-test ()
+  "A draft stays out of the response and returns with the next prompt."
+  (agent-shell-tests--with-persistent-prompt-shell
+   (lambda ()
+     (let ((agent-shell-persistent-prompt-enabled nil)
+           sent)
+       (setq-local shell-maker--config
+                   (agent-shell--make-shell-maker-config :prompt "Claude> "))
+       (setq-local comint-input-sender
+                   (lambda (_process input) (setq shell-maker--input input)))
+       (map-put! agent-shell--state :pending-prompts '("queued prompt"))
+       (insert "unfinished draft")
+       (cl-letf (((symbol-function 'shell-maker-buffer)
+                  (lambda (&rest _) (current-buffer)))
+                 ((symbol-function 'agent-shell--handle)
+                  (lambda (&rest args) (setq sent (plist-get args :command)))))
+         (agent-shell--prompt-queue-process-next))
+
+       (should (equal sent "queued prompt"))
+       (should-not (agent-shell--prompt-input-start))
+       (shell-maker-write-output :config shell-maker--config :output "Agent response")
+       (should-not (string-match-p "unfinished draft" (buffer-string)))
+
+       (agent-shell--finish-output :config shell-maker--config :success nil)
+       (should (equal (agent-shell--prompt-input) "unfinished draft"))
+       (run-hooks 'shell-maker-finish-output-hook)
+       (should (equal (agent-shell--prompt-input) "unfinished draft"))))))
+
+(ert-deftest agent-shell-startup-error-preserves-queue-test ()
+  "A failed startup keeps queued prompts without attempting to send them."
+  (agent-shell-tests--with-persistent-prompt-shell
+   (lambda ()
+     (insert "keep this prompt")
+     (agent-shell-submit)
+     (cl-letf (((symbol-function 'agent-shell--update-fragment) #'ignore)
+               ((symbol-function 'agent-shell--emit-event) #'ignore)
+               ((symbol-function 'shell-maker-submit)
+                (lambda () (ert-fail "Startup failed"))))
+       (funcall (agent-shell--make-error-handler
+                 :state agent-shell--state :shell-buffer (current-buffer))
+                '((code . -1) (message . "Startup failed")) nil)
+       (agent-shell--prompt-queue-process-next)
+       (should (equal (map-elt agent-shell--state :pending-prompts)
+                      '("keep this prompt")))))
+   :starting t))
+
+(ert-deftest agent-shell-startup-insert-submit-queues-test ()
+  "Programmatic submissions queue without mixing in the user's draft."
+  (agent-shell-tests--with-persistent-prompt-shell
+   (lambda ()
+     (insert "unfinished draft")
+     (agent-shell--insert-to-shell-buffer
+      :shell-buffer (current-buffer) :text "queued prompt" :submit t)
+     (should (equal (map-elt agent-shell--state :pending-prompts)
+                    '("queued prompt")))
+     (should (equal (agent-shell--prompt-input) "unfinished draft")))
+   :starting t))
+
+(ert-deftest agent-shell-viewport-startup-compose-queues-test ()
+  "The viewport accepts a prompt while the shell is still starting."
+  (agent-shell-tests--with-persistent-prompt-shell
+   (lambda ()
+     (let ((shell-buffer (current-buffer)))
+       (with-temp-buffer
+         (setq major-mode 'agent-shell-viewport-edit-mode)
+         (insert "queued from viewport")
+         (cl-letf (((symbol-function 'agent-shell--shell-buffer)
+                    (lambda (&rest _) shell-buffer))
+                   ((symbol-function 'agent-shell-viewport--shell-buffer)
+                    (lambda () shell-buffer))
+                   ((symbol-function 'agent-shell-viewport--initialize)
+                    (lambda (&rest _) (erase-buffer))))
+           (should-not (agent-shell-viewport--busy-p))
+           (agent-shell-viewport-compose-send t)
+           (should (string-empty-p (buffer-string)))))
+       (should (equal (map-elt agent-shell--state :pending-prompts)
+                      '("queued from viewport")))))
+   :starting t))
 
 (ert-deftest agent-shell--prompt-queue-process-next-merges-test ()
   "All queued prompts are submitted together as one prompt."
