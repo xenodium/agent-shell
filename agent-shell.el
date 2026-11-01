@@ -10675,31 +10675,34 @@ Uses AGENT-CWD to shorten file paths where necessary."
                      (unless no-error
                        (user-error "No region selected"))))
          (processed-text (if (map-elt region :file)
-                             (let ((file-link (agent-shell--make-file-link
-                                               :label (format "%s:%d-%d"
-                                                              (if (and agent-cwd (file-in-directory-p (map-elt region :file) agent-cwd))
-                                                                  (file-relative-name (map-elt region :file) agent-cwd)
-                                                                (map-elt region :file))
-                                                              (map-elt region :line-start)
-                                                              (map-elt region :line-end))
-                                               :file (map-elt region :file)
-                                               :line-start (map-elt region :line-start)
-                                               :line-end (map-elt region :line-end)
-                                               :hint "open file"))
-                                   (numbered-preview
-                                    (when-let* ((buffer (get-file-buffer (map-elt region :file))))
-                                      (let ((char-start (map-elt region :char-start))
-                                            (char-end (map-elt region :char-end))
-                                            (max-preview-lines 5))
-                                        (if (= (count-lines char-start char-end) 1)
-                                            ;; Same line region? Avoid numbering.
-                                            (agent-shell--buffer-substring-with-faces
-                                             char-start char-end)
-                                          (agent-shell--get-numbered-region
-                                           :buffer buffer
-                                           :from char-start
-                                           :to char-end
-                                           :cap max-preview-lines))))))
+                             (let* ((line-start (map-elt region :line-start))
+                                    (line-end (map-elt region :line-end))
+                                    (lines-spec (if (= line-start line-end)
+                                                    (number-to-string line-start)
+                                                  (format "%d-%d" line-start line-end)))
+                                    (file-path (if (and agent-cwd (file-in-directory-p (map-elt region :file) agent-cwd))
+                                                   (file-relative-name (map-elt region :file) agent-cwd)
+                                                 (map-elt region :file)))
+                                    (file-link (agent-shell--make-file-link
+                                                :label (format "%s:%s" file-path lines-spec)
+                                                :file (map-elt region :file)
+                                                :line-start line-start
+                                                :line-end line-end
+                                                :hint "open file"))
+                                    (numbered-preview
+                                     (when-let* ((buffer (get-file-buffer (map-elt region :file))))
+                                       (let ((char-start (map-elt region :char-start))
+                                             (char-end (map-elt region :char-end))
+                                             (max-preview-lines 5))
+                                         (if (= (count-lines char-start char-end) 1)
+                                             ;; Same line region? Avoid numbering.
+                                             (agent-shell--buffer-substring-with-faces
+                                              char-start char-end)
+                                           (agent-shell--get-numbered-region
+                                            :buffer buffer
+                                            :from char-start
+                                            :to char-end
+                                            :cap max-preview-lines))))))
                                (if numbered-preview
                                    (concat file-link "\n\n" numbered-preview)
                                  file-link))
