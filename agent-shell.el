@@ -7041,11 +7041,12 @@ Example usage:
   (agent-shell-subscribe-to
    :shell-buffer shell-buffer
    :event \\='usage-update
-   :on-event (lambda (event)
-               (message \"context: %s/%s rate limit: %S\"
-                        (map-nested-elt event \\='(:data :usage :context-used))
-                        (map-nested-elt event \\='(:data :usage :context-size))
-                        (map-nested-elt event \\='(:data :meta _claude/rateLimit)))))
+   :on-event
+     (lambda (event)
+       (message \"context: %s/%s rate limit: %S\"
+                (map-nested-elt event \\='(:data :usage :context-used))
+                (map-nested-elt event \\='(:data :usage :context-size))
+                (map-nested-elt event \\='(:data :meta _claude/rateLimit)))))
 
   ;; Unsubscribe
   (let ((token (agent-shell-subscribe-to
