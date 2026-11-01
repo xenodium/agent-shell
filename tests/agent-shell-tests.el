@@ -1082,6 +1082,35 @@ highlighting."
           (set-buffer-modified-p nil)))
       (ignore-errors (delete-file temp-file)))))
 
+(ert-deftest agent-shell--get-region-context-labels-line-numbers ()
+  "Region context label lists a single line once and a range otherwise.
+
+For example, \"region.el:2\" for a single-line region and
+\"region.el:1-3\" for a multi-line one."
+  (let ((project-dir (file-name-as-directory
+                      (make-temp-file "agent-shell-region" t))))
+    (unwind-protect
+        (with-temp-buffer
+          (insert "one\ntwo\nthree\n")
+          (setq buffer-file-name (expand-file-name "region.el" project-dir))
+          (set-buffer-modified-p nil)
+          (goto-char (point-min))
+          (forward-line 1)
+          (set-mark (point))
+          (end-of-line)
+          (activate-mark)
+          (should (string-prefix-p "region.el:2\n"
+                                   (agent-shell--get-region-context
+                                    :agent-cwd project-dir)))
+          (set-mark (point-min))
+          (goto-char (point-max))
+          (activate-mark)
+          (should (string-prefix-p "region.el:1-3\n"
+                                   (agent-shell--get-region-context
+                                    :agent-cwd project-dir)))
+          (setq buffer-file-name nil))
+      (delete-directory project-dir t))))
+
 (ert-deftest agent-shell--get-numbered-region-preserves-source-faces-only ()
   "Numbered region preview must keep faces but not source control properties.
 

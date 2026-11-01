@@ -10677,14 +10677,13 @@ Uses AGENT-CWD to shorten file paths where necessary."
          (processed-text (if (map-elt region :file)
                              (let* ((line-start (map-elt region :line-start))
                                     (line-end (map-elt region :line-end))
-                                    (lines-spec (if (= line-start line-end)
-                                                    (number-to-string line-start)
-                                                  (format "%d-%d" line-start line-end)))
                                     (file-path (if (and agent-cwd (file-in-directory-p (map-elt region :file) agent-cwd))
                                                    (file-relative-name (map-elt region :file) agent-cwd)
                                                  (map-elt region :file)))
                                     (file-link (agent-shell--make-file-link
-                                                :label (format "%s:%s" file-path lines-spec)
+                                                :label (if (= line-start line-end)
+                                                           (format "%s:%d" file-path line-start)
+                                                         (format "%s:%d-%d" file-path line-start line-end))
                                                 :file (map-elt region :file)
                                                 :line-start line-start
                                                 :line-end line-end
