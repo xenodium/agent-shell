@@ -226,6 +226,26 @@ options, both categorized as \"thought_level\":
                 (equal (map-elt option :type) "select"))
               (agent-shell--config-options state)))
 
+(defun agent-shell--more-config-options (state)
+  "Return selectable config options in STATE lacking their own header segment.
+
+The header shows the model, thought level and session mode.  Every
+other selectable option, whatever its category, is returned, including
+a second option sharing one of those categories (e.g. Cline's
+`provider', tagged \"model\").
+
+For example, with model, provider, effort and speed options:
+
+  (agent-shell--more-config-options state)
+  => \\='(((:id . \"provider\") (:category . \"model\") ...)
+       ((:id . \"fast-mode\") (:category . \"model_config\") ...))"
+  (let ((shown (seq-keep (lambda (category)
+                           (agent-shell--config-option-by-category state category))
+                         '("model" "thought_level" "mode"))))
+    (seq-remove (lambda (option)
+                  (memq option shown))
+                (agent-shell--select-config-options state))))
+
 (defun agent-shell--config-option-value-name (option value)
   "Return display name for VALUE in OPTION, falling back to VALUE itself.
 

@@ -6219,6 +6219,7 @@ defaulting to the frame width."
     (:thought-level-name . ,(agent-shell-get-thought-level-name state))
     (:mode-id . ,(map-nested-elt state '(:session :mode-id)))
     (:mode-name . ,(agent-shell-get-mode-name state))
+    (:more-config-option-count . ,(length (agent-shell--more-config-options state)))
     (:project-name . ,(agent-shell--project-name))
     (:session-id . ,(agent-shell--session-id-indicator))
     (:width . ,(or width (frame-pixel-width)))
@@ -6332,7 +6333,7 @@ For a 21px char height and 16px font, with no key hints:
 HEADER-MODEL is an alist produced by `agent-shell--make-header-model',
 holding every input needed to render, including the menu keys.
 
-Rendering builds the whole propertized header string, including three
+Rendering builds the whole propertized header string, including its
 clickable menu keymaps, so it is expensive relative to a heartbeat tick.
 The result is cached in `agent-shell--header-cache' keyed on the model.
 During busy animation only the frame glyph varies, so ticks cycle through
@@ -6364,7 +6365,7 @@ keeps entries fresh."
                                            'face 'agent-shell-key-binding)
                                " "
                                (map-elt help-hint :description))))
-         (text-header (format " %s%s%s%s%s ➤ %s%s%s%s%s%s"
+         (text-header (format " %s%s%s%s%s%s ➤ %s%s%s%s%s%s"
                               (cond
                                ((and (map-elt header-model :position)
                                      (map-elt header-model :status))
@@ -6416,6 +6417,17 @@ keeps entries fresh."
                                                                          (define-key map [header-line down-mouse-1] #'ignore)
                                                                          (define-key map [header-line mouse-1]
                                                                                      (agent-shell--mode-line-mode-menu))
+                                                                         map)))
+                                "")
+                              (if (> (map-elt header-model :more-config-option-count 0) 0)
+                                  (concat " " (propertize (format "(+%d)" (map-elt header-model :more-config-option-count))
+                                                            'font-lock-face 'shadow
+                                                            'help-echo "Open more session options"
+                                                            'mouse-face 'mode-line-highlight
+                                                            'local-map (let ((map (make-sparse-keymap)))
+                                                                         (define-key map [header-line down-mouse-1] #'ignore)
+                                                                         (define-key map [header-line mouse-1]
+                                                                                     (agent-shell--mode-line-more-menu))
                                                                          map)))
                                 "")
                               (propertize (map-elt header-model :project-name) 'font-lock-face 'agent-shell-session-directory)
@@ -11236,14 +11248,58 @@ popup."
      (reverse (agent-shell--get-available-thought-levels (agent-shell--state))))
     menu))
 
+(defun agent-shell--mode-line-config-option-menu (option)
+  "Build a menu keymap for selecting a value of config OPTION.
+
+For example: a \"Speed\" OPTION shows a popup with Standard, Fast and
+Ultrafast, with its current value checked."
+  (let ((menu (make-sparse-keymap (map-elt option :name)))
+        (shell-buffer (agent-shell--shell-buffer)))
+    (seq-do
+     (lambda (choice)
+       (define-key menu (vector (intern (concat "value-" (map-elt (cdr choice) :value))))
+                   `(menu-item ,(car choice)
+                               (lambda () (interactive)
+                                 (with-current-buffer ,shell-buffer
+                                   (agent-shell--set-session-config-option
+                                    :config-id ,(map-elt option :id)
+                                    :value ,(map-elt (cdr choice) :value))))
+                               :button (:toggle . ,(equal (map-elt (cdr choice) :value)
+                                                          (map-elt option :current-value))))))
+     (reverse (agent-shell--config-option-value-choices option)))
+    menu))
+
+(defun agent-shell--mode-line-more-menu-items (menu)
+  "Return MENU with a submenu added for each of `agent-shell--more-config-options'.
+
+Each submenu is labelled with the option name and its current value,
+for example \"Speed (Ultrafast)\"."
+  (seq-do
+   (lambda (option)
+     (define-key menu (vector (intern (concat "config-" (map-elt option :id))))
+                 `(menu-item ,(format "%s (%s)"
+                                      (map-elt option :name)
+                                      (agent-shell--config-option-value-name
+                                       option (map-elt option :current-value)))
+                             ,(agent-shell--mode-line-config-option-menu option))))
+   (reverse (agent-shell--more-config-options (agent-shell--state))))
+  menu)
+
+(defun agent-shell--mode-line-more-menu ()
+  "Build a menu keymap for the session options lacking a header segment.
+
+Clicking the \"(+N)\" count after the text header settings shows this popup."
+  (agent-shell--mode-line-more-menu-items (make-sparse-keymap "More")))
+
 (defun agent-shell--mode-line-combined-menu ()
   "Build a combined menu keymap exposing all session settings.
 
 The graphical SVG header renders as a single image, so clicks cannot
 target individual segments.  Clicking anywhere on it pops up this menu,
 which groups the per-segment menus (LLM model, thought level, session
-mode) into submenus."
-  (let ((menu (make-sparse-keymap "Agent shell")))
+mode) into submenus, followed by the remaining session options."
+  (let ((menu (agent-shell--mode-line-more-menu-items
+               (make-sparse-keymap "Agent shell"))))
     (when (agent-shell-get-mode-name (agent-shell--state))
       (define-key menu [mode]
                   `(menu-item "Session mode" ,(agent-shell--mode-line-mode-menu))))

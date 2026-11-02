@@ -1109,6 +1109,8 @@ When the active agent advertises the corresponding session option, you can switc
 
 The current selections are shown in the header right after the agent name; click any segment to open a popup menu. The thought level segment only appears for models that expose it (e.g. Claude Sonnet/Opus with effort levels; Codex's reasoning_effort).
 
+Any other options the agent advertises (e.g. Codex's speed) are counted after the header settings as =(+N)=; click it to change them. They are also appended to the graphical header's settings menu. =C-c C-s= sets any of them from the keyboard.
+
 From the viewport (=agent-shell-viewport-view-mode= / =agent-shell-viewport-edit-mode=), the same controls are bound to:
 
 - View mode: =v= (model), =s= (mode), =t= (thought level).

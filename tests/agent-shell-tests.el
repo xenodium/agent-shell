@@ -1917,6 +1917,84 @@ the category, the option is still returned."
     (should (equal (map-elt (agent-shell--config-option-by-category state "model") :id)
                    "model_id"))))
 
+(defun agent-shell-tests--more-config-options-state ()
+  "Return a state advertising model, provider, effort, speed and mode options."
+  (list (cons :config-options
+              (agent-shell--normalize-config-options
+               [((id . "provider") (name . "Provider") (category . "model")
+                 (type . "select") (currentValue . "cline")
+                 (options . [((value . "cline") (name . "Cline"))]))
+                ((id . "model") (name . "Model") (category . "model")
+                 (type . "select") (currentValue . "gpt-5.5")
+                 (options . [((value . "gpt-5.5") (name . "GPT-5.5"))]))
+                ((id . "reasoning_effort") (name . "Effort") (category . "thought_level")
+                 (type . "select") (currentValue . "low")
+                 (options . [((value . "low") (name . "Low"))]))
+                ((id . "fast-mode") (name . "Speed") (category . "model_config")
+                 (type . "select") (currentValue . "ultrafast")
+                 (options . [((value . "off") (name . "Standard"))
+                             ((value . "ultrafast") (name . "Ultrafast"))]))
+                ((id . "approval") (name . "Approval") (category . "mode")
+                 (type . "select") (currentValue . "auto")
+                 (options . [((value . "auto") (name . "Auto"))]))
+                ((id . "verbose") (name . "Verbose") (type . "boolean")
+                 (currentValue . t))]))))
+
+(ert-deftest agent-shell--more-config-options-test ()
+  "Test `agent-shell--more-config-options' skips options with a header segment.
+
+Model, thought level and mode already have their own segment.  The
+provider shares the model category but has none, so it is kept.
+Non-select options are never offered."
+  (should (equal (mapcar (lambda (option)
+                           (map-elt option :id))
+                         (agent-shell--more-config-options
+                          (agent-shell-tests--more-config-options-state)))
+                 '("provider" "fast-mode"))))
+
+(ert-deftest agent-shell--mode-line-more-menu-test ()
+  "Test the more options menu labels options with their current value and sets them."
+  (let ((state (agent-shell-tests--more-config-options-state))
+        (request nil))
+    (with-temp-buffer
+      (cl-letf (((symbol-function 'agent-shell--state) (lambda () state))
+                ((symbol-function 'agent-shell--shell-buffer) #'current-buffer)
+                ((symbol-function 'agent-shell--set-session-config-option)
+                 (lambda (&rest args) (setq request args))))
+        (let* ((menu (agent-shell--mode-line-more-menu))
+               (speed (lookup-key menu [config-fast-mode])))
+          (should (equal (keymap-prompt menu) "More"))
+          (should (equal (nth 2 (assq 'config-fast-mode (cdr menu)))
+                         "Speed (Ultrafast)"))
+          (should (equal (mapcar #'car (seq-filter #'consp (cdr speed)))
+                         '(value-off value-ultrafast)))
+          (funcall (nth 3 (assq 'value-off (cdr speed))))
+          (should (equal request '(:config-id "fast-mode" :value "off"))))))))
+
+(ert-deftest agent-shell--mode-line-combined-menu-includes-more-test ()
+  "Test the graphical header menu appends the more options after mode."
+  (let ((state (agent-shell-tests--more-config-options-state)))
+    (with-temp-buffer
+      (cl-letf (((symbol-function 'agent-shell--state) (lambda () state))
+                ((symbol-function 'agent-shell--shell-buffer) #'current-buffer))
+        (should (equal (mapcar #'car (seq-filter #'consp (cdr (agent-shell--mode-line-combined-menu))))
+                       '(model thought-level mode config-provider config-fast-mode)))))))
+
+(ert-deftest agent-shell--render-header-model-more-segment-test ()
+  "Test the text header counts more options after mode, only when there are any."
+  (let ((agent-shell-header-style 'text)
+        (header-model '((:buffer-name . "Codex")
+                        (:mode-name . "Auto")
+                        (:project-name . "project"))))
+    (cl-letf (((symbol-function 'agent-shell--mode-line-mode-menu) #'make-sparse-keymap)
+              ((symbol-function 'agent-shell--mode-line-more-menu) #'make-sparse-keymap))
+      (should-not (string-match-p "(\\+"
+                                  (agent-shell--render-header-model-uncached header-model)))
+      (should (string-match-p "Auto (\\+2) ➤ project"
+                              (agent-shell--render-header-model-uncached
+                               (cons '(:more-config-option-count . 2)
+                                     header-model)))))))
+
 (ert-deftest agent-shell--shell-response-start-ignores-quoted-marker-test ()
   "The response starts at shell-maker's own delimiter, not at a quoted one.
 An agent asked about `<shell-maker-end-of-prompt>' writes those
