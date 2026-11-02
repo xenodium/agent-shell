@@ -28,6 +28,48 @@
                  '(("hello " nil)
                    ("world" (agent-shell-markdown-bold))))))
 
+(ert-deftest agent-shell-markdown-convert-bold-adjacent-to-text ()
+  (dolist (case '(("这是**重点**内容"
+                   (("这是" nil) ("重点" (agent-shell-markdown-bold)) ("内容" nil)))
+                  ("（**重点**）"
+                   (("（" nil) ("重点" (agent-shell-markdown-bold)) ("）" nil)))
+                  ("(**bold**)"
+                   (("(" nil) ("bold" (agent-shell-markdown-bold)) (")" nil)))
+                  ("**重点**（说明）"
+                   (("重点" (agent-shell-markdown-bold)) ("（说明）" nil)))
+                  ("word**bold**tail"
+                   (("word" nil) ("bold" (agent-shell-markdown-bold)) ("tail" nil)))
+                  ("（__重点__）"
+                   (("（" nil) ("重点" (agent-shell-markdown-bold)) ("）" nil)))
+                  ("**one**，**two**"
+                   (("one" (agent-shell-markdown-bold)) ("，" nil)
+                    ("two" (agent-shell-markdown-bold))))))
+    (ert-info ((format "Markdown: %S" (car case)))
+      (should (equal (agent-shell-markdown--deconstruct
+                      (agent-shell-markdown-convert (car case)))
+                     (cadr case))))))
+
+(ert-deftest agent-shell-markdown-convert-bold-delimiter-boundaries ()
+  (dolist (source '("word__literal__tail" "** leading**" "**trailing **"
+                    "a**\"quoted\"**b" "**unclosed"))
+    (ert-info ((format "Markdown: %S" source))
+      (should (equal (agent-shell-markdown--deconstruct
+                      (agent-shell-markdown-convert source))
+                     (list (list source nil)))))))
+
+(ert-deftest agent-shell-markdown-bold-adjacent-to-text-across-chunks ()
+  (with-temp-buffer
+    (dolist (chunk '("这是*" "*重" "点*" "*内容（*" "*说明**）\n"))
+      (goto-char (point-max))
+      (insert chunk)
+      (agent-shell-markdown-replace-markup :render-images nil))
+    (should (equal (agent-shell-markdown--deconstruct (buffer-string))
+                   '(("这是" nil) ("重点" (agent-shell-markdown-bold))
+                     ("内容（" nil) ("说明" (agent-shell-markdown-bold))
+                     ("）\n" nil))))
+    (should (equal (agent-shell-markdown-reconstruct (point-min) (point-max))
+                   "这是**重点**内容（**说明**）\n"))))
+
 (ert-deftest agent-shell-markdown-escaped-asterisk-in-bold ()
   ;; Regression: `**let vs let\\***' is bold text ending in an escaped
   ;; literal `*' (CommonMark).  The escape lets the bold span match and
@@ -306,7 +348,7 @@
 (ert-deftest agent-shell-markdown-convert-strikethrough-wrapping-bold ()
   (should (equal (agent-shell-markdown--deconstruct
                   (agent-shell-markdown-convert "~~**bold-strike**~~"))
-                 '(("bold-strike" (agent-shell-markdown-bold agent-shell-markdown-strikethrough))))))
+                 '(("bold-strike" (agent-shell-markdown-strikethrough agent-shell-markdown-bold))))))
 
 (ert-deftest agent-shell-markdown-convert-header-level-1 ()
   ;; Header rendering requires a trailing newline to complete; an
@@ -496,12 +538,16 @@ it is still picked up by the bare-URL linkifier."
     ;; The label is left as prose rather than becoming a link title.
     (should-not (get-text-property 5 'agent-shell-markdown-url rendered))))
 
-(ert-deftest agent-shell-markdown-convert-link-with-bold-inside-untouched ()
-  ;; Bold inside link title is left literal (mirrors markdown-overlays:
-  ;; bold regex requires whitespace/BOL before `**', and `[' isn't either).
+(ert-deftest agent-shell-markdown-convert-link-with-bold-inside ()
   (should (equal (agent-shell-markdown--deconstruct
                   (agent-shell-markdown-convert "[**bold**](url)"))
-                 '(("**bold**" (agent-shell-markdown-link))))))
+                 '(("bold" (agent-shell-markdown-link agent-shell-markdown-bold)))))
+  (with-temp-buffer
+    (insert "[**bold**](url)")
+    (agent-shell-markdown-replace-markup :force t)
+    (should (equal (agent-shell-markdown-reconstruct (point-min) (point-max))
+                   "[**bold**](url)"))
+    (should (get-text-property (point-min) 'keymap))))
 
 (ert-deftest agent-shell-markdown-convert-link-after-image-not-confused ()
   ;; `[X](Y)' inside `![X](Y)' must not be treated as a link.
