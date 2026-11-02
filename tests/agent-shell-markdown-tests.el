@@ -70,6 +70,45 @@
     (should (equal (agent-shell-markdown-reconstruct (point-min) (point-max))
                    "这是**重点**内容（**说明**）\n"))))
 
+(ert-deftest agent-shell-markdown-convert-italic-adjacent-to-text ()
+  (dolist (case '(("这是*重点*内容"
+                   (("这是" nil) ("重点" (agent-shell-markdown-italic)) ("内容" nil)))
+                  ("（*重点*）"
+                   (("（" nil) ("重点" (agent-shell-markdown-italic)) ("）" nil)))
+                  ("（_重点_）"
+                   (("（" nil) ("重点" (agent-shell-markdown-italic)) ("）" nil)))
+                  ("word*it*tail"
+                   (("word" nil) ("it" (agent-shell-markdown-italic)) ("tail" nil)))
+                  ("a * b *c*"
+                   (("a * b " nil) ("c" (agent-shell-markdown-italic))))
+                  ("***both***"
+                   (("both" (agent-shell-markdown-italic agent-shell-markdown-bold))))))
+    (ert-info ((format "Markdown: %S" (car case)))
+      (should (equal (agent-shell-markdown--deconstruct
+                      (agent-shell-markdown-convert (car case)))
+                     (cadr case))))))
+
+(ert-deftest agent-shell-markdown-convert-italic-delimiter-boundaries ()
+  (dolist (source '("snake_case_name" "中_it_文" "a * leading*" "*trailing *"
+                    "a*\"quoted\"*b" "*unclosed"))
+    (ert-info ((format "Markdown: %S" source))
+      (should (equal (agent-shell-markdown--deconstruct
+                      (agent-shell-markdown-convert source))
+                     (list (list source nil)))))))
+
+(ert-deftest agent-shell-markdown-italic-adjacent-to-text-across-chunks ()
+  (with-temp-buffer
+    (dolist (chunk '("这是*" "重点" "*内容（" "_说明_" "）\n"))
+      (goto-char (point-max))
+      (insert chunk)
+      (agent-shell-markdown-replace-markup :render-images nil))
+    (should (equal (agent-shell-markdown--deconstruct (buffer-string))
+                   '(("这是" nil) ("重点" (agent-shell-markdown-italic))
+                     ("内容（" nil) ("说明" (agent-shell-markdown-italic))
+                     ("）\n" nil))))
+    (should (equal (agent-shell-markdown-reconstruct (point-min) (point-max))
+                   "这是*重点*内容（_说明_）\n"))))
+
 (ert-deftest agent-shell-markdown-escaped-asterisk-in-bold ()
   ;; Regression: `**let vs let\\***' is bold text ending in an escaped
   ;; literal `*' (CommonMark).  The escape lets the bold span match and
@@ -265,7 +304,7 @@
 (ert-deftest agent-shell-markdown-convert-bold-wrapping-italic ()
   (should (equal (agent-shell-markdown--deconstruct
                   (agent-shell-markdown-convert "**_my text_**"))
-                 '(("my text" (agent-shell-markdown-italic agent-shell-markdown-bold))))))
+                 '(("my text" (agent-shell-markdown-bold agent-shell-markdown-italic))))))
 
 (ert-deftest agent-shell-markdown-convert-bold-with-inner-italic ()
   (should (equal (agent-shell-markdown--deconstruct
