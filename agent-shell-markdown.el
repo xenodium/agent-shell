@@ -755,6 +755,34 @@ bold `let vs let*', still stashing `**let vs let\\***' for copy."
   (or (not (any "\n`" delimiters))
       (seq "`" (zero-or-more (not (any "\n`"))) "`")))
 
+(cl-defun agent-shell-markdown--strong-delimiter-p (&key position opening)
+  "Return non-nil if the strong delimiter at POSITION can open or close.
+OPENING non-nil checks an opener; nil checks a closer.  Use Unicode
+whitespace and punctuation rather than the buffer's syntax table.
+For example, both star pairs in \"中**bold**文\" qualify, while neither
+underscore pair in \"a__b__c\" does."
+  (let* ((before (char-before position))
+         (after (char-after (+ position 2)))
+         (before-category (and before (get-char-code-property
+                                       before 'general-category)))
+         (after-category (and after (get-char-code-property
+                                     after 'general-category)))
+         (before-space (or (null before) (memq before '(?\t ?\n ?\r ?\f))
+                           (eq before-category 'Zs)))
+         (after-space (or (null after) (memq after '(?\t ?\n ?\r ?\f))
+                          (eq after-category 'Zs)))
+         (before-punct (memq before-category '(Pc Pd Pe Pf Pi Po Ps Sc Sk Sm So)))
+         (after-punct (memq after-category '(Pc Pd Pe Pf Pi Po Ps Sc Sk Sm So)))
+         (left (and (not after-space)
+                    (or (not after-punct) before-space before-punct)))
+         (right (and (not before-space)
+                     (or (not before-punct) after-space after-punct))))
+    (if opening
+        (and left (or (not (eq (char-after position) ?_))
+                      (not right) before-punct))
+      (and right (or (not (eq (char-after position) ?_))
+                     (not left) after-punct)))))
+
 (cl-defun agent-shell-markdown--replace-bolds (&key avoid-ranges)
   "Replace `**X**' / `__X__' spans in current buffer with bold X.
 
@@ -771,15 +799,13 @@ world.\" with face `agent-shell-markdown-bold' on \"world\"."
         (changed nil))
     (goto-char (point-min))
     (while (re-search-forward
-            (rx (or line-start (syntax whitespace))
-                (group
+            (rx (group
                  (or (seq "**" (group (one-or-more
                                        (agent-shell-markdown--emphasis-content "*")))
                           "**")
                      (seq "__" (group (one-or-more
                                        (agent-shell-markdown--emphasis-content "_")))
-                          "__")))
-                (or (syntax punctuation) (syntax whitespace) line-end))
+                          "__"))))
             nil t)
       (let* ((markup-start (match-beginning 1))
              (markup-end (match-end 1))
@@ -790,6 +816,11 @@ world.\" with face `agent-shell-markdown-bold' on \"world\"."
           (goto-char (cdr avoid)))
          ((agent-shell-markdown--straddles-avoid-range-p
            markup-start markup-end avoid-ranges)
+          (goto-char (1+ markup-start)))
+         ((not (and (agent-shell-markdown--strong-delimiter-p
+                     :position markup-start :opening t)
+                    (agent-shell-markdown--strong-delimiter-p
+                     :position (- markup-end 2))))
           (goto-char (1+ markup-start)))
          (t
           (agent-shell-markdown--emphasize-span
