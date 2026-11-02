@@ -1087,6 +1087,17 @@ All of the above settings can be applied on a per-project basis using [[https://
                   ("C-c C-k" . agent-shell-interrupt)))
   #+end_src
 
+*** Folding sections
+
+Thoughts, tool calls, user messages and activity groups fold under their header line. With point on a header:
+
+- =RET= (or click) - Expand or collapse the section.
+- =C-u RET= - Expand or collapse the section's activity group, along with every section inside it.
+
+These keys only apply on headers, so =RET= still submits the prompt everywhere else. To fold with other keys, add them to =agent-shell-ui-fragment-map=.
+
+Use =M-x agent-shell-ui-toggle-all-fragments= to expand or collapse every section in the buffer.
+
 *** Session controls
 
 When the active agent advertises the corresponding session option, you can switch it from the shell buffer:
