@@ -4937,7 +4937,10 @@ For example, with the file part abbreviated to F:
   \"foo.el:10:5\"         => ((:file . F) (:line-start . 10) (:column . 5))
   \"foo.el\"              => ((:file . F))
   \"file:bar.el:5-8\"     => ((:file . F) (:line-start . 5) (:line-end . 8))
-  \"https://example.com\" => nil"
+  \"https://example.com\" => nil
+
+A remote URL such as \"https://example.com\" returns nil without
+consulting the file system."
   (when-let* ((match
                (cond
                 ((string-match
@@ -4974,6 +4977,11 @@ For example, with the file part abbreviated to F:
                       eos)
                   url)
                  (cons (match-string 1 url) (match-string 2 url)))
+                ;; A remote URL is never a local file, and asking
+                ;; `file-exists-p' about one hits the network under
+                ;; `url-handler-mode'.
+                ((string-match-p (rx bos alpha (one-or-more (any alnum "+.-")) "://") url)
+                 nil)
                 ((not (string-empty-p url))
                  (cons url nil))))
               (filepath (expand-file-name (car match))))
