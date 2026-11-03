@@ -1897,6 +1897,7 @@ listed first and offered as the default selection."
                                '(metadata
                                  (category . agent-shell-config)
                                  (display-sort-function . identity)
+                                 (cycle-sort-function . identity)
                                  (affixation-function
                                   . agent-shell--icon-affixation))
                              (complete-with-action action (mapcar #'car choices)
@@ -2092,6 +2093,7 @@ buffers are available or nothing was selected."
                        (if (eq action 'metadata)
                            '(metadata
                              (display-sort-function . identity)
+                             (cycle-sort-function . identity)
                              (affixation-function
                               . agent-shell--icon-affixation))
                          (complete-with-action action (mapcar #'car choices)
@@ -8066,6 +8068,7 @@ Falls back to latest session in batch mode (e.g. tests)."
                                (if (eq action 'metadata)
                                    '(metadata
                                      (display-sort-function . identity)
+                                     (cycle-sort-function . identity)
                                      (eager-display . t)
                                      (eager-update . t))
                                  (complete-with-action action session-choices string pred)))
