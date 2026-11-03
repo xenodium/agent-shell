@@ -4088,6 +4088,37 @@ so the command must not append a second time."
       (when (and test-buffer (buffer-live-p test-buffer))
         (kill-buffer test-buffer)))))
 
+(ert-deftest agent-shell--start-function-strategy-kills-shell-on-cancel ()
+  "Cancelling a function strategy's session selection should kill the shell."
+  (let ((test-buffer nil)
+        (fake-process (start-process "fake-agent" nil "cat"))
+        (config (list (cons :buffer-name "test-agent")
+                      (cons :client-maker
+                            (lambda (_buf)
+                              (list (cons :command "cat")))))))
+    (unwind-protect
+        (cl-letf (((symbol-function 'shell-maker-start-v2)
+                   (lambda (&rest _args)
+                     (setq test-buffer (get-buffer-create "*test-agent-shell*"))
+                     (with-current-buffer test-buffer
+                       (setq major-mode 'agent-shell-mode))
+                     test-buffer))
+                  ((symbol-function 'shell-maker--process) (lambda () fake-process))
+                  ((symbol-function 'agent-shell--finish-output) #'ignore)
+                  ((symbol-function 'agent-shell--handle) #'ignore)
+                  (agent-shell-file-completion-enabled nil))
+          (let* ((agent-shell-session-strategy (lambda (_context) 'prompt))
+                 (shell-buffer (agent-shell--start :config config
+                                                   :no-focus t
+                                                   :new-session t)))
+            (with-current-buffer shell-buffer
+              (agent-shell--emit-event :event 'session-selection-cancelled))
+            (should-not (buffer-live-p shell-buffer))))
+      (when (process-live-p fake-process)
+        (delete-process fake-process))
+      (when (and test-buffer (buffer-live-p test-buffer))
+        (kill-buffer test-buffer)))))
+
 (ert-deftest agent-shell--list-sessions-fetches-all-pages-test ()
   "Test `agent-shell--list-sessions' follows cursors through empty pages."
   (let ((agent-shell-session-list-page-limit nil)
@@ -4208,7 +4239,10 @@ so the command must not append a second time."
                   (new . "Couldn't resume session abc. Starting a new one.")
                   (new-deferred . "Couldn't resume session abc. Starting a new one.")))
     (let ((agent-shell-session-strategy (car case)))
-      (should (equal (agent-shell--resume-failure-message :session-id "abc") (cdr case))))))
+      (should (equal (agent-shell--resume-failure-message :session-id "abc") (cdr case)))))
+  (let ((agent-shell-session-strategy (lambda (_context) 'latest)))
+    (should (equal (agent-shell--resume-failure-message :session-id "abc")
+                   "Couldn't resume session abc. Choosing another session."))))
 
 (ert-deftest agent-shell--initiate-session-fork-by-id-resumes-fork-test ()
   "Test forking resumes the fork and stays on it if resuming fails."
@@ -4334,6 +4368,64 @@ so the command must not append a second time."
             (should (equal (map-elt load-params 'cwd) "/tmp"))))
         (should session-init-called)
         (should (equal (map-nested-elt agent-shell--state '(:session :id)) "session-123"))))))
+
+(ert-deftest agent-shell--initiate-session-function-strategy-loads-chosen-id ()
+  "Test a function `agent-shell-session-strategy' loads the session it names."
+  (with-temp-buffer
+    (let* ((received nil)
+           (agent-shell-session-strategy
+            (lambda (context)
+              (setq received (map-elt context :sessions))
+              '(session-id . "hidden-id")))
+           (requests '())
+           (session-init-called nil)
+           (state (list (cons :buffer (current-buffer))
+                        (cons :client 'test-client)
+                        (cons :session (list (cons :id nil)
+                                             (cons :mode-id nil)
+                                             (cons :modes nil)))
+                        (cons :supports-session-list t)
+                        (cons :supports-session-load t)
+                        (cons :pending-restore nil)
+                        (cons :active-requests nil)
+                        (cons :event-subscriptions nil))))
+      (setq-local agent-shell--state state)
+      (cl-letf (((symbol-function 'agent-shell--state)
+                 (lambda () agent-shell--state))
+                ((symbol-function 'agent-shell--update-fragment)
+                 (lambda (&rest _args) nil))
+                ((symbol-function 'agent-shell--update-header-and-mode-line)
+                 (lambda () nil))
+                ((symbol-function 'agent-shell-cwd)
+                 (lambda () "/tmp"))
+                ((symbol-function 'agent-shell--resolve-path)
+                 (lambda (path) path))
+                ((symbol-function 'agent-shell--mcp-servers)
+                 (lambda () []))
+                ((symbol-function 'acp-send-request)
+                 (lambda (&rest args)
+                   (push args requests)
+                   (pcase (map-elt (plist-get args :request) :method)
+                     ("session/list"
+                      (funcall (plist-get args :on-success)
+                               '((sessions . [((sessionId . "listed-id")
+                                               (cwd . "/tmp")
+                                               (title . "Listed session"))]))))
+                     ("session/load"
+                      (funcall (plist-get args :on-success) nil))
+                     (method (error "Unexpected method: %s" method))))))
+        (agent-shell--initiate-session
+         :shell-buffer (current-buffer)
+         :on-session-init (lambda ()
+                            (setq session-init-called t)))
+        (should (equal (mapcar (lambda (session) (map-elt session 'sessionId))
+                               received)
+                       '("listed-id")))
+        (let ((load-request (plist-get (car requests) :request)))
+          (should (equal (map-elt load-request :method) "session/load"))
+          (should (equal (map-nested-elt load-request '(:params sessionId))
+                         "hidden-id")))
+        (should session-init-called)))))
 
 (ert-deftest agent-shell--initiate-session-falls-back-to-new-on-list-failure ()
   "Test `agent-shell--initiate-session' falls back to session/new on list failure."
@@ -4516,8 +4608,35 @@ other unknown ones."
   (should-not (agent-shell--validate-session-strategy 'prompt))
   (should-error (agent-shell--validate-session-strategy 'new-deferred)
                 :type 'user-error)
+  (should-not (agent-shell--validate-session-strategy (lambda (_context) 'new)))
   (should-error (agent-shell--validate-session-strategy 'bogus)
                 :type 'user-error))
+
+(ert-deftest agent-shell--select-session-via-function-test ()
+  "Test `agent-shell--select-session-via-function' maps each return value."
+  (let* ((noninteractive t)
+         (session-a '((sessionId . "session-1") (title . "First")))
+         (session-b '((sessionId . "session-2") (title . "Second")))
+         (sessions (list session-a session-b))
+         (received nil))
+    ;; The function receives the sessions in its context.
+    (let ((agent-shell-session-strategy
+           (lambda (context) (setq received context) 'new)))
+      (should-not (agent-shell--select-session-via-function :acp-sessions sessions))
+      (should (equal received (list (cons :sessions sessions)))))
+    (dolist (case `((latest . ,session-a)
+                    ;; noninteractive prompt falls back to the first session.
+                    (prompt . ,session-a)
+                    ((session-id . "session-2") . ,session-b)
+                    ;; Unlisted sessions resume by ID alone.
+                    ((session-id . "hidden") . ((sessionId . "hidden")))))
+      (let ((agent-shell-session-strategy (lambda (_context) (car case))))
+        (should (equal (agent-shell--select-session-via-function :acp-sessions sessions)
+                       (cdr case)))))
+    (dolist (result '(nil bogus "session-1" (session-id . nil) (unknown . "x")))
+      (let ((agent-shell-session-strategy (lambda (_context) result)))
+        (should-error (agent-shell--select-session-via-function :acp-sessions sessions)
+                      :type 'user-error)))))
 
 (ert-deftest agent-shell--initiate-session-strategy-new-skips-list-load ()
   "Test `agent-shell--initiate-session' skips list/load when strategy is `new'."

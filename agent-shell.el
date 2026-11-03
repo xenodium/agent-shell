@@ -1004,12 +1004,13 @@ value and signals a migration error.")
 
 `new-deferred' was removed in `agent-shell' 0.54.  Use `new' for a fresh
 session without prompting, or `prompt' to choose."
-  (unless (memq value '(new latest prompt))
+  (unless (or (memq value '(new latest prompt))
+              (functionp value))
     (user-error
      (concat
       "agent-shell-session-strategy value `%s' is no longer supported.\n"
       "Use `new' for a fresh session, `latest' to load the most recent,\n"
-      "or `prompt' to choose.")
+      "`prompt' to choose, or a function to decide.")
      value)))
 
 (defcustom agent-shell-session-strategy 'prompt
@@ -1019,10 +1020,33 @@ Available values:
 
   `new': Always start a new session.
   `latest': Always load/resume the latest session.
-  `prompt': Always prompt to choose a session (or start a new one)."
+  `prompt': Always prompt to choose a session (or start a new one).
+
+A function: Called with a context alist holding:
+
+  `:sessions': Resumable sessions, most recent first, each an alist
+  with `sessionId', `title', etc.
+
+The function must return one of:
+
+  `new', `latest' or `prompt': Behave as that value would.
+  (session-id . ID): Load/resume session ID, which need not be listed.
+
+Any other return value signals an error.
+
+For example, to resume the most recent session matching your own
+`my-preferred-session-p', or fall back to the latest one:
+
+  (setq agent-shell-session-strategy
+        (lambda (context)
+          (if-let* ((session (seq-find #\\='my-preferred-session-p
+                                       (map-elt context :sessions))))
+              (cons \\='session-id (map-elt session \\='sessionId))
+            \\='latest)))"
   :type '(choice (const :tag "Always start new session" new)
                  (const :tag "Load latest session" latest)
-                 (const :tag "Prompt for session" prompt))
+                 (const :tag "Prompt for session" prompt)
+                 (function :tag "Decide via function"))
   :set (lambda (sym value)
          (agent-shell--validate-session-strategy value)
          (set-default sym value))
@@ -5358,12 +5382,15 @@ variable (see makunbound)"))
        :event 'turn-complete
        :on-event #'agent-shell--refresh-session-title)
       ;; Subscribe to session selection events (needed regardless of focus).
-      (when (eq agent-shell-session-strategy 'prompt)
+      ;; Function strategies may prompt too.
+      (when (or (eq agent-shell-session-strategy 'prompt)
+                (functionp agent-shell-session-strategy))
         (agent-shell-subscribe-to
          :shell-buffer shell-buffer
          :event 'session-selection-cancelled
          :on-event (lambda (_event)
-                     (kill-buffer shell-buffer)))
+                     (kill-buffer shell-buffer))))
+      (when (eq agent-shell-session-strategy 'prompt)
         (let ((active-message (agent-shell-active-message-show :text "Loading...")))
           (agent-shell-subscribe-to
            :shell-buffer shell-buffer
@@ -8473,6 +8500,7 @@ With `agent-shell-session-strategy' set to `prompt':
           (pcase agent-shell-session-strategy
             ('latest "Loading the latest session.")
             ('prompt "Pick another session to load.")
+            ((pred functionp) "Choosing another session.")
             (_ "Starting a new one."))))
 
 (cl-defun agent-shell--initiate-session-resume-by-id (&key session-id session-title shell-buffer on-session-init on-failure)
@@ -8657,6 +8685,32 @@ message when a request fails or the agent repeats a cursor."
           :on-failure on-failure)))))
    :on-failure on-failure))
 
+(cl-defun agent-shell--select-session-via-function (&key acp-sessions)
+  "Return the session `agent-shell-session-strategy' picks from ACP-SESSIONS.
+
+The strategy must be a function.  Returns a session alist to load, nil
+to start a new session, or `:other-shell' (see
+`agent-shell--prompt-select-session').  A session ID not found in
+ACP-SESSIONS yields a minimal alist holding just its `sessionId'.
+
+For example, with a function returning (session-id . \"abc\"):
+
+  (agent-shell--select-session-via-function :acp-sessions nil)
+  => \\='((sessionId . \"abc\"))"
+  (pcase (funcall agent-shell-session-strategy
+                  (list (cons :sessions acp-sessions)))
+    ('new nil)
+    ('latest (seq-first acp-sessions))
+    ('prompt (agent-shell--prompt-select-session acp-sessions))
+    (`(session-id . ,(and id (pred stringp)))
+     (or (seq-find (lambda (acp-session)
+                     (equal (map-elt acp-session 'sessionId) id))
+                   acp-sessions)
+         (list (cons 'sessionId id))))
+    (result
+     (user-error "`agent-shell-session-strategy' function returned an unsupported value: %S"
+                 result))))
+
 (cl-defun agent-shell--initiate-session-list-and-load (&key shell-buffer on-session-init)
   "Try loading latest existing session with SHELL-BUFFER and ON-SESSION-INIT."
   (with-current-buffer (map-elt (agent-shell--state) :buffer)
@@ -8677,8 +8731,11 @@ message when a request fails or the agent repeats a cursor."
                                (pcase agent-shell-session-strategy
                                  ('new-deferred nil)
                                  ('new nil)
-                                 ('latest (car acp-sessions))
+                                 ('latest (seq-first acp-sessions))
                                  ('prompt (agent-shell--prompt-select-session acp-sessions))
+                                 ((pred functionp)
+                                  (agent-shell--select-session-via-function
+                                   :acp-sessions acp-sessions))
                                  (_ (message "Unknown session strategy '%s', starting a new session"
                                              agent-shell-session-strategy)
                                     nil))))
