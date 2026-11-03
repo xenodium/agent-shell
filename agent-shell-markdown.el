@@ -4980,7 +4980,10 @@ consulting the file system."
                 ;; A remote URL is never a local file, and asking
                 ;; `file-exists-p' about one hits the network under
                 ;; `url-handler-mode'.
-                ((string-match-p (rx bos alpha (one-or-more (any alnum "+.-")) "://") url)
+                ((string-match-p (rx bos alpha
+                                     (one-or-more (any alnum "+.-"))
+                                     "://")
+                                 url)
                  nil)
                 ((not (string-empty-p url))
                  (cons url nil))))
