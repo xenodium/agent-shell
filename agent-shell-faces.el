@@ -35,7 +35,7 @@
   :group 'agent-shell)
 
 (defface agent-shell-steer-label
-  '((t :inherit shadow :height 0.9))
+  '((t :inherit agent-shell-secondary :height 0.9))
   "Face for the label above a steered prompt."
   :group 'agent-shell-faces)
 
