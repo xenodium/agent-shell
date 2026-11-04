@@ -9520,12 +9520,21 @@ hides that."
     (should (equal (map-elt rendered :text)
                    (concat "Claude> list the files<shell-maker-end-of-prompt>\n"
                            "Listing \n\n"
-                           "Claude> [steer] just the filenames"
+                           "Claude> just the filenames"
                            "<shell-maker-end-of-prompt>\n"
                              "Claude> ")))
       ;; Not "user_message_chunk": that asks the notification dispatch to
       ;; insert an end-of-prompt marker of its own on the next update.
       (should-not (equal (map-elt rendered :last-entry-type) "user_message_chunk")))))
+
+(ert-deftest agent-shell-experimental--steered-prompt-label-test ()
+  "The steering label displays above the prompt without changing its text."
+  (let* ((text (map-elt (agent-shell-tests--render-steered-prompt "filenames") :text))
+         (start (string-match "Claude> filenames" text))
+         (display (get-text-property start 'display text)))
+    (should (get-text-property start 'agent-shell-steered text))
+    (should (equal display "steer\nClaude> "))
+    (should (eq (get-text-property 0 'face display) 'agent-shell-steer-label))))
 
 (ert-deftest agent-shell-experimental--steered-image-preview-test ()
   "A steered image mention is displayed in the posted user message."

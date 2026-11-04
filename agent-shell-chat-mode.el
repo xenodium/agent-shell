@@ -720,12 +720,17 @@ above, putting the first line of a multi-line input out of reach of
                       (save-excursion (goto-char run-end)
                                       (skip-chars-forward " \t\n")
                                       (point))))
-               (me-label (agent-shell-chat--label "Me" 'user))
+               (steered (get-text-property pos 'agent-shell-steered))
+               (me-label (if steered
+                             (concat agent-shell-chat--body-indent
+                                     (propertize "steer" 'face 'agent-shell-steer-label))
+                           (agent-shell-chat--label "Me" 'user)))
                ;; Face the padding and marker `default' so they do not inherit
                ;; the covered text's face: a display string's unfaced chars
                ;; take the face of the text they replace, and after a code
                ;; block that is the tinted source-block background.
                (pad (propertize "\n\n" 'face 'default))
+               (label-gap (if steered (propertize "\n" 'face 'default) pad))
                ;; Leading blank lines before the label.  `pad' (two newlines)
                ;; renders one blank line when `start' is mid-line after content.
                ;; Several cases need fewer, to keep it at exactly one:
@@ -788,7 +793,7 @@ above, putting the first line of a multi-line input out of reach of
                              (label-nl (concat lead me-label
                                                (propertize "\n" 'face
                                                            'default)))
-                             (t (concat lead me-label pad))))
+                             (t (concat lead me-label label-gap))))
                ;; One row per covered prompt position, where the prompt is
                ;; long enough to hold them; the overlay covering the prompt
                ;; then starts past the rows rather than under them.
@@ -796,13 +801,13 @@ above, putting the first line of a multi-line input out of reach of
                ;; Laid past the newline above rather than before it, which
                ;; shifts the padding by one row in each direction: that
                ;; newline now closes the row `lead' opened with its first, and
-               ;; the label needs a blank line of its own after it (the second
-               ;; half of `pad') where it used to borrow that newline's.  What
+               ;; the label's gap closes its row and, for normal prompts,
+               ;; adds a blank line.  What
                ;; `lead' accounts for beyond that first newline still holds.
                (label-rows (and label-nl
                                 (agent-shell-chat--label-rows
                                  (concat (string-remove-prefix "\n" lead)
-                                         me-label pad))))
+                                         me-label label-gap))))
                ;; Whether the covered prompt has a position for every row.
                (split (<= (length label-rows) (- run-end pos)))
                (label-start (if split (+ pos (length label-rows)) pos)))

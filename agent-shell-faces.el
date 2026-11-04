@@ -34,6 +34,11 @@
   "Faces for `agent-shell''s user interface."
   :group 'agent-shell)
 
+(defface agent-shell-steer-label
+  '((t :inherit agent-shell-secondary :height 0.9))
+  "Face for the label above a steered prompt."
+  :group 'agent-shell-faces)
+
 
 ;;; Mode-line and header
 
