@@ -346,9 +346,7 @@ is what bounds the prompt for anything measuring it by searching forward
 for the marker; without it such a search runs to the next submission and
 takes the rest of the turn's output as this prompt's body.
 
-The `[steer]' prefix carries the one thing this shape would otherwise
-lose -- that the prompt was injected into a running turn rather than
-typed before one.
+The prompt prefix displays a small `steer' label above the input.
 
 The turn can end while the steer is in flight, leaving a live input
 prompt at the buffer end by the time the agent answers.  Rendering above
@@ -374,8 +372,12 @@ send it as input."
                                (map-elt state :chunked-group-count))
              :text (concat (propertize (map-nested-elt state '(:agent-config :shell-prompt))
                                        'font-lock-face 'agent-shell-prompt
+                                       'agent-shell-steered t
+                                       'display (concat (propertize "steer" 'face 'agent-shell-steer-label)
+                                                        "\n"
+                                                        (map-nested-elt state '(:agent-config :shell-prompt)))
                                        'field 'output)
-                           (propertize (concat "[steer] " prompt)
+                           (propertize prompt
                                        'font-lock-face 'agent-shell-input))
              :create-new t)
             (shell-maker-insert-end-of-prompt-marker)
