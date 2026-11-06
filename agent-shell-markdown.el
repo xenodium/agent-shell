@@ -511,6 +511,7 @@ block is left as literal text."
         (agent-shell-markdown--style-lists :avoid-ranges avoid-ranges
                                            :complete (or force complete))
         (agent-shell-markdown--style-source-blocks
+         :source-blocks source-blocks
          :highlight-blocks highlight-blocks)
         ;; Tables run last so cell content has already been processed by
         ;; every other pass (bold, italic, links, inline code, etc.).
@@ -1734,8 +1735,12 @@ window and overflow the one actually showing the content."
   (or (ignore-errors (window-body-width window))
       80))
 
-(cl-defun agent-shell-markdown--style-source-blocks (&key (highlight-blocks t))
+(cl-defun agent-shell-markdown--style-source-blocks (&key source-blocks
+                                                          (highlight-blocks t))
   "Strip fenced code block markup and syntax-highlight the body.
+
+SOURCE-BLOCKS are the fenced-block descriptors from
+`agent-shell-markdown--source-blocks', scanned afresh when nil.
 
 For each complete `\\`\\`\\`LANG' / `\\`\\`\\`' fenced block,
 the opening and closing fence lines are deleted from the buffer.
@@ -1765,37 +1770,31 @@ becomes:
 
 with `emacs-lisp-mode' face properties on the body and a
 `agent-shell-markdown-frozen' tag covering those same chars."
-  (let ((case-fold-search nil))
-    (goto-char (point-min))
-    ;; Group 2 captures the opening backtick run; `backref' on the
-    ;; closer matches the same literal run, so a 4-backtick outer
-    ;; fence requires a 4-backtick close — a 3-backtick line inside
-    ;; is just body.  Note this is slightly tighter than CommonMark
-    ;; (which permits close > open), but every-LLM-I've-seen emits
-    ;; matched counts, so the simplification is worth it.
-    (while (re-search-forward
-            (rx (group bol (zero-or-more blank)
-                       (group (>= 3 "`"))
-                       (zero-or-more blank)
-                       (group (zero-or-more (or alphanumeric "-" "+" "#")))
-                       (zero-or-more blank) "\n")
-                (group (*? anychar))
-                "\n"
-                (group bol (zero-or-more blank)
-                       (backref 2)
-                       (zero-or-more blank) (or "\n" eol)))
-            nil t)
-      ;; Honor `agent-shell-markdown-frozen'.
-      (unless (get-text-property (match-beginning 4)
-                                 'agent-shell-markdown-frozen)
-        (let* ((open-start (match-beginning 1))
-               (open-end (match-end 1))
-               (lang (buffer-substring-no-properties (match-beginning 3)
-                                                     (match-end 3)))
-               (body-start (copy-marker (match-beginning 4)))
-               (body-end (copy-marker (match-end 4)))
-               (close-start (match-beginning 5))
-               (close-end (match-end 5))
+  ;; Fences pair via `--source-blocks', the same scan the avoid-ranges
+  ;; come from, so an inner fence never renders on its own while the
+  ;; outer block wrapping it is still open.
+  (dolist (block (or source-blocks (agent-shell-markdown--source-blocks)))
+    (when-let* (((map-elt block :complete))
+                (open-start (marker-position (map-nested-elt block '(:block :start))))
+                (close-end (marker-position (map-nested-elt block '(:block :end))))
+                ((<= (point-min) open-start))
+                ((<= close-end (point-max)))
+                (open-end (save-excursion
+                            (goto-char open-start)
+                            (line-beginning-position 2)))
+                (close-start (save-excursion
+                               (goto-char close-end)
+                               (when (and (bolp) (eq (char-before) ?\n))
+                                 (forward-line -1))
+                               (line-beginning-position)))
+                ;; An empty body ("```\n```") is left literal.
+                ((< open-end close-start))
+                ;; Honor `agent-shell-markdown-frozen'.
+                ((not (get-text-property open-start 'agent-shell-markdown-frozen)))
+                ((not (get-text-property open-end 'agent-shell-markdown-frozen))))
+        (let* ((lang (map-elt block :language))
+               (body-start (copy-marker open-end))
+               (body-end (copy-marker (1- close-start)))
                (source (buffer-substring-no-properties open-start close-end))
                (highlighted (when highlight-blocks
                               (agent-shell-markdown--highlight-code
@@ -1961,11 +1960,7 @@ with `emacs-lisp-mode' face properties on the body and a
                 ;; collapsed to the block's top after the header insert
                 ;; above.
                 (put-text-property (marker-position body-start) panel-bottom
-                                   'agent-shell-markdown-source-block-rendered t))
-              ;; Move point past the body so the outer `re-search-forward'
-              ;; loop doesn't backtrack into body content (e.g. shorter
-              ;; inner fences inside a wider outer fence).
-              (goto-char (marker-position body-end)))))))))
+                                   'agent-shell-markdown-source-block-rendered t))))))))
 
 (defconst agent-shell-markdown--table-line-regexp
   (rx line-start
@@ -5497,7 +5492,7 @@ returns one descriptor with :language \"math\", :body
     (save-excursion
       (goto-char (point-min))
       (while (re-search-forward
-              (rx bol (zero-or-more whitespace)
+              (rx bol (zero-or-more blank)
                   (group (>= 3 "`"))
                   (zero-or-more blank)
                   (group (zero-or-more (or alphanumeric "-" "+" "#")))
@@ -5505,7 +5500,13 @@ returns one descriptor with :language \"math\", :body
               nil t)
         (let ((count (- (match-end 1) (match-beginning 1))))
           (cond
-           ((and open-count (>= count open-count))
+           ;; Fences inside already-rendered text are body, not markup.
+           ((get-text-property (match-beginning 1) 'agent-shell-markdown-frozen))
+           ;; A closing fence carries no info string, so an inner
+           ;; "```elisp" is body of an open "```markdown" block.
+           ((and open-count (>= count open-count)
+                 (string-blank-p (buffer-substring-no-properties
+                                  (match-end 1) (match-end 0))))
             (let ((raw (buffer-substring-no-properties
                         body-start (match-beginning 0))))
               (push (list (cons :language open-language)

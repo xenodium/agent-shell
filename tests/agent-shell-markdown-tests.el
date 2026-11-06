@@ -2110,6 +2110,34 @@ print(\"hi\")
 
 "))))
 
+(ert-deftest agent-shell-markdown-replace-markup-streamed-nested-fences ()
+  ;; Streaming the same nested markdown must render it like the whole
+  ;; text does.  While the outer 4-backtick fence is still open, the
+  ;; complete inner ```elisp block must not render as its own panel,
+  ;; nor may inline markup after it.
+  (with-temp-buffer
+    (insert "````markdown\nSee `x`.\n\n```elisp\n(setq a 1)\n```\n")
+    (agent-shell-markdown-replace-markup)
+    (should-not (string-match-p "⧉" (buffer-string)))
+    (insert "\nIt's **bold**.\n")
+    (agent-shell-markdown-replace-markup)
+    (should-not (string-match-p "⧉" (buffer-string)))
+    (insert "````\n")
+    (agent-shell-markdown-replace-markup)
+    (should (equal (substring-no-properties (buffer-string))
+                   "
+markdown ⧉
+
+See `x`.
+
+```elisp
+(setq a 1)
+```
+
+It's **bold**.
+
+"))))
+
 (ert-deftest agent-shell-markdown-convert-source-block-with-language ()
   ;; `emacs-lisp' source block: fences deleted, an "emacs-lisp ⧉"
   ;; header is inserted as buffer text bracketed by tinted vpad
