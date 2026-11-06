@@ -12179,9 +12179,10 @@ runs for a buffer removed from WINDOW, in which case WINDOW's buffer
 is some other buffer; skip it unless it re-aligns too.
 
 Table column widths and percentage image sizes are measured against
-the display, so a resize or first display can change them; schedule a re-render on any such change.  What actually needs
-re-doing is decided per-item by `agent-shell-markdown-rerender-tables'
-and `agent-shell-markdown-rerender-images' (via their stored widths),
+the display, so a resize or first display can change them; schedule a
+re-render on any such change.  What actually needs re-doing is decided
+per-item by `agent-shell-markdown-rerender-tables' and
+`agent-shell-markdown-rerender-images' (via their stored widths),
 so this can fire freely: it also catches content rendered while the
 buffer was off-screen and then brought back into a same-width window.
 Deferred to an idle timer, which also debounces a drag-resize into a
