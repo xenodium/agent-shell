@@ -12164,14 +12164,18 @@ Deferred worker for `agent-shell--realign-on-change'."
       (agent-shell-markdown-rerender-images))))
 
 (defun agent-shell--realign-on-change (window)
-  "Re-align the current buffer's window-relative markdown shown in WINDOW.
+  "Re-align the window-relative markdown of the buffer shown in WINDOW.
 
 Installed buffer-locally on `window-size-change-functions' and
-`window-buffer-change-functions' (whose buffer-local values are
-called with the window, the buffer current), so it runs only for
-shell windows.  Table column widths and percentage image sizes are
-measured against the display, so a resize or first display can change
-them; schedule a re-render on any such change.  What actually needs
+`window-buffer-change-functions', so it runs only for shell windows.
+Acts on WINDOW's buffer rather than the current one: before Emacs 31
+these hooks run with whatever buffer redisplay had current (usually
+the selected window's).  Since Emacs 31 the buffer-change hook also
+runs for a buffer removed from WINDOW, in which case WINDOW's buffer
+is some other buffer; skip it unless it re-aligns too.
+
+Table column widths and percentage image sizes are measured against
+the display, so a resize or first display can change them; schedule a re-render on any such change.  What actually needs
 re-doing is decided per-item by `agent-shell-markdown-rerender-tables'
 and `agent-shell-markdown-rerender-images' (via their stored widths),
 so this can fire freely: it also catches content rendered while the
@@ -12179,12 +12183,17 @@ buffer was off-screen and then brought back into a same-width window.
 Deferred to an idle timer, which also debounces a drag-resize into a
 single re-render, because modifying a buffer from within these
 redisplay hooks is unsafe."
-  (when (window-live-p window)
-    (when (timerp agent-shell--realign-timer)
-      (cancel-timer agent-shell--realign-timer))
-    (setq agent-shell--realign-timer
-          (run-with-idle-timer 0.15 nil #'agent-shell--realign-rendered
-                               (current-buffer)))))
+  (when-let* (((window-live-p window))
+              (buffer (window-buffer window))
+              ((memq #'agent-shell--realign-on-change
+                     (buffer-local-value 'window-size-change-functions
+                                         buffer))))
+    (with-current-buffer buffer
+      (when (timerp agent-shell--realign-timer)
+        (cancel-timer agent-shell--realign-timer))
+      (setq agent-shell--realign-timer
+            (run-with-idle-timer 0.15 nil #'agent-shell--realign-rendered
+                                 buffer)))))
 
 (defun agent-shell--enable-realign ()
   "Keep the current buffer's rendered markdown aligned to its window.

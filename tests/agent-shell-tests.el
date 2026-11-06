@@ -8639,8 +8639,11 @@ belongs to `agent-shell-markdown-rerender-tables' /
 `agent-shell-markdown-rerender-images', so this hook must not gate on
 the window width being unchanged."
   (with-temp-buffer
-    (let ((scheduled 0))
+    (agent-shell--enable-realign)
+    (let ((scheduled 0)
+          (shell-buffer (current-buffer)))
       (cl-letf (((symbol-function 'window-live-p) (lambda (_) t))
+                ((symbol-function 'window-buffer) (lambda (_) shell-buffer))
                 ((symbol-function 'window-body-width) (lambda (&rest _) 800))
                 ((symbol-function 'run-with-idle-timer)
                  (lambda (&rest _) (setq scheduled (1+ scheduled)) 'timer)))
@@ -8650,6 +8653,46 @@ the window width being unchanged."
         ;; stale, so this must still schedule.
         (agent-shell--realign-on-change 'window)
         (should (= scheduled 2))))))
+
+(ert-deftest agent-shell--realign-on-change-targets-window-buffer ()
+  "Schedule the re-align for the window's buffer, not the current one.
+Regression (#934): before Emacs 31, buffer-local window change hooks
+run with whatever buffer redisplay had current, so a shell window
+resized while another window was selected scheduled the re-render
+for the selected window's buffer instead."
+  (let ((shell-buffer (generate-new-buffer "*realign-shell*"))
+        (other-buffer (generate-new-buffer "*realign-other*"))
+        (scheduled-for nil))
+    (unwind-protect
+        (progn
+          (with-current-buffer shell-buffer
+            (agent-shell--enable-realign))
+          (cl-letf (((symbol-function 'window-live-p) (lambda (_) t))
+                    ((symbol-function 'run-with-idle-timer)
+                     (lambda (_secs _repeat _fn buffer)
+                       (push buffer scheduled-for)
+                       'timer)))
+            ;; Shell window resized while another buffer is current.
+            (cl-letf (((symbol-function 'window-buffer)
+                       (lambda (_) shell-buffer)))
+              (with-current-buffer other-buffer
+                (agent-shell--realign-on-change 'window)))
+            (should (equal scheduled-for (list shell-buffer)))
+            (should (eq (buffer-local-value 'agent-shell--realign-timer
+                                            shell-buffer)
+                        'timer))
+            (should-not (buffer-local-value 'agent-shell--realign-timer
+                                            other-buffer))
+            ;; Emacs 31 also runs the buffer-change hook for the shell
+            ;; buffer when it leaves a window now showing another buffer.
+            (setq scheduled-for nil)
+            (cl-letf (((symbol-function 'window-buffer)
+                       (lambda (_) other-buffer)))
+              (with-current-buffer shell-buffer
+                (agent-shell--realign-on-change 'window)))
+            (should-not scheduled-for)))
+      (kill-buffer shell-buffer)
+      (kill-buffer other-buffer))))
 
 (ert-deftest agent-shell--make-permission-actions-orders-allow-before-reject ()
   "Offer allowing before rejecting, whatever order the agent sent.
