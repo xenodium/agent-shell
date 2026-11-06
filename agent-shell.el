@@ -110,6 +110,10 @@
 (require 'svg nil :noerror)
 (require 'transient)
 
+;; Optional system sleep integration (available in Emacs 31.1+).
+(declare-function system-sleep-block-sleep "system-sleep")
+(declare-function system-sleep-unblock-sleep "system-sleep")
+
 ;; Optional flycheck integration (used in agent-shell--get-flycheck-error-context)
 (declare-function flycheck-overlay-errors-at "flycheck" (pos))
 (declare-function flycheck-error-pos "flycheck" (err))
