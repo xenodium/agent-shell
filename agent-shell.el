@@ -435,10 +435,12 @@ bullet, while a body of prose is untouched."
                     (save-excursion
                       (goto-char (point-max))
                       (beginning-of-line)
-                      (and (looking-at-p
+                      (and (looking-at
                             agent-shell-markdown--list-item-last-line-regexp)
                            (not (get-text-property
-                                 (point) 'agent-shell-markdown-list-rendered))))
+                                 (point) 'agent-shell-markdown-list-rendered))
+                           (not (agent-shell-markdown--rendered-list-marker-p
+                                 (match-beginning 2) (match-end 2)))))
                     ;; A blockquote line or header whose newline never
                     ;; arrived.  A rendered header has lost its `#'s.
                     (save-excursion

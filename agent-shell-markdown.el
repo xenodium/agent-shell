@@ -2074,25 +2074,44 @@ ending text that is complete, so no newline is coming for it.")
 
 (defconst agent-shell-markdown--list-item-pending-regexp
   (rx bol (zero-or-more (any " \t"))
-      (or (any "-*+") (seq (one-or-more digit) (any ".)")))
+      (group (or (any "-*+") (seq (one-or-more digit) (any ".)"))))
       (one-or-more (any " \t")))
   "Lenient regexp: a line that is or may still become a list item.
-Used to hold off a rendered list's bottom padding while another
-item could still stream in below it.")
+Group 1 is the marker.  Used to hold off a rendered list's bottom
+padding while another item could still stream in below it.")
 
 (defconst agent-shell-markdown--list-item-frontier-regexp
   (rx bol (zero-or-more (any " \t"))
-      (or (any "-*+") (seq (one-or-more digit) (opt (any ".)"))))
+      (group (or (any "-*+") (seq (one-or-more digit) (opt (any ".)")))))
       (zero-or-more (any " \t"))
       eos)
   "Regexp: a partial list marker at the streaming frontier (buffer end).
 Matches a bare or half-typed marker whose trailing space has not
 streamed in yet (`-', `*', `1', `1.' at buffer end), unlike
 `agent-shell-markdown--list-item-pending-regexp' which requires the
-space.  Anchored at `eos', so it matches only the still-incomplete
-last line, not a mid-buffer `-foo' or a `---' divider.  Used to hold
-off a list's bottom padding so a marker mid-stream does not get a
-framing blank stranded above the item it becomes.")
+space.  Group 1 is the marker.  Anchored at `eos', so it matches only
+the still-incomplete last line, not a mid-buffer `-foo' or a `---'
+divider.  Used to hold off a list's bottom padding so a marker
+mid-stream does not get a framing blank stranded above the item it
+becomes.")
+
+(defun agent-shell-markdown--rendered-list-marker-p (start end)
+  "Return non-nil when the list marker text [START, END) is rendered markup.
+
+A real marker is still plain text when lists render.  Text matching
+the marker regexps can also be what an earlier pass or chunk left
+behind, which is recognized by the properties that output carries:
+`agent-shell-markdown-source' or `agent-shell-markdown-frozen'.  These
+outlast re-fontification, unlike `face'.  A line already tagged
+`agent-shell-markdown-list-rendered' carries them too, but is a real
+item whose line streamed in over several renders.
+
+For example, the `1.' left by \"## 1. Setup\", \"**1. Step**\",
+\"`1. x`\" or \"1\\. Not a list\" is rendered markup, while the one in
+\"1. **Step**\" is not."
+  (and (not (get-text-property start 'agent-shell-markdown-list-rendered))
+       (or (text-property-not-all start end 'agent-shell-markdown-source nil)
+           (text-property-not-all start end 'agent-shell-markdown-frozen nil))))
 
 (defun agent-shell-markdown--list-bullet (depth)
   "Return the bullet glyph for nesting DEPTH, cycling the glyph set."
@@ -2206,8 +2225,10 @@ marker replaced by a glyph and gets a base indent, via
 stashed on `agent-shell-markdown-source' so
 `agent-shell-copy-as-markdown' round-trips it; a plain copy yields
 the rendered glyphs.  Lines inside AVOID-RANGES (e.g. fenced code
-blocks) are left untouched.  A list item on the last line, with no
-newline yet, renders only when COMPLETE says no more text is coming.
+blocks) are left untouched, as are lines whose marker is rendered
+markup (see `agent-shell-markdown--rendered-list-marker-p').  A list
+item on the last line, with no newline yet, renders only when COMPLETE
+says no more text is coming.
 
 For example, the buffer:
 
@@ -2224,15 +2245,18 @@ a two-column base indent."
              (line-end (match-end 0))
              (avoid (agent-shell-markdown-in-avoid-range-p
                      line-start line-end avoid-ranges)))
-        (if avoid
-            (goto-char (cdr avoid))
+        (cond
+         (avoid (goto-char (cdr avoid)))
+         ((agent-shell-markdown--rendered-list-marker-p
+           (match-beginning 2) (match-end 2)))
+         (t
           (agent-shell-markdown--render-list-line
            :line-start line-start
            :line-end line-end
            :indent-width (- (match-end 1) (match-beginning 1))
            :marker-start (match-beginning 2)
            :marker-end (match-end 2)
-           :content-start (match-end 3)))))
+           :content-start (match-end 3))))))
     ;; The loop above is newline-anchored, so a list item on the last
     ;; line is left raw: more of it may still stream in.  Render it once
     ;; COMPLETE says nothing will.  A newline just past a narrowed
@@ -2244,6 +2268,8 @@ a two-column base indent."
       (when (and (not (get-text-property (point)
                                          'agent-shell-markdown-list-rendered))
                  (looking-at agent-shell-markdown--list-item-last-line-regexp)
+                 (not (agent-shell-markdown--rendered-list-marker-p
+                       (match-beginning 2) (match-end 2)))
                  (not (agent-shell-markdown-in-avoid-range-p
                        (match-beginning 0) (match-end 0) avoid-ranges)))
         (agent-shell-markdown--render-list-line
@@ -2580,8 +2606,12 @@ gains a blank line above and below it:
     (agent-shell-markdown--pad-regions
      'agent-shell-markdown-list-rendered
      (lambda ()
-       (or (looking-at-p agent-shell-markdown--list-item-pending-regexp)
-           (looking-at-p agent-shell-markdown--list-item-frontier-regexp)))
+       (seq-some (lambda (regexp)
+                   (and (looking-at regexp)
+                        (not (agent-shell-markdown--rendered-list-marker-p
+                              (match-beginning 1) (match-end 1)))))
+                 (list agent-shell-markdown--list-item-pending-regexp
+                       agent-shell-markdown--list-item-frontier-regexp)))
      start)))
 
 (cl-defun agent-shell-markdown--find-tables (&key avoid-ranges complete)
