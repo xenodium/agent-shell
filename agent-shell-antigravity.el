@@ -19,12 +19,8 @@
 ;;
 ;; This file includes Google Antigravity-specific configurations.
 ;;
-;; Antigravity ships as a prebuilt "agy_acp_server" binary (no npm/pip
-;; package), distributed per-platform.  Download and unpack the archive
-;; for your platform from
-;; https://github.com/agentclientprotocol/registry/tree/main/antigravity-acp
-;; and make sure the resulting executable is on `exec-path' (or set
-;; `agent-shell-antigravity-acp-command' to an absolute path).
+;; Antigravity's CLI ("agy") includes an ACP server via "agy acp".
+;; See https://antigravity.google/docs/ide/extensions/acp
 ;;
 
 ;;; Code:
@@ -42,19 +38,12 @@
 (declare-function agent-shell--dwim "agent-shell")
 
 (defcustom agent-shell-antigravity-acp-command
-  (cond ((memq system-type '(windows-nt ms-dos))
-         '("agy_acp_server.exe"))
-        ((eq system-type 'darwin)
-         '("agy_acp_server.par"))
-        (t
-         '("agy_acp_server.par" "--uid=")))
+  '("agy" "acp")
   "Command and parameters for the Antigravity ACP server.
 
 The first element is the command name, and the rest are command
-parameters.  Defaults follow the per-platform distribution metadata at
-https://github.com/agentclientprotocol/registry/tree/main/antigravity-acp
-\(Linux additionally passes \"--uid=\").  Set this to an absolute path
-if the binary isn't on variable `exec-path'."
+parameters.  Set the command to an absolute path if \"agy\" isn't on
+variable `exec-path'."
   :type '(repeat string)
   :group 'agent-shell)
 
@@ -155,7 +144,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :authenticate-request-maker #'agent-shell-antigravity--authenticate-request
    :client-maker (lambda (buffer)
                    (agent-shell-antigravity-make-client :buffer buffer))
-   :install-instructions "See https://antigravity.google/docs/ide/extensions for installation."))
+   :install-instructions "See https://antigravity.google/docs/ide/extensions/acp for installation."))
 
 (defun agent-shell-antigravity--authenticate-request ()
   "Return the `authenticate' request for the configured method.

@@ -326,43 +326,13 @@ See https://github.com/can1357/oh-my-pi for details.
 
 *** Antigravity
 
-For Antigravity, download the =agy_acp_server= binary for your platform from the [[https://github.com/agentclientprotocol/registry/tree/main/antigravity-acp][ACP registry entry]] and make sure it's on your =PATH= (or set =agent-shell-antigravity-acp-command= to an absolute path).
+For Antigravity, install the Antigravity CLI and make sure =agy= is on your =PATH= (agent-shell runs =agy acp=). Sign in once via an interactive =agy= session or with:
 
-Alternatively, you can bootstrap the antigravity tool with the following function:
-
-#+begin_src emacs-lisp
-  (defun agent-shell-antigravity-bootstrap (&optional force)
-    "Download and install the latest Antigravity ACP server binary."
-    (interactive "P")
-    (let* ((arch (pcase (car (split-string system-configuration "-"))
-                   ((or "x86_64" "amd64") "x86_64")
-                   ((or "aarch64" "arm64") "aarch64")
-                   (a a)))
-           (os (pcase system-type ('darwin "darwin") ('windows-nt "windows") (_ "linux")))
-           (platform (format "%s-%s" os arch))
-           (install-dir (agent-shell-cache-dir "antigravity" platform))
-           (bin-name (file-name-nondirectory (car agent-shell-antigravity-acp-command)))
-           (bin-path (expand-file-name bin-name install-dir)))
-      (unless (and (not force) (file-executable-p bin-path))
-        (message "Antigravity: bootstrapping server for %s..." platform)
-        (make-directory install-dir t)
-        (let* ((reg-url "https://raw.githubusercontent.com/agentclientprotocol/registry/main/antigravity-acp/agent.json")
-               (reg (with-temp-buffer
-                      (url-insert-file-contents reg-url)
-                      (json-parse-buffer :object-type 'alist)))
-               (archive-url (map-nested-elt reg `(distribution binary ,(intern platform) archive)))
-               (zip (expand-file-name "server.zip" install-dir)))
-          (url-copy-file archive-url zip t)
-          (call-process "unzip" nil nil nil "-o" "-q" zip "-d" install-dir)
-          (delete-file zip)
-          (set-file-modes bin-path #o755)))
-      (setq agent-shell-antigravity-acp-command
-            (cons bin-path (cdr agent-shell-antigravity-acp-command)))
-      (message "Antigravity: using ACP server at %s" bin-path)
-      bin-path))
+#+begin_src bash
+agy acp --login
 #+end_src
 
-See https://antigravity.google/docs/ide/extensions for details.
+See https://antigravity.google/docs/ide/extensions/acp for details.
 
 *** OpenClaw
 
