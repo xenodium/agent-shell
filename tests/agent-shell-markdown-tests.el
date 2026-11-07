@@ -3078,6 +3078,30 @@ after" nil)))))
   (should (equal (agent-shell-markdown--table-wrap-text "日本のfoo語" 3)
                  '("日" "本" "の" "foo" "語"))))
 
+(defun agent-shell-markdown-tests--image-text (text)
+  "Return TEXT with a `display' image over all of it.
+As a render function shows an equation: the source stays in the
+buffer and one image is displayed in its place."
+  (propertize text 'display '(image :type svg :data "<svg/>")))
+
+(ert-deftest agent-shell-markdown-table-wrap-text-keeps-image-whole ()
+  ;; Text under one `display' image is one word: a break at a space
+  ;; inside it would show the image once on each line.
+  (let* ((image (agent-shell-markdown-tests--image-text "\\( x + y \\)"))
+         (lines (agent-shell-markdown--table-wrap-text
+                 (concat "a " image " b") 5)))
+    (should (equal lines '("a" "\\( x + y \\)" "b")))
+    (should (equal-including-properties (nth 1 lines) image))))
+
+(ert-deftest agent-shell-markdown-table-longest-word-counts-image-whole ()
+  ;; A column is at least as wide as an image in it.  Without a
+  ;; graphical window, the image counts as the text it covers.
+  (should (= 11 (agent-shell-markdown--table-longest-word
+                 :str (concat "a "
+                              (agent-shell-markdown-tests--image-text
+                               "\\( x + y \\)")
+                              " b")))))
+
 (ert-deftest agent-shell-markdown-mirrors-face-to-font-lock-face ()
   ;; Faces are mirrored to `font-lock-face' so our styling survives
   ;; `font-lock-mode' re-fontification in comint / shell-maker buffers.
