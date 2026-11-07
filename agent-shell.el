@@ -2708,7 +2708,6 @@ mouse selection or a kill where mark > point) is normalized."
   "C-c C-s" #'agent-shell-set-session-config-option
   "<remap> <yank>" #'agent-shell-yank-dwim
   "<remap> <comint-send-input>" #'agent-shell-submit
-  "<remap> <xref-find-definitions>" #'agent-shell-markdown-open-link-at-point
   ;; No equivalent in comint, bind explicitly.
   "M-RET" #'agent-shell-submit-override
   "M-<return>" #'agent-shell-submit-override)
@@ -5322,6 +5321,7 @@ variable (see makunbound)"))
       (setq-local filter-buffer-substring-function #'agent-shell--filter-buffer-substring)
       (setq-local beginning-of-defun-function #'agent-shell--beginning-of-block)
       (setq-local end-of-defun-function #'agent-shell--end-of-block)
+      (add-hook 'xref-backend-functions #'agent-shell-markdown-xref-backend nil t)
       (agent-shell--update-header-and-mode-line)
       (add-hook 'kill-buffer-hook #'agent-shell--clean-up nil t)
       (add-hook 'kill-buffer-query-functions

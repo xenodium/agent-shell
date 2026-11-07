@@ -1340,7 +1340,6 @@ VIEWPORT-BUFFER is the viewport buffer to check."
     (define-key map (kbd "n") #'agent-shell-viewport-next-item)
     (define-key map (kbd "p") #'agent-shell-viewport-previous-item)
     (define-key map (kbd "C-M-u") #'agent-shell-backward-up-item)
-    (define-key map [remap xref-find-definitions] #'agent-shell-markdown-open-link-at-point)
     (define-key map (kbd "f") #'agent-shell-viewport-next-page)
     (define-key map (kbd "b") #'agent-shell-viewport-previous-page)
     (define-key map (kbd "r") #'agent-shell-viewport-reply)
@@ -1715,6 +1714,7 @@ For example, offer to kill associated shell session."
   (setq-local filter-buffer-substring-function #'agent-shell--filter-buffer-substring)
   (setq-local beginning-of-defun-function #'agent-shell--beginning-of-block)
   (setq-local end-of-defun-function #'agent-shell--end-of-block)
+  (add-hook 'xref-backend-functions #'agent-shell-markdown-xref-backend nil t)
   (setq buffer-read-only t)
   (add-hook 'kill-buffer-hook #'agent-shell-viewport--clean-up nil t))
 

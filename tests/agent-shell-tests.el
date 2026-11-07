@@ -9761,23 +9761,6 @@ reaching item navigation."
     (goto-char (match-beginning 0))
     (should (get-text-property (point) 'keymap))))
 
-(ert-deftest agent-shell-xref-find-definitions-opens-link-test ()
-  "\\[xref-find-definitions] on a rendered link opens it.
-
-That is how a `path:line' is followed anywhere else in Emacs, and
-`xref-go-back' already comes back from an opened link."
-  (agent-shell-tests--with-rendered-shell
-      "see [docs](https://example.com) here"
-    (use-local-map agent-shell-mode-map)
-    (should (search-forward "docs"))
-    (goto-char (match-beginning 0))
-    (should (eq #'agent-shell-markdown-open-link-at-point
-                (command-remapping 'xref-find-definitions))))
-  (with-temp-buffer
-    (use-local-map agent-shell-viewport-view-mode-map)
-    (should (eq #'agent-shell-markdown-open-link-at-point
-                (command-remapping 'xref-find-definitions)))))
-
 (ert-deftest agent-shell-backward-up-item-returns-to-a-table-s-first-cell ()
   (agent-shell-tests--with-rendered-shell
       "| A | B |

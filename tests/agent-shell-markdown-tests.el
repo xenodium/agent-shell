@@ -1223,6 +1223,52 @@ the citation, as after any other jump."
         (kill-buffer (find-buffer-visiting file)))
       (delete-directory directory t))))
 
+(ert-deftest agent-shell-markdown-xref-find-definitions-test ()
+  "Test \\[xref-find-definitions] on a citation visits it.
+
+Through `agent-shell-markdown-xref-backend', landing on the cited line
+and column, with `xref-go-back' returning to the citation."
+  (let* ((directory (make-temp-file "agent-shell-refs" t))
+         (default-directory (file-name-as-directory directory))
+         (file (expand-file-name "foo.el"))
+         (origin (generate-new-buffer "*agent-shell-origin*")))
+    (unwind-protect
+        (with-selected-window (frame-first-window)
+          (save-window-excursion
+            (with-temp-file file (insert "one\ntwo\nthree\n"))
+            (switch-to-buffer origin)
+            (add-hook 'xref-backend-functions
+                      #'agent-shell-markdown-xref-backend nil t)
+            (insert "see foo.el:3:2 here")
+            (agent-shell-markdown-replace-markup :complete t)
+            (goto-char 7)
+            (should (eq 'agent-shell-markdown (xref-find-backend)))
+            (xref-find-definitions (xref-backend-identifier-at-point
+                                    (xref-find-backend)))
+            (should (equal (file-truename file)
+                           (file-truename (or (buffer-file-name) ""))))
+            (should (= 3 (line-number-at-pos)))
+            (should (= 1 (current-column)))
+            (xref-go-back)
+            (should (eq origin (current-buffer)))
+            (should (= 7 (point)))))
+      (kill-buffer origin)
+      (when (find-buffer-visiting file)
+        (kill-buffer (find-buffer-visiting file)))
+      (delete-directory directory t))))
+
+(ert-deftest agent-shell-markdown-xref-backend-steps-aside-test ()
+  "Test `agent-shell-markdown-xref-backend' is nil off a local file link.
+That leaves \\[xref-find-definitions] to the next backend."
+  (with-temp-buffer
+    (insert (agent-shell-markdown-convert "see [docs](https://example.com) here"))
+    (goto-char (point-min))
+    (should-not (agent-shell-markdown-xref-backend))
+    (search-forward "docs")
+    (goto-char (match-beginning 0))
+    (should (agent-shell-markdown-link-url-at-point))
+    (should-not (agent-shell-markdown-xref-backend))))
+
 (ert-deftest agent-shell-markdown-linkify-file-reference-forms ()
   ;; The forms agents write: a line, a range, a line and column, and
   ;; GitHub's anchor.

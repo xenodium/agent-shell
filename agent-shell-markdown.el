@@ -1120,6 +1120,38 @@ visits foo.el at line 12, column 5."
        :url url :tracking-file tracking-file))
     (agent-shell-markdown--open-link url)))
 
+(defun agent-shell-markdown-xref-backend ()
+  "Return `agent-shell-markdown' when point is on a link to a local file.
+
+For `xref-backend-functions', so \\[xref-find-definitions] on a rendered
+`path:line[:col]' citation visits it.  Returns nil anywhere else, web
+and binary file links included, leaving point to the next backend.
+
+For example, on a rendered \"foo.el:12:5\" returns `agent-shell-markdown'
+and \\[xref-find-definitions] visits foo.el at line 12, column 5."
+  (when-let* ((url (agent-shell-markdown-link-url-at-point))
+              (parsed (agent-shell-markdown--parse-local-link url))
+              ((not (agent-shell-markdown--binary-file-p (map-elt parsed :file)))))
+    'agent-shell-markdown))
+
+(cl-defmethod xref-backend-identifier-at-point ((_backend (eql agent-shell-markdown)))
+  "Return the link target at point, as in \"foo.el:12:5\"."
+  (agent-shell-markdown-link-url-at-point))
+
+(cl-defmethod xref-backend-definitions ((_backend (eql agent-shell-markdown)) identifier)
+  "Return where IDENTIFIER, a link target such as \"foo.el:12:5\", points."
+  (when-let* ((parsed (agent-shell-markdown--parse-local-link identifier)))
+    (list (xref-make identifier
+                     (xref-make-file-location
+                      (map-elt parsed :file)
+                      (or (map-elt parsed :line-start) 1)
+                      ;; Agents count columns from 1, xref from 0.
+                      (max 0 (1- (or (map-elt parsed :column) 1))))))))
+
+(cl-defmethod xref-backend-identifier-completion-table ((_backend (eql agent-shell-markdown)))
+  "Return nil, links having no fixed set of targets to complete."
+  nil)
+
 (cl-defun agent-shell-markdown--apply-link-properties (&key start end url tracking-file)
   "Make [START, END) a rendered link to URL.
 
