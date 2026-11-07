@@ -2846,14 +2846,34 @@ Each rendering is returned as a propertized string."
 
 (ert-deftest agent-shell-markdown-list-keeps-bold-numbered-lines-apart ()
   ;; Bold-prefixed points like `**1. X**' aren't list items, so the blank
-  ;; line the author left between them stays, and a list under them is
-  ;; framed as usual.
+  ;; line the author left between them stays.  A list right under one hangs
+  ;; off it.
   (let ((agent-shell-markdown-list-bullets '("•")))
     (with-temp-buffer
       (insert "**1. First** point.\n\n**2. Second** point:\n- a\n- b\n")
       (agent-shell-markdown-replace-markup)
       (should (equal (substring-no-properties (buffer-string))
-                     "1. First point.\n\n2. Second point:\n\n• a\n• b\n")))))
+                     "1. First point.\n\n2. Second point:\n• a\n• b\n")))))
+
+(ert-deftest agent-shell-markdown-list-hangs-off-bold-numbered-line ()
+  ;; A list directly under a bold numbered step gets no top gap, so each
+  ;; step keeps its items.  Other lines above a list still frame it.
+  (let ((agent-shell-markdown-list-bullets '("•")))
+    (dolist (case '(("**1. First**\n- a\n- b\n\n**2. Second**\n- c\n- d\n"
+                     "1. First\n• a\n• b\n\n2. Second\n• c\n• d\n")
+                    ("__1. First__\n- a\n" "1. First\n• a\n")
+                    ("**1.** First:\n- a\n" "1. First:\n• a\n")
+                    ("**- First**\n- a\n" "- First\n• a\n")
+                    ("**1. First**\n\n- a\n" "1. First\n\n• a\n")
+                    ("**1. First**\n- a\nafter\n" "1. First\n• a\n\nafter\n")
+                    ("**Steps:**\n- a\n" "Steps:\n\n• a\n")
+                    ("## 1. Setup\n- a\n" "1. Setup\n\n• a\n")
+                    ("*1. First*\n- a\n" "1. First\n\n• a\n")
+                    ("`1. First`\n- a\n" "1. First\n\n• a\n")
+                    ("intro\n- a\n" "intro\n\n• a\n")))
+      (ert-info ((format "Markdown: %S" (car case)))
+        (dolist (rendered (agent-shell-markdown-tests--render-all-ways (car case)))
+          (should (equal (substring-no-properties rendered) (cadr case))))))))
 
 (ert-deftest agent-shell-markdown-list-keeps-blank-bordering-prose ()
   ;; A blank with a list item on only one side frames the list off from
