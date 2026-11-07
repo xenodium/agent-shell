@@ -1099,6 +1099,7 @@ otherwise group 3 (bare form)."
   (let ((group (if (match-beginning 2) 2 3)))
     (buffer-substring-no-properties (match-beginning group) (match-end group))))
 
+;;;###autoload
 (defun agent-shell-markdown-open-link-at-point (&optional pos)
   "Open the rendered link at POS (or point).
 
