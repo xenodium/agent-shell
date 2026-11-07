@@ -2530,8 +2530,10 @@ A block is the run of consecutive lines that each carry PROPERTY,
 joined across their line terminators.  A line may carry PROPERTY only
 partway (a list item rendered before the rest of its line streamed in
 leaves the tail untagged); its whole line still counts, so the next
-line is still folded in rather than framed apart.  The result is where
-PROPERTY next stops, so a caller can resume scanning there.
+line is still folded in rather than framed apart.  A line carrying
+none of PROPERTY ends the block, even when the line after it carries
+PROPERTY again.  The result is where PROPERTY next stops, so a caller
+can resume scanning there.
 
 For example, with the current buffer holding two PROPERTY-tagged list
 lines (the first tagged only up to `(', the rest streamed in later):
@@ -2544,7 +2546,8 @@ one partway through the first line."
   (let ((end (or (next-single-property-change start property nil (point-max))
                  (point-max))))
     (while (let ((line-end (if (and (< end (point-max))
-                                    (not (eq (char-after end) ?\n)))
+                                    (not (eq (char-after end) ?\n))
+                                    (not (eq (char-before end) ?\n)))
                                (save-excursion (goto-char end)
                                                (line-end-position))
                              end)))

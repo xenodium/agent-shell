@@ -2844,6 +2844,18 @@ Each rendering is returned as a propertized string."
         (dolist (rendered (agent-shell-markdown-tests--render-all-ways (car case)))
           (should (equal (substring-no-properties rendered) (cadr case))))))))
 
+(ert-deftest agent-shell-markdown-list-blocks-end-at-untagged-line ()
+  ;; A line that isn't a list item ends the list above it, so it's framed
+  ;; the same whether the text arrives at once or streamed in chunks.
+  (let ((agent-shell-markdown-list-bullets '("•")))
+    (dolist (case '(("- a\nprose\n- b\n" "• a\n\nprose\n\n• b\n")
+                    ("- a\n## 1. Setup\n- b\n" "• a\n\n1. Setup\n\n• b\n")
+                    ("**1. First**\n- a\n**2. Second**\n- b\n"
+                     "1. First\n• a\n\n2. Second\n• b\n")))
+      (ert-info ((format "Markdown: %S" (car case)))
+        (dolist (rendered (agent-shell-markdown-tests--render-all-ways (car case)))
+          (should (equal (substring-no-properties rendered) (cadr case))))))))
+
 (ert-deftest agent-shell-markdown-list-keeps-bold-numbered-lines-apart ()
   ;; Bold-prefixed points like `**1. X**' aren't list items, so the blank
   ;; line the author left between them stays.  A list right under one hangs
