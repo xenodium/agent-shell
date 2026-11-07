@@ -4313,7 +4313,8 @@ see https://github.com/xenodium/agent-shell/issues/217, while goose sends
 before/after/path; see https://github.com/xenodium/agent-shell/issues/569).
 
 Returns a list of alists with oldText/newText/path keys, normalizing
-rawInput variants to that shape."
+rawInput variants to that shape.  Items parsed from a unified diff also
+carry a line key with their hunk's starting line."
   (let ((content (map-elt acp-tool-call 'content))
         (raw-input (map-elt acp-tool-call 'rawInput)))
     (cond
@@ -4335,14 +4336,18 @@ rawInput variants to that shape."
       (list `((oldText . ,(or (map-elt raw-input 'old_str) ""))
               (newText . ,(map-elt raw-input 'new_str))
               (path . ,(map-elt raw-input 'path)))))
-     ;; Attempt diff from rawInput (eg. Copilot).
+     ;; Attempt diff from rawInput (eg. Copilot).  One item per hunk,
+     ;; so distant hunks aren't rendered as adjacent.  See
+     ;; https://github.com/xenodium/agent-shell/issues/931
      ((and raw-input (map-elt raw-input 'diff))
-      (let ((parsed (agent-shell--parse-unified-diff
-                     (map-elt raw-input 'diff))))
-        (list `((oldText . ,(car parsed))
-                (newText . ,(cdr parsed))
-                (path . ,(or (map-elt raw-input 'fileName)
-                             (map-elt raw-input 'path)))))))
+      (mapcar (lambda (hunk)
+                `((oldText . ,(map-elt hunk :old))
+                  (newText . ,(map-elt hunk :new))
+                  (path . ,(or (map-elt raw-input 'fileName)
+                               (map-elt raw-input 'path)))
+                  (line . ,(map-elt hunk :line))))
+              (agent-shell--parse-unified-diff
+               (map-elt raw-input 'diff))))
      ;; Attempt diff from rawInput (eg. goose).
      ((and raw-input (map-elt raw-input 'before))
       (list `((oldText . ,(or (map-elt raw-input 'before) ""))
@@ -4353,11 +4358,12 @@ rawInput variants to that shape."
   "Convert a single ACP-DIFF-ITEM to a diff info alist.
 
 ACP-DIFF-ITEM is an alist with oldText/newText/path keys, as produced by
-`agent-shell--diff-items'.
+`agent-shell--diff-items'.  Its optional line key (a hunk's starting
+line) is carried as a hint for locating the change.
 
-LOCATIONS is the ACP tool call `locations' array.  When an entry's path
-matches the diff, its line is carried as a hint for locating the change.
-It is optional (and often absent), but authoritative when present.
+LOCATIONS is the ACP tool call `locations' array.  When ACP-DIFF-ITEM has
+no line and an entry's path matches the diff, the entry's line is
+carried as the hint instead.  It is optional (and often absent).
 
 Returns an alist of the form:
 
@@ -4366,7 +4372,7 @@ Returns an alist of the form:
    (:file . file-path)
    (:line . hint-line))
 
-The :line entry is omitted when no matching location line is available.
+The :line entry is omitted when no line is available.
 Returns nil when the item has no newText or path."
   (when-let* ((new-text (map-elt acp-diff-item 'newText))
               (file-path (map-elt acp-diff-item 'path)))
@@ -4376,30 +4382,51 @@ Returns nil when the item has no newText or path."
      (list (cons :old (or (map-elt acp-diff-item 'oldText) ""))
            (cons :new new-text)
            (cons :file file-path))
-     (when-let* ((location (seq-find (lambda (location)
-                                       (equal (map-elt location 'path) file-path))
-                                     locations))
-                 (line (map-elt location 'line)))
+     (when-let* ((line (or (map-elt acp-diff-item 'line)
+                           (map-elt (seq-find (lambda (location)
+                                                (equal (map-elt location 'path) file-path))
+                                              locations)
+                                    'line))))
        (list (cons :line line))))))
 
 ;; Based on https://github.com/editor-code-assistant/eca-emacs/blob/298849d1aae3241bf8828b6558c6deb45d75a3c8/eca-diff.el#L22
 (defun agent-shell--parse-unified-diff (diff-string)
-  "Parse unified DIFF-STRING into old and new text.
-Returns a cons cell (OLD-TEXT . NEW-TEXT)."
-  (let (old-lines new-lines in-hunk)
-    (dolist (line (split-string diff-string "\n"))
+  "Return the hunks in unified DIFF-STRING as a list of alists.
+
+Hunks are kept separate so that changes far apart in the file are not
+rendered as adjacent.  For example:
+
+  @@ -29,2 +29,1 @@
+   a
+  -b
+  @@ -179,2 +178,2 @@
+   c
+  +d
+
+returns:
+
+  (((:old . \"a\\nb\\n\") (:new . \"a\\n\") (:line . 29))
+   ((:old . \"c\\n\") (:new . \"c\\nd\\n\") (:line . 179)))
+
+where :line is the hunk's starting line in the old file."
+  (let (hunks)
+    (dolist (diff-line (split-string diff-string "\n"))
       (cond
-       ((string-match "^@@.*@@" line)
-        (setq in-hunk t))
-       ((and in-hunk (string-prefix-p " " line))
-        (push (substring line 1) old-lines)
-        (push (substring line 1) new-lines))
-       ((and in-hunk (string-prefix-p "-" line))
-        (push (substring line 1) old-lines))
-       ((and in-hunk (string-prefix-p "+" line))
-        (push (substring line 1) new-lines))))
-    (cons (string-join (nreverse old-lines) "\n")
-          (string-join (nreverse new-lines) "\n"))))
+       ((string-match "^@@ -\\([0-9]+\\)" diff-line)
+        (push (list (cons :old "")
+                    (cons :new "")
+                    (cons :line (string-to-number (match-string 1 diff-line))))
+              hunks))
+       ((and hunks (string-match "^\\([ +-]\\)\\(.*\\)" diff-line))
+        (let ((prefix (match-string 1 diff-line))
+              (text (concat (match-string 2 diff-line) "\n")))
+          (unless (equal prefix "+")
+            (setf (map-elt (car hunks) :old)
+                  (concat (map-elt (car hunks) :old) text)))
+          (unless (equal prefix "-")
+            (setf (map-elt (car hunks) :new)
+                  (concat (map-elt (car hunks) :new) text)))))))
+    (nreverse hunks)))
 
 (defun agent-shell--format-diff-as-text (diff)
   "Format DIFF info as text suitable for display in tool call body.

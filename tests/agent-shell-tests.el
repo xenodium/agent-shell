@@ -1628,6 +1628,36 @@ straight to the shell."
                                                 (after . "Test")))))
                  '(((:old . "") (:new . "Test") (:file . "/tmp/test.txt"))))))
 
+(ert-deftest agent-shell--make-diff-infos-multi-hunk-test ()
+  "Test a multi-hunk rawInput diff yields one diff info per hunk.
+Based on Copilot traffic from
+https://github.com/xenodium/agent-shell/issues/931."
+  (should (equal (agent-shell--make-diff-infos
+                  :acp-tool-call
+                  '((rawInput . ((fileName . "/home/ivan/code/flakes/flake.nix")
+                                 (diff . "diff --git a/flake.nix b/flake.nix
+index 0000000..0000000 100644
+--- a/flake.nix
++++ b/flake.nix
+@@ -29,4 +29,3 @@
+     };
+\s
+-    plasma-manager = {};
+     emacs-overlay = {
+@@ -179,3 +171,2 @@
+               sharedNixSettings
+-              inputs.plasma-manager.homeModules.plasma-manager
+               ./hosts/home.nix
+")))))
+                 '(((:old . "    };\n\n    plasma-manager = {};\n    emacs-overlay = {\n")
+                    (:new . "    };\n\n    emacs-overlay = {\n")
+                    (:file . "/home/ivan/code/flakes/flake.nix")
+                    (:line . 29))
+                   ((:old . "              sharedNixSettings\n              inputs.plasma-manager.homeModules.plasma-manager\n              ./hosts/home.nix\n")
+                    (:new . "              sharedNixSettings\n              ./hosts/home.nix\n")
+                    (:file . "/home/ivan/code/flakes/flake.nix")
+                    (:line . 179))))))
+
 (ert-deftest agent-shell--diffs-line-stats-test ()
   "Test `agent-shell--diffs-line-stats' aggregates across diffs."
   ;; Test nil input
