@@ -3501,6 +3501,49 @@ is safe to call on display and on resize."
               (set-marker (nth 1 region) nil)))
           (restore-buffer-modified-p modified))))))
 
+(defun agent-shell-markdown-rerender-table (pos &optional source)
+  "Lay out the table at POS again, and return its markdown source.
+
+A rendered table is laid out from the markdown stored on it (see
+`agent-shell-markdown-rerender-tables').  With SOURCE, a
+propertized markdown table string, it is laid out from SOURCE
+instead, and SOURCE becomes the stored markdown, so a later
+re-layout, such as one on a resize, keeps it.  Without SOURCE, it
+is laid out from the stored markdown.  Columns are measured
+against the window showing the buffer now.
+
+For a render function whose output appears after the table was
+laid out: an image put on an equation's text later is not in the
+stored markdown, and the columns were measured without it.  The
+render function adds the image to a copy of the returned source
+and passes the copy back.
+
+The re-layout is not an edit: it ignores `read-only', stays off
+the undo list and leaves the buffer's modified flag as it was.
+Return nil, changing nothing, when no rendered table covers POS."
+  (when-let* ((stored (get-text-property
+                       pos 'agent-shell-markdown-table-source)))
+    (let ((start (if (and (> pos (point-min))
+                          (eq (get-text-property
+                               (1- pos) 'agent-shell-markdown-table-source)
+                              stored))
+                     (previous-single-property-change
+                      pos 'agent-shell-markdown-table-source nil (point-min))
+                   pos))
+          (end (next-single-property-change
+                pos 'agent-shell-markdown-table-source nil (point-max)))
+          (source (or source stored))
+          (inhibit-read-only t)
+          (buffer-undo-list t)
+          (modified (buffer-modified-p)))
+      (save-excursion
+        (agent-shell-markdown--render-table
+         (list (cons :source source)
+               (cons :start start)
+               (cons :end end))))
+      (restore-buffer-modified-p modified)
+      source)))
+
 (defun agent-shell-markdown--displayed-window-width ()
   "Return the body pixel width of a window showing the current buffer, or nil.
 Nil when the buffer is displayed in no window, so a caller can treat
