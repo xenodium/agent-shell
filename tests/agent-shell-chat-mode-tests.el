@@ -253,8 +253,8 @@ without an `agent-shell-chat--tag' are left alone."
 
 (ert-deftest agent-shell-chat-boxed-label-test ()
   "The default label pads its text and faces it by role."
-  (let ((me (agent-shell-chat--boxed-label '((:text . "Me") (:role . user))))
-        (agent (agent-shell-chat--boxed-label '((:text . "Claude") (:role . agent)))))
+  (let ((me (agent-shell-chat-boxed-label '((:text . "Me") (:role . user))))
+        (agent (agent-shell-chat-boxed-label '((:text . "Claude") (:role . agent)))))
     (should (equal " Me " me))
     (should (eq 'agent-shell-chat-me-label (get-text-property 0 'face me)))
     (should (equal " Claude " agent))
@@ -273,14 +273,39 @@ without an `agent-shell-chat--tag' are left alone."
       (agent-shell-chat-mode-tests--marker)
       (insert "hi there\n")
       (agent-shell-chat--relabel)
-      (should (member '((:text . "Me") (:role . user)) labels))
-      (should (member '((:text . "Claude") (:role . agent)) labels))
+      (should (member '((:text . "Me") (:role . user) (:prompt-start . 1)) labels))
+      (should (member '((:text . "Claude") (:role . agent) (:prompt-start . 1)) labels))
       (should (string-match-p
                "<Me>" (agent-shell-chat-mode-tests--label-string
                        (car (agent-shell-chat-mode-tests--me-overlays)))))
       (should (string-match-p
                "<Claude>" (agent-shell-chat-mode-tests--agent-label-string
                            (car (agent-shell-chat-mode-tests--agent-overlays))))))))
+
+(ert-deftest agent-shell-chat-label-function-prompt-start-test ()
+  "Both labels of a turn are told where its prompt starts; the live prompt is not."
+  (let* ((labels nil)
+         (agent-shell-chat-label-function
+          (lambda (label)
+            (push label labels)
+            (map-elt label :text))))
+    (agent-shell-chat-mode-tests--with-shell
+      (agent-shell-chat-mode-tests--prompt "Claude> ")
+      (insert "one\n")
+      (agent-shell-chat-mode-tests--marker)
+      (insert "first\n\n")
+      (agent-shell-chat-mode-tests--prompt "Claude> ")
+      (insert "two\n")
+      (agent-shell-chat-mode-tests--marker)
+      (insert "second\n\n")
+      (agent-shell-chat-mode-tests--prompt "Claude> ")
+      (agent-shell-chat--relabel)
+      (should (member '((:text . "Me") (:role . user) (:prompt-start . 1)) labels))
+      (should (member '((:text . "Claude") (:role . agent) (:prompt-start . 1)) labels))
+      (should (member '((:text . "Me") (:role . user) (:prompt-start . 47)) labels))
+      (should (member '((:text . "Claude") (:role . agent) (:prompt-start . 47)) labels))
+      ;; The live prompt is labeled, but stands for no turn yet.
+      (should (member '((:text . "Me") (:role . user) (:prompt-start . nil)) labels)))))
 
 (ert-deftest agent-shell-chat-row-props-test ()
   "A row holding a `display' is drawn as a `before-string'."

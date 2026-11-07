@@ -104,21 +104,32 @@ dots)."
                  (function :tag "Function"))
   :group 'agent-shell)
 
-(defcustom agent-shell-chat-label-function #'agent-shell-chat--boxed-label
+(defcustom agent-shell-chat-label-function #'agent-shell-chat-boxed-label
   "Function returning a chat label (\"Me\" or the agent's name).
 
 Called with an alist, for example:
 
   \\='((:text . \"Me\")
-    (:role . user))
+    (:role . user)
+    (:prompt-start . 1234))
 
 :role is `user' for the \"Me\" label and `agent' for the agent's.
+
+:prompt-start is where the turn's prompt starts (as in
+`agent-shell-prompt-ranges'), shared by both of its labels.  nil for the
+live prompt, which is not a turn until submitted.  Current for this call
+only, as text above can still change, so keep any per-turn details (e.g.
+times recorded from `agent-shell-subscribe-to' events) as text
+properties there, which travel with the turn, rather than keyed by the
+number.
+
+Called on every relabel, so should be cheap.
 
 Should return a single-line string, propertized as the label is to be
 drawn.  A `display' property is honored, so the label can be drawn as an
 image (e.g. an SVG badge).
 
-See `agent-shell-chat--boxed-label' for the default."
+See `agent-shell-chat-boxed-label' for the default."
   :type 'function
   :group 'agent-shell)
 
@@ -168,18 +179,20 @@ A hint only: see `agent-shell-chat--find-live-marker-overlay'.")
 
 ;;; Labels
 
-(defun agent-shell-chat--label (text role)
+(defun agent-shell-chat--label (text role &optional prompt-start)
   "Return the chat label for TEXT, as `agent-shell-chat-label-function' draws it.
 
-ROLE is `user' or `agent'.
+ROLE is `user' or `agent'.  PROMPT-START is where the turn's prompt
+starts, or nil when the label stands for no turn yet.
 
 For example, (agent-shell-chat--label \"Me\" \\='user) returns \" Me \" in
 `agent-shell-chat-me-label' by default."
   (funcall agent-shell-chat-label-function
            (list (cons :text text)
-                 (cons :role role))))
+                 (cons :role role)
+                 (cons :prompt-start prompt-start))))
 
-(defun agent-shell-chat--boxed-label (label)
+(defun agent-shell-chat-boxed-label (label)
   "Return LABEL's text padded and propertized as a boxed badge.
 
 The default `agent-shell-chat-label-function'.  The face is picked by
@@ -720,7 +733,7 @@ above, putting the first line of a multi-line input out of reach of
                       (save-excursion (goto-char run-end)
                                       (skip-chars-forward " \t\n")
                                       (point))))
-               (me-label (agent-shell-chat--label "Me" 'user))
+               (me-label (agent-shell-chat--label "Me" 'user (unless live pos)))
                ;; Face the padding and marker `default' so they do not inherit
                ;; the covered text's face: a display string's unfaced chars
                ;; take the face of the text they replace, and after a code
@@ -972,12 +985,22 @@ newline would merge the input line into the response for line motion
 \(e.g. `end-of-visual-line').  Updates in place; idempotent."
   (save-excursion
     (goto-char (point-min))
-    (let ((label (agent-shell-chat--label
-                  (agent-shell-chat--agent-name) 'agent))
+    (let ((name (agent-shell-chat--agent-name))
+          (ranges (agent-shell-prompt-ranges))
           (kept nil))
       (while (agent-shell-chat--search-marker-forward)
+        ;; Step to the prompt this response answers: the last one before its
+        ;; marker.  Markers are found in order, so the walk never backs up.
+        (while (and (cadr ranges)
+                    (< (map-elt (cadr ranges) :prompt-start) (match-beginning 0)))
+          (setq ranges (cdr ranges)))
         (let* ((mbeg (match-beginning 0))
                (mend (match-end 0))
+               (label (agent-shell-chat--label
+                       name 'agent
+                       (when-let* ((prompt-start (map-elt (car ranges) :prompt-start))
+                                   ((< prompt-start mbeg)))
+                         prompt-start)))
                (end (save-excursion
                       (goto-char mend)
                       ;; Swallow the response's leading blank lines, but stop
