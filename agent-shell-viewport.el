@@ -1340,6 +1340,7 @@ VIEWPORT-BUFFER is the viewport buffer to check."
     (define-key map (kbd "n") #'agent-shell-viewport-next-item)
     (define-key map (kbd "p") #'agent-shell-viewport-previous-item)
     (define-key map (kbd "C-M-u") #'agent-shell-backward-up-item)
+    (define-key map [remap xref-find-definitions] #'agent-shell-markdown-open-link-at-point)
     (define-key map (kbd "f") #'agent-shell-viewport-next-page)
     (define-key map (kbd "b") #'agent-shell-viewport-previous-page)
     (define-key map (kbd "r") #'agent-shell-viewport-reply)

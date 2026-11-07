@@ -2706,6 +2706,7 @@ mouse selection or a kill where mark > point) is normalized."
   "C-c C-s" #'agent-shell-set-session-config-option
   "<remap> <yank>" #'agent-shell-yank-dwim
   "<remap> <comint-send-input>" #'agent-shell-submit
+  "<remap> <xref-find-definitions>" #'agent-shell-markdown-open-link-at-point
   ;; No equivalent in comint, bind explicitly.
   "M-RET" #'agent-shell-submit-override
   "M-<return>" #'agent-shell-submit-override)

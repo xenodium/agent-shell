@@ -1193,6 +1193,36 @@ reference tests use would not catch a resolution gone wrong."
                             (match-beginning 0))))))
       (delete-directory directory t))))
 
+(ert-deftest agent-shell-markdown-open-link-at-point-test ()
+  "Test `agent-shell-markdown-open-link-at-point' opens a citation.
+
+It lands on the cited line and column, and `xref-go-back' returns to
+the citation, as after any other jump."
+  (let* ((directory (make-temp-file "agent-shell-refs" t))
+         (default-directory (file-name-as-directory directory))
+         (file (expand-file-name "foo.el"))
+         (origin (generate-new-buffer "*agent-shell-origin*")))
+    (unwind-protect
+        (with-selected-window (frame-first-window)
+          (save-window-excursion
+            (with-temp-file file (insert "one\ntwo\nthree\n"))
+            (switch-to-buffer origin)
+            (insert "see foo.el:3:2 here")
+            (agent-shell-markdown-replace-markup :complete t)
+            (goto-char 7)
+            (call-interactively #'agent-shell-markdown-open-link-at-point)
+            (should (equal (file-truename file)
+                           (file-truename (or (buffer-file-name) ""))))
+            (should (= 3 (line-number-at-pos)))
+            (should (= 1 (current-column)))
+            (xref-go-back)
+            (should (eq origin (current-buffer)))
+            (should (= 7 (point)))))
+      (kill-buffer origin)
+      (when (find-buffer-visiting file)
+        (kill-buffer (find-buffer-visiting file)))
+      (delete-directory directory t))))
+
 (ert-deftest agent-shell-markdown-linkify-file-reference-forms ()
   ;; The forms agents write: a line, a range, a line and column, and
   ;; GitHub's anchor.
@@ -5083,11 +5113,11 @@ Searches with `case-fold-search' nil, as
               (should (equal (get-text-property 1 'face (cddr display))
                              '((:underline nil) agent-shell-markdown-inline-code)))
               (should (eval (cadr display) t))
-              (funcall (lookup-key (get-text-property (point-min) 'keymap) (kbd "RET")))
+              (agent-shell-markdown-open-link-at-point (point-min))
               (should (equal (buffer-string) "docs and other"))
               (should-not (eval (cadr display) t)))
             ;; Opening again records nothing new.
-            (funcall (lookup-key (get-text-property (point-min) 'keymap) (kbd "RET"))))
+            (agent-shell-markdown-open-link-at-point (point-min)))
           (let ((links (agent-shell-markdown--read-tracked-links tracking-file)))
             (should (equal (length links) 1))
             (should (equal (map-elt (seq-first links) :url) "https://example.com/docs"))
@@ -5112,7 +5142,7 @@ Searches with `case-fold-search' nil, as
       (with-temp-buffer
         (insert (agent-shell-markdown-convert "[docs](https://example.com/docs)"
                                               :tracking-file tracking-file))
-        (funcall (lookup-key (get-text-property (point-min) 'keymap) (kbd "RET")))))
+        (agent-shell-markdown-open-link-at-point (point-min))))
     (should-not (file-exists-p tracking-file))))
 
 (ert-deftest agent-shell-markdown-parse-link-attributes ()

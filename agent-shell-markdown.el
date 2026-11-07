@@ -1099,41 +1099,59 @@ otherwise group 3 (bare form)."
   (let ((group (if (match-beginning 2) 2 3)))
     (buffer-substring-no-properties (match-beginning group) (match-end group))))
 
+(defun agent-shell-markdown-open-link-at-point (&optional pos)
+  "Open the rendered link at POS (or point).
+
+Opens what `agent-shell-markdown-link-url-at-point' returns, recording
+the open in the link's tracking file when it has one (see
+`agent-shell-markdown--track-link-open').  Signals a `user-error' when
+POS is not on a link.
+
+For example, on the `docs' of a rendered \"[docs](https://gnu.org)\"
+this browses to https://gnu.org, and on a rendered \"foo.el:12:5\" it
+visits foo.el at line 12, column 5."
+  (interactive)
+  (setq pos (or pos (point)))
+  (let ((url (or (agent-shell-markdown-link-url-at-point pos)
+                 (user-error "No link at point"))))
+    (when-let* ((tracking-file (get-text-property
+                                pos 'agent-shell-markdown-tracking-file)))
+      (agent-shell-markdown--track-link-open
+       :url url :tracking-file tracking-file))
+    (agent-shell-markdown--open-link url)))
+
 (cl-defun agent-shell-markdown--apply-link-properties (&key start end url tracking-file)
   "Make [START, END) a rendered link to URL.
 
 Applies what every link the renderer produces carries: face
-`agent-shell-markdown-link', a keymap opening URL on RET or a mouse
+`agent-shell-markdown-link', a keymap opening it on RET or a mouse
 click, a hint naming that key, a `help-echo' saying the same to the
 mouse, a hand pointer, and the target itself on
 `agent-shell-markdown-url' -- which is what
-`agent-shell-markdown-link-url-at-point' reads and what item
-navigation stops on, so a link missing it would open on RET yet stay
-invisible to both.  Web URLs also carry `browse-url-data', so
-terminal Emacs can display them as OSC 8 hyperlinks when enabled.
+`agent-shell-markdown-open-link-at-point' opens and what item
+navigation stops on, so a link missing it would neither open nor be
+stopped on.  Web URLs also carry `browse-url-data', so terminal Emacs
+can display them as OSC 8 hyperlinks when enabled.
 
 Both hints name URL in full, so the target can be inspected before
 opening it.
 
-TRACKING-FILE, when non-nil, records opening the link there (see
-`agent-shell-markdown--track-link-open').
+TRACKING-FILE, when non-nil, goes on
+`agent-shell-markdown-tracking-file', so opening the link records it
+there (see `agent-shell-markdown--track-link-open').
 
 For example, over the `docs' of a rendered \"[docs](https://gnu.org)\",
 RET opens the URL, the echo area reads \"Press RET to open:
 https://gnu.org\", and hovering shows \"Open: https://gnu.org\"."
-  (let* ((open-action (lambda () (interactive)
-                        (when tracking-file
-                          (agent-shell-markdown--track-link-open
-                           :url url :tracking-file tracking-file))
-                        (agent-shell-markdown--open-link url)))
-         (link-map (agent-shell-markdown--make-ret-binding-map open-action)))
+  (let ((link-map (agent-shell-markdown--make-ret-binding-map
+                   #'agent-shell-markdown-open-link-at-point)))
     (agent-shell-markdown--add-link-face start end)
     (put-text-property start end 'keymap link-map)
     (agent-shell-markdown--put-hint-sensor
      start end
      (lambda ()
        (agent-shell-markdown--action-hint
-        :action open-action
+        :action #'agent-shell-markdown-open-link-at-point
         :keymap link-map
         :verb (concat "open: " url))))
     ;; The mouse gets the same wording without a key in it.
@@ -1141,6 +1159,9 @@ https://gnu.org\", and hovering shows \"Open: https://gnu.org\"."
     ;; A hand pointer when over is enough. No need for `mouse-face'.
     (put-text-property start end 'pointer 'hand)
     (put-text-property start end 'agent-shell-markdown-url url)
+    (when tracking-file
+      (put-text-property start end 'agent-shell-markdown-tracking-file
+                         tracking-file))
     ;; `browse-url-data' is where Emacs keeps a URL on text (see
     ;; `browse-url-button-open' and `ansi-osc-hyperlink-handler').
     ;; Nothing here reads it, as agent-shell keymap handles RET and clicks,
