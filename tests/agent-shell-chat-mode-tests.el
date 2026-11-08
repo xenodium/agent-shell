@@ -1,6 +1,7 @@
 ;;; agent-shell-chat-mode-tests.el --- Tests for agent-shell-chat-mode -*- lexical-binding: t; -*-
 
 (require 'ert)
+(require 'cl-lib)
 (require 'agent-shell-chat-mode)
 
 ;;; Code:
@@ -42,9 +43,7 @@ ME itself where the run has no newline above to carry it."
                                                   (line-beginning-position))
                                   (overlay-start me)))
                     (lambda (a b) (< (overlay-start a) (overlay-start b))))))
-    (cond (rows (mapconcat (lambda (overlay)
-                             (or (overlay-get overlay 'display) ""))
-                           rows ""))
+    (cond (rows (mapconcat #'agent-shell-chat-mode-tests--row-string rows ""))
           ((seq-some (lambda (overlay)
                        (and (eq (overlay-get overlay 'agent-shell-chat--tag) 'me-label)
                             (= (overlay-end overlay) (overlay-start me))
@@ -77,6 +76,13 @@ there."
               (eq (overlay-get overlay 'agent-shell-chat--tag) 'me-draft))
             (overlays-in (point-min) (point-max))))
 
+(defun agent-shell-chat-mode-tests--row-string (overlay)
+  "Return the label row OVERLAY draws, as it renders.
+A row is normally a `display', but one holding an image is drawn as a
+`before-string' instead (see `agent-shell-chat--row-props')."
+  (concat (or (overlay-get overlay 'before-string) "")
+          (or (overlay-get overlay 'display) "")))
+
 (defun agent-shell-chat-mode-tests--label-row-p (overlay)
   "Return non-nil when OVERLAY draws a row of a label.
 A label is drawn a row to each buffer position, as a `display'.  An
@@ -107,7 +113,7 @@ whole there instead."
                                   (overlay-start agent)))
                     (lambda (a b) (< (overlay-start a) (overlay-start b))))))
     (if rows
-        (mapconcat (lambda (overlay) (or (overlay-get overlay 'display) "")) rows "")
+        (mapconcat #'agent-shell-chat-mode-tests--row-string rows "")
       (overlay-get agent 'before-string))))
 
 (defun agent-shell-chat-mode-tests--agent-overlays ()
@@ -147,7 +153,8 @@ label reporting itself more than once shows up as a repeat."
 (defun agent-shell-chat-mode-tests--prompt (text)
   "Insert a shell prompt run displaying TEXT, as shell-maker fontifies it."
   (insert (propertize text 'font-lock-face
-                      '(comint-highlight-prompt comint-highlight-prompt))))
+                      '(comint-highlight-prompt comint-highlight-prompt)
+                      'field 'output)))
 
 (defun agent-shell-chat-mode-tests--marker ()
   "Insert the invisible `<shell-maker-end-of-prompt>' marker.
@@ -236,13 +243,6 @@ without an `agent-shell-chat--tag' are left alone."
                     (agent-shell-chat--displayed-substring (point-min) (point-max)))
                    "Claude> hi"))))
 
-(ert-deftest agent-shell-chat-prompt-face-p-test ()
-  "Prompt runs are recognized whether the face is a symbol or a list."
-  (should (agent-shell-chat--prompt-face-p 'comint-highlight-prompt))
-  (should (agent-shell-chat--prompt-face-p '(comint-highlight-prompt comint-highlight-prompt)))
-  (should-not (agent-shell-chat--prompt-face-p 'default))
-  (should-not (agent-shell-chat--prompt-face-p nil)))
-
 (ert-deftest agent-shell-chat-agent-name-test ()
   "The agent label uses `:mode-line-name', falling back to \"Agent\"."
   (agent-shell-chat-mode-tests--with-shell
@@ -250,6 +250,75 @@ without an `agent-shell-chat--tag' are left alone."
   (with-temp-buffer
     (setq-local agent-shell--state nil)
     (should (equal "Agent" (agent-shell-chat--agent-name)))))
+
+(ert-deftest agent-shell-chat-boxed-label-test ()
+  "The default label pads its text and faces it by role."
+  (let ((me (agent-shell-chat-boxed-label '((:text . "Me") (:role . user))))
+        (agent (agent-shell-chat-boxed-label '((:text . "Claude") (:role . agent)))))
+    (should (equal " Me " me))
+    (should (eq 'agent-shell-chat-me-label (get-text-property 0 'face me)))
+    (should (equal " Claude " agent))
+    (should (eq 'agent-shell-chat-agent-label (get-text-property 0 'face agent)))))
+
+(ert-deftest agent-shell-chat-label-function-test ()
+  "Labels are drawn by `agent-shell-chat-label-function'."
+  (let* ((labels nil)
+         (agent-shell-chat-label-function
+          (lambda (label)
+            (push label labels)
+            (format "<%s>" (map-elt label :text)))))
+    (agent-shell-chat-mode-tests--with-shell
+      (agent-shell-chat-mode-tests--prompt "Claude> ")
+      (insert "hello\n")
+      (agent-shell-chat-mode-tests--marker)
+      (insert "hi there\n")
+      (agent-shell-chat--relabel)
+      (should (member '((:text . "Me") (:role . user) (:prompt-start . 1)) labels))
+      (should (member '((:text . "Claude") (:role . agent) (:prompt-start . 1)) labels))
+      (should (string-match-p
+               "<Me>" (agent-shell-chat-mode-tests--label-string
+                       (car (agent-shell-chat-mode-tests--me-overlays)))))
+      (should (string-match-p
+               "<Claude>" (agent-shell-chat-mode-tests--agent-label-string
+                           (car (agent-shell-chat-mode-tests--agent-overlays))))))))
+
+(ert-deftest agent-shell-chat-label-function-prompt-start-test ()
+  "Both labels of a turn are told where its prompt starts; the live prompt is not."
+  (let* ((labels nil)
+         (agent-shell-chat-label-function
+          (lambda (label)
+            (push label labels)
+            (map-elt label :text))))
+    (agent-shell-chat-mode-tests--with-shell
+      (agent-shell-chat-mode-tests--prompt "Claude> ")
+      (insert "one\n")
+      (agent-shell-chat-mode-tests--marker)
+      (insert "first\n\n")
+      (agent-shell-chat-mode-tests--prompt "Claude> ")
+      (insert "two\n")
+      (agent-shell-chat-mode-tests--marker)
+      (insert "second\n\n")
+      (agent-shell-chat-mode-tests--prompt "Claude> ")
+      (agent-shell-chat--relabel)
+      (should (member '((:text . "Me") (:role . user) (:prompt-start . 1)) labels))
+      (should (member '((:text . "Claude") (:role . agent) (:prompt-start . 1)) labels))
+      (should (member '((:text . "Me") (:role . user) (:prompt-start . 47)) labels))
+      (should (member '((:text . "Claude") (:role . agent) (:prompt-start . 47)) labels))
+      ;; The live prompt is labeled, but stands for no turn yet.
+      (should (member '((:text . "Me") (:role . user) (:prompt-start . nil)) labels)))))
+
+(ert-deftest agent-shell-chat-row-props-test ()
+  "A row holding a `display' is drawn as a `before-string'."
+  (should (equal '((display . " Me \n") (before-string . ""))
+                 (agent-shell-chat--row-props " Me \n")))
+  (let ((row (concat (propertize " Me " 'display '(space :width 4)) "\n")))
+    (should (equal "\n"
+                   (map-elt (agent-shell-chat--row-props row) 'display)))
+    (should (equal " Me "
+                   (map-elt (agent-shell-chat--row-props row) 'before-string))))
+  (let ((row (propertize " Me " 'display '(space :width 4))))
+    (should (equal ""
+                   (map-elt (agent-shell-chat--row-props row) 'display)))))
 
 (ert-deftest agent-shell-chat-labels-submitted-turn-test ()
   "A submitted turn boxes the prompt as `Me' and the response as the agent."
@@ -817,6 +886,38 @@ which would leave relabeling holding an overlay with no buffer."
     (should (= 1 (length (agent-shell-chat-mode-tests--me-overlays))))
     (should (= 1 (length (agent-shell-chat-mode-tests--agent-overlays))))))
 
+(ert-deftest agent-shell-chat-relabels-after-fragment-test ()
+  "A fragment rendered above the live prompt shows without an event.
+
+It lands at the prompt's start, inside the label overlay starting there,
+whose `display' draws the label in its place.  A notice like a declined
+steer fires no event, so it stayed hidden until something else relabeled
+\(agent-shell-js#47)."
+  (with-temp-buffer
+    (setq-local agent-shell--state '((:agent-config . ((:mode-line-name . "Claude"))))
+                agent-shell-chat-mode t)
+    (agent-shell-chat-mode-tests--prompt "Claude> ")
+    (insert "hello\n")
+    (agent-shell-chat-mode-tests--marker)
+    (insert "reply\n\n")
+    (agent-shell-chat-mode-tests--prompt "Claude> ")
+    (let ((agent-shell-prompt-bar-mode nil)
+          (shown (lambda ()
+                   (agent-shell-chat--displayed-substring (point-min) (point-max)))))
+      (cl-letf (((symbol-function 'agent-shell-subscribe-to) #'ignore)
+                ((symbol-function 'agent-shell-unsubscribe) #'ignore))
+        (agent-shell-chat--enable)
+        (save-excursion
+          (goto-char (- (point-max) (length "Claude> ")))
+          (insert "Note: declined.\n\n"))
+        (should-not (string-match-p "declined" (funcall shown)))
+        (run-hook-with-args 'agent-shell-section-functions nil)
+        (should (timerp agent-shell-chat--relabel-timer))
+        (cancel-timer agent-shell-chat--relabel-timer)
+        (agent-shell-chat--relabel-buffer (current-buffer))
+        (should (string-match-p "declined" (funcall shown)))
+        (agent-shell-chat--disable)))))
+
 (ert-deftest agent-shell-chat-absorbs-leading-blank-lines-test ()
   "A submitted prompt's overlay swallows the input's leading blank lines."
   (agent-shell-chat-mode-tests--with-shell
@@ -957,6 +1058,15 @@ would otherwise push the marker right."
       (should (equal (agent-shell-chat--busy-frame) "b"))
       (setq agent-shell-prompt-busy-frames #'ignore)
       (should-not (agent-shell-chat--busy-frame)))))
+
+(ert-deftest agent-shell-prompt-busy-frames-accepts-empty-test ()
+  "Empty busy frames show nothing, rather than dividing by zero each beat."
+  (agent-shell-chat-mode-tests--with-shell
+    (let ((agent-shell-show-busy-indicator t))
+      (agent-shell-chat-mode-tests--beat 'busy 3)
+      (dolist (frames (list [] "" (lambda () [])))
+        (let ((agent-shell-prompt-busy-frames frames))
+          (should-not (agent-shell-chat--busy-frame)))))))
 
 (ert-deftest agent-shell-chat-live-marker-spaces-wide-frame-test ()
   "A frame wider than a column is followed by a plain space, not aligned.
@@ -1363,18 +1473,6 @@ The overlay starts past the `:extend' background and drops its `line-prefix'."
   (should (agent-shell-chat--extends-bg-p '(agent-shell-chat-mode-tests--panel)))
   (should-not (agent-shell-chat--extends-bg-p 'agent-shell-chat-mode-tests--plain))
   (should-not (agent-shell-chat--extends-bg-p nil)))
-
-(ert-deftest agent-shell-chat-prompt-runs-test ()
-  "`agent-shell-chat--prompt-runs' collects each prompt run in buffer order."
-  (agent-shell-chat-mode-tests--with-shell
-    (agent-shell-chat-mode-tests--prompt "Claude> ")
-    (insert "hello\n")
-    (agent-shell-chat-mode-tests--marker)
-    (insert "hi\n")
-    (agent-shell-chat-mode-tests--prompt "Claude> ")
-    (let ((runs (agent-shell-chat--prompt-runs)))
-      (should (= 2 (length runs)))
-      (should (< (cdr (nth 0 runs)) (car (nth 1 runs)))))))
 
 (ert-deftest agent-shell-chat-label-after-interrupted-turn-test ()
   "A label after an interrupted turn keeps one blank line before it.

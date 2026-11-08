@@ -1,5 +1,6 @@
 ;;; agent-shell-completion-tests.el --- Tests for agent-shell completion -*- lexical-binding: t; -*-
 
+(require 'cl-lib)
 (require 'comint)
 (require 'ert)
 (require 'map)
@@ -77,6 +78,25 @@ exit function runs, so these start from that state."
                          '("help" "compact"))))
       (kill-buffer shell))))
 
+(ert-deftest agent-shell-completion-company-prefix-length-test ()
+  "A bare @ or / is enough for Company to pop, despite its minimum prefix."
+  (let ((shell (agent-shell-completion-tests--make-shell)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'agent-shell--project-files)
+                   (lambda () '("src/main.el"))))
+          (with-temp-buffer
+            (setq-local agent-shell-completion--shell-buffer shell)
+            (insert "/")
+            (should (eq (plist-get (nthcdr 3 (agent-shell--command-completion-at-point))
+                                   :company-prefix-length)
+                        t)))
+          (with-temp-buffer
+            (insert "@")
+            (should (eq (plist-get (nthcdr 3 (agent-shell--file-completion-at-point))
+                                   :company-prefix-length)
+                        t))))
+      (kill-buffer shell))))
+
 (ert-deftest agent-shell-completion-command-mid-input-test ()
   "Agents only recognize a command as a message's very first character.
 Anything ahead of the /, including whitespace and earlier lines of a
@@ -138,19 +158,87 @@ the queue does not have to know completion exists."
              `((:shell-buffer . ,shell)))
             (should (eq shell agent-shell-completion--shell-buffer))
             (should (memq #'agent-shell--file-completion-at-point
-                          completion-at-point-functions))))
+                          completion-at-point-functions))
+            (should (memq #'agent-shell--trigger-completion-at-point
+                          post-self-insert-hook))))
       (kill-buffer shell))))
 
 (ert-deftest agent-shell-completion-setup-queued-prompt-without-mode-test ()
-  "A shell without completion enabled leaves the minibuffer alone."
+  "A shell without the mode still completes, but typing @ or / pops nothing."
   (let ((shell (generate-new-buffer " *agent-shell-completion-test*")))
     (unwind-protect
         (with-temp-buffer
           (agent-shell-completion--setup-queued-prompt
            `((:shell-buffer . ,shell)))
-          (should-not (memq #'agent-shell--file-completion-at-point
-                            completion-at-point-functions)))
+          (should (memq #'agent-shell--file-completion-at-point
+                        completion-at-point-functions))
+          (should-not (memq #'agent-shell--trigger-completion-at-point
+                            post-self-insert-hook)))
       (kill-buffer shell))))
+
+(ert-deftest agent-shell-completion-mode-only-pops-test ()
+  "The mode toggles popping, while the CAPFs stay put."
+  (with-temp-buffer
+    (agent-shell-completion--setup)
+    (agent-shell-completion-mode 1)
+    (should (memq #'agent-shell--trigger-completion-at-point
+                  post-self-insert-hook))
+    (agent-shell-completion-mode -1)
+    (should-not (memq #'agent-shell--trigger-completion-at-point
+                      post-self-insert-hook))
+    (should (memq #'agent-shell--file-completion-at-point
+                  completion-at-point-functions))
+    (should (memq #'agent-shell--command-completion-at-point
+                  completion-at-point-functions))))
+
+(ert-deftest agent-shell-completion-trigger-per-action-test ()
+  "@ and / each pop only when their own option allows it.
+Large projects can make @ slow while / stays cheap, so one is often
+wanted without the other."
+  (let ((shell (agent-shell-completion-tests--make-shell)))
+    (unwind-protect
+        (dolist (case '(((:file . nil) (:command . t)   (:popped . (?/)))
+                        ((:file . t)   (:command . nil) (:popped . (?@)))))
+          (let ((agent-shell-file-completion-enabled (map-elt case :file))
+                (agent-shell-command-completion-enabled (map-elt case :command))
+                (popped nil))
+            (cl-letf (((symbol-function 'completion-at-point)
+                       (lambda () (push (char-before) popped))))
+              (dolist (input '("/" "@"))
+                (with-temp-buffer
+                  (setq-local agent-shell-completion--shell-buffer shell)
+                  (insert input)
+                  (agent-shell--trigger-completion-at-point))))
+            (should (equal popped (map-elt case :popped)))))
+      (kill-buffer shell))))
+
+(ert-deftest agent-shell-completion-setup-mode-test ()
+  "Setup enables the mode unless both popping options are off."
+  (dolist (case '(((:file . t)   (:command . t)   (:mode . t))
+                  ((:file . nil) (:command . t)   (:mode . t))
+                  ((:file . t)   (:command . nil) (:mode . t))
+                  ((:file . nil) (:command . nil) (:mode . nil))))
+    (with-temp-buffer
+      (let ((agent-shell-file-completion-enabled (map-elt case :file))
+            (agent-shell-command-completion-enabled (map-elt case :command)))
+        (agent-shell-completion--setup)
+        (should (eq (and agent-shell-completion-mode t) (map-elt case :mode)))
+        (should (memq #'agent-shell--file-completion-at-point
+                      completion-at-point-functions))))))
+
+(ert-deftest agent-shell--capf-exit-unfinished-test ()
+  "Statuses other than `finished' leave the buffer alone.
+UIs like Corfu and Company report `sole' or `exact' while the user may
+still be typing."
+  (dolist (status '(sole exact))
+    (with-temp-buffer
+      (insert "@My Design.png")
+      (agent-shell--capf-exit-with-file-mention "My Design.png" status)
+      (should (equal (buffer-string) "@My Design.png")))
+    (with-temp-buffer
+      (insert "/help")
+      (agent-shell--capf-exit-with-space "help" status)
+      (should (equal (buffer-string) "/help")))))
 
 (provide 'agent-shell-completion-tests)
 ;;; agent-shell-completion-tests.el ends here

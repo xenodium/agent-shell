@@ -32,6 +32,7 @@
 (require 'acp)
 
 (declare-function agent-shell--indent-string "agent-shell")
+(declare-function agent-shell-welcome-message "agent-shell")
 (declare-function agent-shell--interpolate-gradient "agent-shell")
 (declare-function agent-shell-make-agent-config "agent-shell")
 (autoload 'agent-shell-make-agent-config "agent-shell")
@@ -96,7 +97,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
   (concat "\n\n"
           (agent-shell--indent-string 4 (agent-shell-omp--ascii-art))
           "\n\n"
-          (string-trim-left (shell-maker-welcome-message config) "\n")))
+          (agent-shell-welcome-message config)))
 
 (defun agent-shell-omp--ascii-art ()
   "Oh My Pi ASCII art with gradient coloring."

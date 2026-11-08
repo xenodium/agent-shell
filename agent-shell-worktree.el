@@ -28,6 +28,7 @@
 
 ;;; Code:
 
+(require 'seq)
 (require 'subr-x)
 
 (declare-function agent-shell "agent-shell")
@@ -95,27 +96,50 @@ Returns a string like \"adoring-hawking\" or \"focused-turing\"."
           (nth (random (length agent-shell-worktree--scientists))
                agent-shell-worktree--scientists)))
 
-(defun agent-shell-worktree--git-repo-root ()
-  "Return the root directory of the current git repository.
-Or nil if not in a repo."
-  (when-let* ((output (shell-command-to-string
-                       "git rev-parse --show-toplevel 2>/dev/null")))
-    (let ((trimmed (string-trim output)))
-      (unless (string-empty-p trimmed)
-        trimmed))))
+(defun agent-shell-worktree--git (&rest args)
+  "Return trimmed output of running git with ARGS, or nil on failure.
+
+For example:
+
+  (agent-shell-worktree--git \"rev-parse\" \"--show-toplevel\")
+  => \"/repo\""
+  (let ((coding-system-for-read 'utf-8-unix))
+    (with-temp-buffer
+      (when (zerop (apply #'process-file "git" nil '(t nil) nil args))
+        (string-trim (buffer-string))))))
+
+(defun agent-shell-worktree--main-worktree-root ()
+  "Return the main worktree root, or nil outside a Git repository.
+
+For example, from within /repo/.agent-shell/worktrees/topic:
+
+  (agent-shell-worktree--main-worktree-root)
+  => \"/repo\"
+
+When the parent repository is bare, or git is too old to support
+`git worktree list -z' (before 2.36), return the current worktree root."
+  (let ((fields (split-string (or (agent-shell-worktree--git
+                                   "worktree" "list" "--porcelain" "-z")
+                                  "")
+                              "\0" t)))
+    (if (or (not fields)
+            (equal (seq-elt fields 1) "bare"))
+        (agent-shell-worktree--git "rev-parse" "--show-toplevel")
+      (string-remove-prefix "worktree " (seq-first fields)))))
 
 ;;;###autoload
 (defun agent-shell-new-worktree-shell ()
   "Create a new git worktree and start an agent shell in it.
 
-The worktree is created at <project-root>/.agent-shell/worktrees/<worktree-name>
-where <worktree-name> is a randomly generated name (e.g., \"adoring-hawking\").
+The worktree is created under <main-worktree>/.agent-shell/worktrees/,
+using a randomly generated name (e.g., \"adoring-hawking\").
 
 The user is prompted to confirm or edit the worktree path before creation."
   (interactive)
-  (unless (agent-shell-worktree--git-repo-root)
-    (user-error "Not in a git repository"))
-  (let* ((worktrees-dir (agent-shell--dot-subdir "worktrees"))
+  (let* ((root (or (agent-shell-worktree--main-worktree-root)
+                   (user-error "Not in a git repository")))
+         (default-directory (file-name-as-directory root))
+         (worktrees-dir (agent-shell--dot-subdir "worktrees"))
          (worktree-name (agent-shell-worktree--generate-name))
          (default-path (file-name-concat worktrees-dir worktree-name))
          (worktree-path (expand-file-name (read-directory-name

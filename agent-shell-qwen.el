@@ -31,6 +31,7 @@
 (require 'acp)
 
 (declare-function agent-shell--indent-string "agent-shell")
+(declare-function agent-shell-welcome-message "agent-shell")
 (declare-function agent-shell--interpolate-gradient "agent-shell")
 (declare-function agent-shell--make-acp-client "agent-shell")
 (declare-function agent-shell-make-agent-config "agent-shell")
@@ -160,7 +161,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
 (defun agent-shell-qwen--welcome-message (config)
   "Return Qwen Code ASCII art as welcome message using `shell-maker' CONFIG."
   (let ((art (agent-shell--indent-string 4 (agent-shell-qwen--ascii-art)))
-        (message (string-trim-left (shell-maker-welcome-message config) "\n")))
+        (message (agent-shell-welcome-message config)))
     (concat "\n\n\n"
             art
             "\n\n"

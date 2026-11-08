@@ -29,12 +29,18 @@
   (require 'cl-lib))
 (require 'shell-maker)
 (require 'acp)
+(require 'map)
+(require 'seq)
 
 (declare-function agent-shell--indent-string "agent-shell")
+(declare-function agent-shell-welcome-message "agent-shell")
 (declare-function agent-shell--make-acp-client "agent-shell")
 (declare-function agent-shell-make-agent-config "agent-shell")
 (autoload 'agent-shell-make-agent-config "agent-shell")
 (declare-function agent-shell--dwim "agent-shell")
+(declare-function agent-shell--tool-call-update-output-markdown "agent-shell")
+(declare-function agent-shell-subscribe-to "agent-shell")
+(declare-function agent-shell-unsubscribe "agent-shell")
 
 (cl-defun agent-shell-openai-make-authentication (&key api-key codex-api-key login)
   "Create OpenAI authentication configuration.
@@ -116,6 +122,22 @@ Can be set to either a string or a function that returns a string."
   :type '(choice (const nil) string function)
   :group 'agent-shell)
 
+(defcustom agent-shell-openai-default-config-options
+  nil
+  "Default Codex config options, applied at session start.
+
+An alist of (OPTION . VALUE), using the option IDs and values
+advertised by Codex.  This can be used for reasoning effort, for
+example:
+
+  (setq agent-shell-openai-default-config-options
+        \\='((\"reasoning_effort\" . \"high\")))
+
+Available values may depend on the selected model.
+Options are applied in the order listed."
+  :type '(alist :key-type string :value-type string)
+  :group 'agent-shell)
+
 (defcustom agent-shell-openai-default-session-mode-id
   nil
   "Default Codex session mode ID.
@@ -148,6 +170,65 @@ authenticate request shape (see its \"DEFAULT_AUTH_REQUEST\")."
          (json-serialize
           '((methodId . "chat-gpt"))))))
 
+(defvar-local agent-shell-openai--terminal-output-snapshots nil
+  "Alist of Codex tool-call IDs and accumulated output in the current buffer.")
+
+(defun agent-shell-openai--subscribe-output-cleanup ()
+  "Clear Codex output snapshots when the current turn or session ends."
+  (let (subscription)
+    (setq subscription
+          (agent-shell-subscribe-to
+           :shell-buffer (current-buffer)
+           :on-event (lambda (event)
+                       (when (seq-contains-p '(turn-complete session-restored session-selected
+                                                            init-session error clean-up)
+                                             (map-elt event :event))
+                         (setq agent-shell-openai--terminal-output-snapshots nil)
+                         (agent-shell-unsubscribe :subscription subscription)))))))
+
+(cl-defun agent-shell-openai--notification-adapter (&key acp-notification)
+  "Adapt Codex terminal output in ACP-NOTIFICATION to standard ACP content.
+
+Accumulate `_meta.terminal_output_delta.data' by tool-call ID in the
+current buffer.  For example, deltas \"hello\\n\" and \"world\\n\" become a
+text content block containing \"```\\nhello\\nworld\\n```\".
+
+Only tool calls that stream deltas are tracked.  Once tracked, complete
+content or `rawOutput.formatted_output' snapshots replace the accumulated
+output.  Status-only updates reuse it, including completion after
+`terminal_exit'.  Keep snapshots until the turn or session ends so later
+metadata-only updates cannot erase the output.
+
+Return ACP-NOTIFICATION after adaptation."
+  (when-let* (((equal (map-elt acp-notification 'method) "session/update"))
+              (update (map-nested-elt acp-notification '(params update)))
+              ((equal (map-elt update 'sessionUpdate) "tool_call_update"))
+              (tool-call-id (map-elt update 'toolCallId))
+              ((stringp tool-call-id))
+              ((or (stringp (map-nested-elt update '(_meta terminal_output_delta data)))
+                   (map-elt agent-shell-openai--terminal-output-snapshots tool-call-id)))
+              (snapshot (agent-shell--tool-call-update-output-markdown update))
+              (output (cond
+                       ((or (not (string-empty-p snapshot))
+                            (stringp (map-nested-elt update '(rawOutput formatted_output))))
+                        snapshot)
+                       ((stringp (map-nested-elt update '(_meta terminal_output_delta data)))
+                        (concat (map-elt agent-shell-openai--terminal-output-snapshots tool-call-id)
+                                (map-nested-elt update '(_meta terminal_output_delta data))))
+                       (t (map-elt agent-shell-openai--terminal-output-snapshots tool-call-id)))))
+    (unless agent-shell-openai--terminal-output-snapshots
+      (agent-shell-openai--subscribe-output-cleanup))
+    (setf (map-elt agent-shell-openai--terminal-output-snapshots tool-call-id) output)
+    (when-let* (((not (equal output snapshot)))
+                (text (string-trim-right output "\n+"))
+                ((not (string-empty-p text))))
+      (setf (alist-get 'content (alist-get 'update (alist-get 'params acp-notification)))
+            (append (map-elt update 'content)
+                    (list `((type . "content")
+                            (content (type . "text")
+                                     (text . ,(format "```\n%s\n```" text)))))))))
+  acp-notification)
+
 (defun agent-shell-openai-make-codex-config ()
   "Create a Codex agent configuration.
 
@@ -169,8 +250,10 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
                                     (funcall agent-shell-openai-default-model-id)
                                   agent-shell-openai-default-model-id))
    :default-session-mode-id (lambda () agent-shell-openai-default-session-mode-id)
+   :default-config-options (lambda () agent-shell-openai-default-config-options)
    :client-maker (lambda (buffer)
                    (agent-shell-openai-make-codex-client :buffer buffer))
+   :notification-adapter #'agent-shell-openai--notification-adapter
    :install-instructions "See https://github.com/agentclientprotocol/codex-acp for installation."))
 
 (defun agent-shell-openai-start-codex ()
@@ -224,7 +307,7 @@ Uses `agent-shell-openai-authentication' for authentication configuration."
 (defun agent-shell-openai--codex-welcome-message (config)
   "Return Codex welcome message using `shell-maker' CONFIG."
   (let ((art (agent-shell--indent-string 4 (agent-shell-openai--codex-ascii-art)))
-        (message (string-trim-left (shell-maker-welcome-message config) "\n")))
+        (message (agent-shell-welcome-message config)))
     (concat "\n\n"
             art
             "\n\n"

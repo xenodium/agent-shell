@@ -17,29 +17,34 @@ Thank you!
 
 * agent-shell
 
-A native Emacs shell to interact with LLM agents powered by ACP ([[https://agentclientprotocol.com][Agent Client Protocol]]).
+=agent-shell= brings your favorite AI agents to [[https://www.gnu.org/software/emacs/][Emacs]], keeping you at home: familiar buffers and bindings, no terminal emulation. All powered by ACP, the [[https://agentclientprotocol.com][Agent Client Protocol]].
 
-With agent-shell, you can interact with any ACP-driven agent like:
+Works with 24 agents today, and any other that speaks ACP:
 
+- [[https://antigravity.google/docs/ide/extensions][Antigravity]] (Google)
+- [[https://docs.augmentcode.com/cli/overview][Auggie]]
 - [[https://code.claude.com/docs/en/overview][Claude Agent]] (Anthropic)
+- [[https://docs.cline.bot/usage/acp][Cline]]
+- [[https://www.codebuddy.ai][CodeBuddy]]
 - [[https://github.com/agentclientprotocol/codex-acp][Codex]] (OpenAI)
+- [[https://cursor.com/docs/cli][Cursor]]
+- [[https://github.com/deepseek-ai/deepseek-harness][DeepSeek Harness]]
+- [[https://factory.ai][Factory Droid]]
 - [[https://github.com/google-gemini/gemini-cli][Gemini CLI]] (Google)
+- [[https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server][GitHub Copilot]]
 - [[https://goose-docs.ai/docs/getting-started/installation][Goose]]
 - [[https://docs.x.ai/docs/overview][Grok Build]] (xAI)
-- [[https://cursor.com/docs/cli][Cursor]]
+- [[https://github.com/NousResearch/hermes-agent][Hermes]]
+- [[https://junie.jetbrains.com/docs/junie-cli-acp.html][Junie]] (JetBrains)
 - [[https://www.kimi.com/code][Kimi Code CLI]]
-- [[https://www.codebuddy.ai][CodeBuddy]]
 - [[https://kiro.dev][Kiro CLI]]
+- [[https://github.com/mistralai/mistral-vibe][Mistral Vibe]]
+- [[https://github.com/can1357/oh-my-pi][Oh My Pi]]
+- [[https://openclaw.ai][OpenClaw]]
+- [[https://opencode.ai][OpenCode]]
+- [[https://github.com/svkozak/pi-acp][Pi]]
 - [[https://qoder.com][Qoder CLI]]
 - [[https://github.com/QwenLM/qwen-code][Qwen Code]]
-- [[https://docs.augmentcode.com/cli/overview][Auggie]]
-- [[https://github.com/mistralai/mistral-vibe][Mistral Vibe]]
-- [[https://factory.ai][Factory Droid]]
-- [[https://github.com/svkozak/pi-acp][Pi]]
-- [[https://github.com/can1357/oh-my-pi][Oh My Pi]]
-- [[https://opencode.ai][OpenCode]]
-- [[https://antigravity.google/docs/ide/extensions][Antigravity]] (Google)
-- [[https://junie.jetbrains.com/docs/junie-cli-acp.html][Junie]] (JetBrains)
 
 [[https://www.youtube.com/watch?v=R2Ucr3amgGg][agent-shell - YouTube]]
 
@@ -107,6 +112,7 @@ We now have a handful of additional packages to extend the =agent-shell= experie
 - [[https://github.com/izeigerman/agent-shell-gc][agent-shell-gc]]: Garbage collection for =agent-shell=.
 
 * Articles
+- Enzuru: [[https://enzuru.medium.com/emacs-in-fifty-keystrokes-five-years-later-2026-edition-featuring-meow-and-agent-shell-3d656f273989?source=friends_link&sk=4e1a8ba56819a67c1798cc34b40b8a29][Emacs in fifty keystrokes five years later (2026 edition featuring meow and agent-shell)]].
 - 20Y: [[https://20y.hu/~slink/journal/agent-shell/index.html][Agentic development workflow in Emacs]]
 - Skye: [[https://skyefreeman.com/blog/2026/04/15/how-im-using-llms-with-emacs][How I'm using LLM's via Emacs]].
 - sincebyte: [[https://neoemacs.com/posts/agent-shell-cursor-agent-cli/][Agent Shell Cursor Agent Cli]].
@@ -191,6 +197,33 @@ codebuddy --acp
 #+end_src
 
 See https://www.codebuddy.ai/docs/zh/ide/Getting-Started/Installation for details.
+
+*** DeepSeek Harness
+
+For DeepSeek Harness, install with:
+
+#+begin_src bash
+npm install -g @deepseek-ai/dsh
+#+end_src
+
+The ACP server reads your API key from =DEEPSEEK_API_KEY=.  If Emacs
+does not inherit it from your shell, set it via
+=agent-shell-deepseek-authentication=:
+
+#+begin_src emacs-lisp
+(setq agent-shell-deepseek-authentication
+      (agent-shell-deepseek-make-authentication :api-key "your-key"))
+#+end_src
+
+agent-shell launches =dsh --profile acp=, which keeps its own settings
+separate from other dsh profiles.  If models configured elsewhere (for
+example, via the dsh web UI) are missing, copy them over:
+
+#+begin_src bash
+cp -i ~/.dsh/profiles/web/cordis.patch.yml ~/.dsh/profiles/acp/cordis.patch.yml
+#+end_src
+
+See https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/acp/acp/README.md for details.
 
 *** Junie
 
@@ -293,43 +326,26 @@ See https://github.com/can1357/oh-my-pi for details.
 
 *** Antigravity
 
-For Antigravity, download the =agy_acp_server= binary for your platform from the [[https://github.com/agentclientprotocol/registry/tree/main/antigravity-acp][ACP registry entry]] and make sure it's on your =PATH= (or set =agent-shell-antigravity-acp-command= to an absolute path).
+For Antigravity, install the Antigravity CLI and make sure =agy= is on your =PATH= (agent-shell runs =agy acp=). Sign in once via an interactive =agy= session or with:
 
-Alternatively, you can bootstrap the antigravity tool with the following function:
-
-#+begin_src emacs-lisp
-  (defun agent-shell-antigravity-bootstrap (&optional force)
-    "Download and install the latest Antigravity ACP server binary."
-    (interactive "P")
-    (let* ((arch (pcase (car (split-string system-configuration "-"))
-                   ((or "x86_64" "amd64") "x86_64")
-                   ((or "aarch64" "arm64") "aarch64")
-                   (a a)))
-           (os (pcase system-type ('darwin "darwin") ('windows-nt "windows") (_ "linux")))
-           (platform (format "%s-%s" os arch))
-           (install-dir (agent-shell-cache-dir "antigravity" platform))
-           (bin-name (file-name-nondirectory (car agent-shell-antigravity-acp-command)))
-           (bin-path (expand-file-name bin-name install-dir)))
-      (unless (and (not force) (file-executable-p bin-path))
-        (message "Antigravity: bootstrapping server for %s..." platform)
-        (make-directory install-dir t)
-        (let* ((reg-url "https://raw.githubusercontent.com/agentclientprotocol/registry/main/antigravity-acp/agent.json")
-               (reg (with-temp-buffer
-                      (url-insert-file-contents reg-url)
-                      (json-parse-buffer :object-type 'alist)))
-               (archive-url (map-nested-elt reg `(distribution binary ,(intern platform) archive)))
-               (zip (expand-file-name "server.zip" install-dir)))
-          (url-copy-file archive-url zip t)
-          (call-process "unzip" nil nil nil "-o" "-q" zip "-d" install-dir)
-          (delete-file zip)
-          (set-file-modes bin-path #o755)))
-      (setq agent-shell-antigravity-acp-command
-            (cons bin-path (cdr agent-shell-antigravity-acp-command)))
-      (message "Antigravity: using ACP server at %s" bin-path)
-      bin-path))
+#+begin_src bash
+agy acp --login
 #+end_src
 
-See https://antigravity.google/docs/ide/extensions for details.
+See https://antigravity.google/docs/ide/extensions/acp for details.
+
+*** OpenClaw
+
+For OpenClaw, install with:
+
+#+begin_src bash
+curl -fsSL https://openclaw.ai/install.sh | bash
+#+end_src
+
+The =openclaw acp= bridge requires a running gateway.  Start one with
+=openclaw gateway start= (verify with =openclaw gateway status=).
+
+See https://docs.openclaw.ai/start/getting-started for details.
 
 *** OpenCode + local ollama models
 
@@ -761,6 +777,23 @@ Huge thanks for /gdindi/ for finding and and describing this in https://github.c
 
 By default, =agent-shell= includes configurations for all supported agents (Claude Agent, Gemini CLI, Codex, Goose, Grok Build, Cursor, CodeBuddy, Qwen Code, and Auggie). You can customize which agents are available through the =agent-shell-agent-configs= variable.
 
+*** Handling provider notifications
+
+Provider implementations can set =:notification-handler= in =agent-shell-make-agent-config= to handle custom ACP notifications. The callback runs after =:notification-adapter= and receives an event alist containing =:state= and the adapted =:acp-notification=. Return non-nil when handled, or nil to continue with core notification handling.
+
+#+begin_src emacs-lisp
+  (agent-shell-make-agent-config
+   :identifier 'example
+   :notification-handler
+   (lambda (event)
+     (when (equal (map-nested-elt event '(:acp-notification method))
+                  "_example/status")
+       (message "%s" (map-nested-elt event '(:acp-notification params text)))
+       t)))
+#+end_src
+
+Return nil for standard notifications such as =session/update= so core keeps rendering them. See =C-h f agent-shell-make-agent-config= for the configuration options.
+
 ** Usage
 
 *** Quick Start
@@ -830,6 +863,7 @@ Start a specific agent shell session directly:
 - =M-x agent-shell-goose-start-agent= - Start a Goose agent session
 - =M-x agent-shell-xai-start-grok= - Start a Grok Build (xAI) agent session
 - =M-x agent-shell-cursor-start-agent= - Start a Cursor agent session
+- =M-x agent-shell-deepseek-start-agent= - Start a DeepSeek Harness agent session
 - =M-x agent-shell-junie-start-agent= - Start a Junie agent session
 - =M-x agent-shell-kiro-start-agent= - Start a Kiro CLI agent session
 - =M-x agent-shell-qoder-start-agent= - Start a Qoder CLI agent session
@@ -1023,6 +1057,17 @@ All of the above settings can be applied on a per-project basis using [[https://
                   ("C-c C-k" . agent-shell-interrupt)))
   #+end_src
 
+*** Folding sections
+
+Thoughts, tool calls, user messages and activity groups fold under their header line. With point on a header:
+
+- =RET= (or click) - Expand or collapse the section.
+- =C-u RET= - Expand or collapse the section's activity group, along with every section inside it.
+
+These keys only apply on headers, so =RET= still submits the prompt everywhere else. To fold with other keys, add them to =agent-shell-ui-fragment-map=.
+
+Use =M-x agent-shell-ui-toggle-all-fragments= to expand or collapse every section in the buffer.
+
 *** Session controls
 
 When the active agent advertises the corresponding session option, you can switch it from the shell buffer:
@@ -1033,6 +1078,8 @@ When the active agent advertises the corresponding session option, you can switc
 - =C-<tab>= - Cycle session mode.
 
 The current selections are shown in the header right after the agent name; click any segment to open a popup menu. The thought level segment only appears for models that expose it (e.g. Claude Sonnet/Opus with effort levels; Codex's reasoning_effort).
+
+Any other options the agent advertises (e.g. Codex's speed) are counted after the header settings as =(+N)=; click it to change them. They are also appended to the graphical header's settings menu. =C-c C-s= sets any of them from the keyboard.
 
 From the viewport (=agent-shell-viewport-view-mode= / =agent-shell-viewport-edit-mode=), the same controls are bound to:
 
@@ -1097,6 +1144,7 @@ always go to Evil modes if you need to with ~C-z~).
 | agent-shell-anthropic-default-session-mode-id | Default Anthropic session mode ID.                                              |
 | agent-shell-antigravity-acp-command           | Command and parameters for the Antigravity ACP server.                          |
 | agent-shell-antigravity-authentication        | Configuration for Antigravity authentication.                                   |
+| agent-shell-antigravity-default-config-options | Default Antigravity config options, applied at session start.                   |
 | agent-shell-antigravity-environment           | Environment variables for the Antigravity ACP server.                           |
 | agent-shell-artist-mode-hook                  | Hook run after entering or leaving ‘agent-shell-artist-mode’.                   |
 | agent-shell-auggie-acp-command                | Command and parameters for the Auggie client.                                   |
@@ -1106,6 +1154,7 @@ always go to Evil modes if you need to with ~C-z~).
 | agent-shell-busy-indicator-frames             | Frames for the busy indicator animation.                                        |
 | agent-shell-busy-submit-default-function      | Function deciding what submitting while the agent is working does.              |
 | agent-shell-busy-submit-override-function     | Function M-x agent-shell-submit-override submits through.                       |
+| agent-shell-chat-label-function               | Function returning a chat label ("Me" or the agent's name).                     |
 | agent-shell-chat-mode-enabled                 | Whether a new agent shell enables ‘agent-shell-chat-mode’ by default.           |
 | agent-shell-chat-mode-hook                    | Hook run after entering or leaving ‘agent-shell-chat-mode’.                     |
 | agent-shell-cline-acp-command                 | Command and parameters for the Cline agent client.                              |
@@ -1115,6 +1164,7 @@ always go to Evil modes if you need to with ~C-z~).
 | agent-shell-clipboard-image-handlers          | Handlers for saving clipboard images to a file.                                 |
 | agent-shell-codebuddy-acp-command             | Command and parameters for the CodeBuddy agent client.                          |
 | agent-shell-codebuddy-environment             | Environment variables for the CodeBuddy agent client.                           |
+| agent-shell-command-completion-enabled        | Non-nil pops agent command completion as / is typed.                            |
 | agent-shell-command-prefix                    | Prefix to apply when executing agent commands and shell commands.               |
 | agent-shell-completion-mode-hook              | Hook run after entering or leaving ‘agent-shell-completion-mode’.               |
 | agent-shell-confirm-interrupt                 | Whether to prompt for confirmation before interrupting.                         |
@@ -1124,6 +1174,10 @@ always go to Evil modes if you need to with ~C-z~).
 | agent-shell-cursor-authentication             | Configuration for Cursor authentication.                                        |
 | agent-shell-cursor-environment                | Environment variables for the Cursor agent client.                              |
 | agent-shell-cwd-function                      | When non-nil, a function called to determine the shell’s CWD.                   |
+| agent-shell-deepseek-acp-command              | Command and parameters for the DeepSeek Harness ACP server.                     |
+| agent-shell-deepseek-authentication           | Configuration for DeepSeek Harness authentication.                              |
+| agent-shell-deepseek-default-config-options   | Default DeepSeek Harness config options, applied at session start.              |
+| agent-shell-deepseek-environment              | Environment variables for the DeepSeek Harness ACP server.                      |
 | agent-shell-display-action                    | Display action for agent shell buffers.                                         |
 | agent-shell-dot-subdir-function               | Function used by ‘agent-shell--dot-subdir’ to resolve subdirectory paths.       |
 | agent-shell-droid-acp-command                 | Command and parameters for the Factory Droid ACP client.                        |
@@ -1133,7 +1187,7 @@ always go to Evil modes if you need to with ~C-z~).
 | agent-shell-droid-default-session-mode-id     | Default Droid AI session mode ID.                                               |
 | agent-shell-droid-environment                 | Environment variables for the Factory Droid ACP client.                         |
 | agent-shell-embed-file-size-limit             | Maximum file size in bytes for embedding with ContentBlock::Resource.           |
-| agent-shell-file-completion-enabled           | Non-nil automatically enables file completion when starting shells.             |
+| agent-shell-file-completion-enabled           | Non-nil pops project file completion as @ is typed.                             |
 | agent-shell-file-display-action               | Display action for files opened from a link, image, or ‘@file’ mention.         |
 | agent-shell-github-acp-command                | Command and parameters for the GitHub Copilot agent client.                     |
 | agent-shell-github-default-model-id           | Default GitHub Copilot model ID.                                                |
@@ -1177,8 +1231,12 @@ always go to Evil modes if you need to with ~C-z~).
 | agent-shell-openai-authentication             | Configuration for OpenAI authentication.                                        |
 | agent-shell-openai-codex-acp-command          | Command and parameters for the OpenAI Codex client.                             |
 | agent-shell-openai-codex-environment          | Environment variables for the OpenAI Codex client.                              |
+| agent-shell-openai-default-config-options     | Default Codex config options, applied at session start.                         |
 | agent-shell-openai-default-model-id           | Default Codex model ID.                                                         |
 | agent-shell-openai-default-session-mode-id    | Default Codex session mode ID.                                                  |
+| agent-shell-openclaw-acp-command              | Command and parameters for the OpenClaw ACP bridge.                             |
+| agent-shell-openclaw-default-model-id         | Default OpenClaw model ID.                                                      |
+| agent-shell-openclaw-environment              | Environment variables for the OpenClaw client.                                  |
 | agent-shell-opencode-acp-command              | Command and parameters for the OpenCode client.                                 |
 | agent-shell-opencode-authentication           | Configuration for OpenCode authentication.                                      |
 | agent-shell-opencode-default-config-options   | Default OpenCode config options, applied at session start.                      |
@@ -1282,7 +1340,7 @@ always go to Evil modes if you need to with ~C-z~).
 |                                                       | agent-shell-clear-buffer                                | Clear the current shell buffer.                                               |
 |                                                       | agent-shell-cline-start-agent                           | Start an interactive Cline agent shell.                                       |
 |                                                       | agent-shell-codebuddy-start-agent                       | Start an interactive CodeBuddy agent shell.                                   |
-|                                                       | agent-shell-completion-mode                             | Toggle agent shell completion with @ or / prefix.                             |
+|                                                       | agent-shell-completion-mode                             | Toggle popping completion as @ or / are typed.                                |
 |                                                       | agent-shell-copy-as-markdown                            | Copy the region between BEG and END to the kill ring as markdown.             |
 |                                                       | agent-shell-copy-last-output                            | Copy the last agent output to the kill ring.                                  |
 |                                                       | agent-shell-copy-link-url-at-point                      | Copy the rendered Markdown link URL at POS (or point) to the kill ring.       |
@@ -1290,6 +1348,7 @@ always go to Evil modes if you need to with ~C-z~).
 |                                                       | agent-shell-copy-source-block-at-point                  | Copy the rendered fenced code block body at POS (or point) to the kill ring.  |
 |                                                       | agent-shell-cursor-start-agent                          | Start an interactive Cursor agent shell.                                      |
 | C-<tab>                                               | agent-shell-cycle-session-mode                          | Cycle through available session modes for the current `agent-shell' session.  |
+|                                                       | agent-shell-deepseek-start-agent                        | Start an interactive DeepSeek Harness agent shell.                            |
 |                                                       | agent-shell-delete-interaction-at-point                 | Delete interaction (request and response) at point.                           |
 |                                                       | agent-shell-diff-accept-all                             | Accept all changes in the current diff buffer.                                |
 |                                                       | agent-shell-diff-mode                                   | Major mode for `agent-shell' diff buffers.                                    |
@@ -1340,6 +1399,7 @@ always go to Evil modes if you need to with ~C-z~).
 |                                                       | agent-shell-omp-start                                   | Start an interactive Oh My Pi (omp) agent shell.                              |
 |                                                       | agent-shell-open-transcript                             | Open the transcript file for the current `agent-shell' buffer.                |
 |                                                       | agent-shell-openai-start-codex                          | Start an interactive Codex agent shell.                                       |
+|                                                       | agent-shell-openclaw-start-agent                        | Start an interactive OpenClaw agent shell.                                    |
 |                                                       | agent-shell-opencode-start-agent                        | Start an interactive OpenCode agent shell.                                    |
 | C-c C-o                                               | agent-shell-other-buffer                                | Switch to other associated buffer (viewport vs shell).                        |
 |                                                       | agent-shell-pi-start-agent                              | Start an interactive Pi coding agent shell.                                   |
@@ -1360,6 +1420,7 @@ always go to Evil modes if you need to with ~C-z~).
 |                                                       | agent-shell-restart                                     | Clear conversation by restarting the agent shell in the same project.         |
 |                                                       | agent-shell-resume-session                              | Resume an existing agent session by SESSION-ID.                               |
 |                                                       | agent-shell-run-all-tests                               | Run all agent-shell tests in batch mode.                                      |
+|                                                       | agent-shell-save-traffic                                | Save agent shell traffic to a .traffic file and reveal it in `dired'.         |
 | M-r                                                   | agent-shell-search-history                              | Search previous input history.                                                |
 |                                                       | agent-shell-send-clipboard-image                        | Paste clipboard image and insert it into `agent-shell'.                       |
 |                                                       | agent-shell-send-clipboard-image-to                     | Like `agent-shell-send-clipboard-image' but prompt for which shell to use.    |
@@ -1431,6 +1492,7 @@ always go to Evil modes if you need to with ~C-z~).
 |                                                       | agent-shell-viewport-reply-continue                     | Reply with "continue" and send immediately.                                   |
 |                                                       | agent-shell-viewport-reply-more                         | Reply with "more" and send immediately.                                       |
 |                                                       | agent-shell-viewport-reply-yes                          | Reply with "yes" and send immediately.                                        |
+|                                                       | agent-shell-viewport-save-traffic                       | Save agent shell traffic to a .traffic file and reveal it in `dired'.         |
 |                                                       | agent-shell-viewport-search-history                     | Search prompt history, select, and insert into compose buffer.                |
 |                                                       | agent-shell-viewport-set-session-mode                   | Set session mode.                                                             |
 |                                                       | agent-shell-viewport-set-session-model                  | Set session model.                                                            |
@@ -1474,6 +1536,32 @@ Could be the agent itself missing an [[https://agentclientprotocol.com][Agent Cl
 
 ** Is shx supported?
 No. There are reports that [[https://github.com/xenodium/agent-shell/issues/543][it does not work]] with agent-shell.
+** Agent hangs at "Loading..." or fails with "Method not found: initialize" over TRAMP?
+
+When =default-directory= is remote, the agent is started on the remote host via TRAMP. By default, TRAMP starts it through its own remote shell, which was reported to hang at "Loading..." in [[https://github.com/xenodium/agent-shell/issues/872][#872]]. Enabling TRAMP's direct asynchronous processes for the host (along with the =direct-async= setting below) resolved it:
+
+#+begin_src emacs-lisp
+  (connection-local-set-profile-variables
+   'remote-direct-async-process
+   '((tramp-direct-async-process . t)))
+
+  (connection-local-set-profiles
+   '(:application tramp :machine "my-host")
+   'remote-direct-async-process)
+#+end_src
+
+For the =ssh=, =scp=, and =rsync= methods, TRAMP runs direct asynchronous processes with =ssh -t -t=, which allocates a remote terminal. In #872, that terminal echoed =agent-shell='s requests back, failing with "Method not found: initialize". The following tells TRAMP to skip =-t -t= for the host:
+
+#+begin_src emacs-lisp
+  (add-to-list 'tramp-connection-properties
+               (list (regexp-quote "/ssh:my-host:") "direct-async" t))
+#+end_src
+
+Direct asynchronous processes don't support interactive authentication (e.g. password prompts), and TRAMP falls back to its default implementation for multi-hop connections. See TRAMP's "Improving performance of asynchronous remote processes" manual section for details.
+
+Agent executables are looked up on the remote host via =tramp-remote-path= (not =exec-path=). If yours isn't found, add its remote directory to =tramp-remote-path= and run =M-x tramp-cleanup-connection=, as TRAMP caches the remote path per connection.
+
+For mapping remote file paths between Emacs and the agent, see [[https://github.com/junyi-hou/agent-shell-tramp][agent-shell-tramp]].
 ** How do I view/get [[https://agentclientprotocol.com][Agent Client Protocol]] traffic?
 
 1. =M-x agent-shell-toggle-logging= (make sure logging is ON).
@@ -1486,7 +1574,7 @@ For example, here's what a [[https://agentclientprotocol.com/protocol/schema#ses
 
 [[file:traffic.png]]
 
-Sometimes including a traffic screenshot in an issue is enough. Other times including the full traffic is needed. From the traffic viewer, you can =M-x acp-traffic-save-to= to save as =.traffic=.
+Sometimes including a traffic screenshot in an issue is enough. Other times including the full traffic is needed. From the shell or viewport, you can =M-x agent-shell-save-traffic= (or =M-x agent-shell-viewport-save-traffic=) to save as =.traffic=. From the traffic viewer itself, =M-x acp-traffic-save-to= does the same.
 
 ** Where should I file bug or feature request?
 

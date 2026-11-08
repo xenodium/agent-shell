@@ -21,7 +21,8 @@
 ;;; Commentary:
 ;;
 ;; Locate the live prompt at the end of an `agent-shell' buffer, take what
-;; has been typed into it, and render above it.
+;; has been typed into it, and render above it.  `agent-shell-prompt-ranges'
+;; locates every prompt, submitted ones included.
 ;;
 ;; A shell keeps a prompt at the buffer end for the whole turn, not just
 ;; between turns (see `agent-shell-persistent-prompt-enabled'), so
@@ -39,8 +40,13 @@
 ;;; Code:
 
 (require 'comint)
+(require 'seq)
 (require 'shell-maker)
 (eval-when-compile (require 'cl-lib))
+
+(declare-function agent-shell-chat--busy-frame "agent-shell-chat-mode")
+
+(defvar agent-shell-chat-mode)
 
 (defcustom agent-shell-persistent-prompt-enabled t
   "Whether a shell keeps a writable prompt at the buffer end at all times.
@@ -160,6 +166,84 @@ PROMPT-START at the `C', a BODY inserting `more' leaves
            (goto-char ,saved-point)
            (set-marker ,saved-point nil))))))
 
+(defun agent-shell--prompt-face-p (value)
+  "Return non-nil when a `font-lock-face' VALUE marks a shell prompt.
+A live prompt carries `comint-highlight-prompt'; a restored or echoed
+prompt carries `agent-shell-prompt' (which inherits it).  Either may be
+repeated.
+
+For example, \\='comint-highlight-prompt, \\='agent-shell-prompt, and
+\\='(comint-highlight-prompt comint-highlight-prompt) all return non-nil,
+while \\='default returns nil."
+  (let ((faces (if (listp value) value (list value))))
+    (or (memq 'comint-highlight-prompt faces)
+        (memq 'agent-shell-prompt faces))))
+
+(defun agent-shell-prompt-ranges ()
+  "Return the range of each prompt in the current buffer, in buffer order.
+
+Covers prompts typed at the shell, replayed by a restored session and
+steered into a running turn, each in the form:
+
+  ((:prompt-start . PROMPT-START)
+   (:prompt-end . PROMPT-END)
+   (:input-start . INPUT-START)
+   (:input-end . INPUT-END))
+
+The prompt text (say \"Claude> \") runs from PROMPT-START to PROMPT-END,
+and its input from INPUT-START to INPUT-END: shell-maker's end-of-prompt
+marker or, until a response starts, the next prompt or the buffer end.
+
+Consecutive prompts (e.g. an empty submission leaves a stale prompt
+above the fresh one) are separate entries, since input or whitespace
+separates them.
+
+A prompt is prompt-faced text ending an `output' field, as shell-maker
+marks process output, so prompt-faced text elsewhere (say, quoted in a
+response) is not one.
+
+For example, in a buffer holding:
+
+  Claude> hi
+  <shell-maker-end-of-prompt>Hello
+  Claude> draft
+
+returns:
+
+  (((:prompt-start . 1) (:prompt-end . 9)
+    (:input-start . 9) (:input-end . 12))
+   ((:prompt-start . 45) (:prompt-end . 53)
+    (:input-start . 53) (:input-end . 58)))"
+  (let ((runs '())
+        (pos (point-min)))
+    ;; A prompt ends where comint's `output' field gives way to input (or at
+    ;; the buffer end), as `comint-next-prompt' relies on.  Walking `field'
+    ;; skips the many `font-lock-face' changes in between.
+    (while (< pos (point-max))
+      (setq pos (next-single-property-change pos 'field nil (point-max)))
+      (when (agent-shell--prompt-face-p
+             (get-text-property (1- pos) 'font-lock-face))
+        (push (cons (or (previous-single-property-change pos 'font-lock-face)
+                        (point-min))
+                    pos)
+              runs)))
+    (setq runs (nreverse runs))
+    (seq-mapn
+     (lambda (run next)
+       (let* ((limit (or (car next) (point-max)))
+              ;; Matched by property rather than by text: an agent quoting
+              ;; "<shell-maker-end-of-prompt>" back writes the same
+              ;; characters without it, and reading those as a boundary
+              ;; would end the input mid-response.
+              (marker (text-property-any (cdr run) limit
+                                         'shell-maker--marker t)))
+         `((:prompt-start . ,(car run))
+           (:prompt-end . ,(cdr run))
+           (:input-start . ,(cdr run))
+           (:input-end . ,(or marker limit)))))
+     runs
+     (append (cdr runs) '(nil)))))
+
 (defun agent-shell--prompt-input-start ()
   "Return where the live prompt's input area begins, or nil when there is none.
 
@@ -248,15 +332,63 @@ in the transcript above answers nil."
               (input-start (marker-position (cdr prompt))))
     (>= (point) input-start)))
 
+(defvar-local agent-shell--busy-prompt-overlay nil
+  "Overlay drawing the busy frame ahead of the live prompt, or nil.
+See `agent-shell--animate-busy-prompt'.")
+
+(defun agent-shell--animate-busy-prompt ()
+  "Draw the heartbeat's busy frame ahead of the live prompt's chevron.
+
+The chevron is the prompt's last non-blank character.  For example,
+with the buffer ending in `Claude> ', draws \"Claude|> \" on the
+heartbeat's first busy beat, and \"Claude> \" once it ends.  The frame
+comes from `agent-shell-prompt-busy-frames', faced
+`agent-shell-secondary'.
+
+Only outside `agent-shell-chat-mode', which animates its own marker (see
+`agent-shell-chat--animate-live-marker').  Without a live prompt (see
+`agent-shell-persistent-prompt-enabled') there is nothing to draw."
+  (if-let* (((not agent-shell-chat-mode))
+            (frame (agent-shell-chat--busy-frame))
+            ((agent-shell--live-input-prompt-p comint-last-prompt))
+            (chevron (save-excursion
+                       (goto-char (cdr comint-last-prompt))
+                       (skip-chars-backward " \t" (car comint-last-prompt))
+                       (1- (point))))
+            ((>= chevron (car comint-last-prompt))))
+      (let ((overlay (or agent-shell--busy-prompt-overlay
+                         (setq agent-shell--busy-prompt-overlay
+                               (make-overlay chevron (cdr comint-last-prompt)))))
+            (drawn (propertize frame 'face 'agent-shell-secondary)))
+        ;; Runs on every heartbeat tick, so leave an unchanged overlay be
+        ;; rather than trigger a redisplay.
+        (unless (and (eql (overlay-start overlay) chevron)
+                     (eql (overlay-end overlay)
+                          (marker-position (cdr comint-last-prompt))))
+          (move-overlay overlay chevron (cdr comint-last-prompt)))
+        (unless (equal (overlay-get overlay 'before-string) drawn)
+          (overlay-put overlay 'before-string drawn)))
+    (agent-shell--clear-busy-prompt)))
+
+(defun agent-shell--clear-busy-prompt ()
+  "Remove the busy frame drawn by `agent-shell--animate-busy-prompt'."
+  (when agent-shell--busy-prompt-overlay
+    (delete-overlay agent-shell--busy-prompt-overlay)
+    (setq agent-shell--busy-prompt-overlay nil)))
+
 (defun agent-shell--print-prompt ()
   "Print a prompt at the end of the shell buffer.
 
 Goes through `shell-maker--output-filter' so the prompt is fontified and
 bracketed by `comint-last-prompt' exactly as one shell-maker prints
 itself; nothing else sets that up, and `agent-shell--live-input-prompt-p'
-reads it."
+reads it.
+
+Mid-turn, the busy frame moves to the new prompt right away rather than
+waiting for a heartbeat tick, which skips a static frame it already drew."
   (shell-maker--output-filter (shell-maker--process)
-                              (shell-maker-prompt shell-maker--config)))
+                              (shell-maker-prompt shell-maker--config))
+  (agent-shell--animate-busy-prompt))
 
 (cl-defun agent-shell--finish-output (&key config success)
   "Finish a turn in CONFIG's shell, recording SUCCESS.
