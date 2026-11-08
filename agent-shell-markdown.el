@@ -2918,13 +2918,15 @@ ASCII-only strings short-circuit and are returned unchanged."
   "Return display width of STR in character units.
 
 ASCII content with no face properties uses the cheap
-`string-width'.  Non-ASCII content, or ASCII content carrying a
+`string-width'.  Non-ASCII content, ASCII content carrying a
 `face' property (whose font may render at a different pixel
-width — e.g. a theme styling inline-code with a wider family),
-routes through `window-text-pixel-size' so column widths reflect
-the actual rendered pixel width rather than a `string-width'
-approximation.  WINDOW supplies the font metrics for that pixel
-path; without a live one, the `string-width' path is taken.
+width — e.g. a theme styling inline-code with a wider family), or
+content under a `display' property (an image a render function
+shows in place of its text) routes through
+`window-text-pixel-size' so column widths reflect the actual
+rendered pixel width rather than a `string-width' approximation.
+WINDOW supplies the font metrics for that pixel path; without a
+live one, the `string-width' path is taken.
 
 Mixing the two paths within a column (some rows ASCII-padded, some
 pixel-padded) accumulates fractional drift on the right edge of the
@@ -2934,7 +2936,8 @@ column and visibly misaligns the vertical pipes between rows."
            (fboundp 'window-text-pixel-size)
            (display-graphic-p)
            (or (not (string-match-p (rx bos (* ascii) eos) str))
-               (agent-shell-markdown--text-has-face-p str)))
+               (agent-shell-markdown--text-has-face-p str)
+               (text-property-not-all 0 (length str) 'display nil str)))
       ;; TODO: Make this fallback observable.  Discarding the error
       ;; means a broken pixel path silently degrades to char-width
       ;; alignment; stashing the last error in a defvar would be
@@ -2957,17 +2960,24 @@ contributes only its own `char-width'.  Otherwise a
 whitespace-free CJK sentence would count as one word and pin its
 column at the full sentence width.
 
+An image run (see `agent-shell-markdown--table-image-run-end') is
+part of its word, whitespace and all.
+
 For example, \"foo bar\" yields 3 (\"foo\"), \"日本語\" yields 2,
 and \"日本のfoo語\" yields 3 (\"foo\")."
   (if (or (null str) (string-empty-p str))
       0
     (let ((len (length str))
           (longest 0)
-          (word-start nil))
-      (dotimes (i (1+ len))
-        (let* ((ch (and (< i len) (seq-elt str i)))
-               (separator (or (null ch) (memq ch '(?\s ?\t ?\n))))
-               (breakable (and (not separator)
+          (word-start nil)
+          (i 0))
+      (while (<= i len)
+        (let* ((run-end (and (< i len)
+                             (agent-shell-markdown--table-image-run-end str i)))
+               (ch (and (< i len) (seq-elt str i)))
+               (separator (and (not run-end)
+                               (or (null ch) (memq ch '(?\s ?\t ?\n)))))
+               (breakable (and (not run-end) (not separator)
                                (aref (char-category-set ch) ?|))))
           (when (and word-start (or separator breakable))
             (setq longest (max longest
@@ -2978,7 +2988,8 @@ and \"日本のfoo語\" yields 3 (\"foo\")."
           (cond
            (breakable (setq longest (max longest (char-width ch))))
            ((and (not separator) (not word-start))
-            (setq word-start i)))))
+            (setq word-start i)))
+          (setq i (or run-end (1+ i)))))
       longest)))
 
 (defun agent-shell-markdown--table-total-width (widths)
@@ -3086,16 +3097,44 @@ overflow an N-cell column and push the right pipe out of line."
           (error base))
       base)))
 
+(defun agent-shell-markdown--table-image-run-end (text pos)
+  "Return the end of the image run at POS in TEXT, or nil.
+An image run is text under one `display' image, as a render
+function leaves an equation: the source stays and the image is
+drawn in its place.  It is one unbreakable unit, since each line
+holding part of it would draw the image again.
+
+For example, in \"a \\=\\( x \\=\\) b\" with an image over
+\"\\=\\( x \\=\\)\", POS 2 yields 9 and POS 0 nil."
+  (when (eq (car-safe (get-text-property pos 'display text)) 'image)
+    (next-single-property-change pos 'display text (length text))))
+
+(defun agent-shell-markdown--table-wrap-unit (text pos window)
+  "Return (END . WIDTH) of the wrap unit at POS in TEXT.
+The unit is the image run at POS (see
+`agent-shell-markdown--table-image-run-end'), measured whole by
+`agent-shell-markdown--table-display-width' so a graphic WINDOW
+counts the image's width, or else the single char at POS,
+measured by `agent-shell-markdown--table-wrap-char-width'."
+  (if-let* ((end (agent-shell-markdown--table-image-run-end text pos)))
+      (cons end (agent-shell-markdown--table-display-width
+                 :str (substring text pos end) :window window))
+    (cons (1+ pos)
+          (agent-shell-markdown--table-wrap-char-width text pos window))))
+
 (defun agent-shell-markdown--table-wrap-string-width (text window)
   "Return face-aware display width of TEXT in cells.
 Like `string-width' but, when WINDOW is graphic, scales each char
 by its face's measured pixel-width ratio so the result tracks the
-rendered width rather than the unstyled char count."
-  (let ((sum 0))
-    (dotimes (i (length text))
-      (setq sum (+ sum
-                   (agent-shell-markdown--table-wrap-char-width
-                    text i window))))
+rendered width rather than the unstyled char count.  An image run
+counts as its image (see `agent-shell-markdown--table-wrap-unit')."
+  (let ((sum 0)
+        (pos 0)
+        (len (length text)))
+    (while (< pos len)
+      (let ((unit (agent-shell-markdown--table-wrap-unit text pos window)))
+        (setq sum (+ sum (cdr unit))
+              pos (car unit))))
     sum))
 
 (defun agent-shell-markdown--table-break-after-p (text i)
@@ -3112,7 +3151,10 @@ character, variation selector, ZWJ) and must stay attached."
 Preserves text properties across wrapped lines.
 
 Breaks after whitespace or a line-breakable (CJK) character; a
-run with no break point splits at the width limit.
+run with no break point splits at the width limit.  An image run
+\(see `agent-shell-markdown--table-image-run-end') is never split:
+the whitespace inside it is no break point, and a run wider than
+WIDTH takes a line of its own.
 
 Uses the VS-16-aware width helper so that emoji presentation
 sequences (`⚠️') count as their actual rendered width (2 cells)
@@ -3143,21 +3185,19 @@ width exceeds the column budget, drifting the right pipe."
         ;; Greedily consume chars until adding the next one would
         ;; exceed WIDTH (using VS-16-aware widths).
         (let ((end-pos pos)
-              (line-width 0))
+              (line-width 0)
+              (unit nil))
           (while (and (< end-pos len)
-                      (<= (+ line-width
-                             (agent-shell-markdown--table-wrap-char-width
-                              text end-pos window))
-                          width))
-            (setq line-width
-                  (+ line-width
-                     (agent-shell-markdown--table-wrap-char-width
-                      text end-pos window)))
-            (setq end-pos (1+ end-pos)))
-          ;; Make sure at least one char advances even when the very
-          ;; first char already exceeds WIDTH (e.g. wide glyph).
+                      (setq unit (agent-shell-markdown--table-wrap-unit
+                                  text end-pos window))
+                      (<= (+ line-width (cdr unit)) width))
+            (setq line-width (+ line-width (cdr unit)))
+            (setq end-pos (car unit)))
+          ;; Make sure at least one unit advances even when the very
+          ;; first one already exceeds WIDTH (e.g. wide glyph, image).
           (when (= end-pos pos)
-            (setq end-pos (1+ pos)))
+            (setq end-pos (car (agent-shell-markdown--table-wrap-unit
+                                text pos window))))
           ;; Try to break at the last clean break point within
           ;; [pos, end-pos): after whitespace, or after a
           ;; line-breakable (CJK) character.
@@ -3165,10 +3205,12 @@ width exceeds the column budget, drifting the right pipe."
             (when (< end-pos len)
               (let ((scan (1- end-pos)))
                 (while (and (>= scan pos)
-                            (not (and (> scan pos)
-                                      (memq (seq-elt text scan) '(?\s ?\t))))
-                            (not (agent-shell-markdown--table-break-after-p
-                                  text scan)))
+                            (or (get-text-property scan 'display text)
+                                (and (not (and (> scan pos)
+                                               (memq (seq-elt text scan)
+                                                     '(?\s ?\t))))
+                                     (not (agent-shell-markdown--table-break-after-p
+                                           text scan)))))
                   (setq scan (1- scan)))
                 (when (>= scan pos)
                   (setq break-pos (1+ scan)))))
@@ -3512,6 +3554,49 @@ is safe to call on display and on resize."
               (set-marker (nth 0 region) nil)
               (set-marker (nth 1 region) nil)))
           (restore-buffer-modified-p modified))))))
+
+(defun agent-shell-markdown-rerender-table (pos &optional source)
+  "Lay out the table at POS again, and return its markdown source.
+
+A rendered table is laid out from the markdown stored on it (see
+`agent-shell-markdown-rerender-tables').  With SOURCE, a
+propertized markdown table string, it is laid out from SOURCE
+instead, and SOURCE becomes the stored markdown, so a later
+re-layout, such as one on a resize, keeps it.  Without SOURCE, it
+is laid out from the stored markdown.  Columns are measured
+against the window showing the buffer now.
+
+For a render function whose output appears after the table was
+laid out: an image put on an equation's text later is not in the
+stored markdown, and the columns were measured without it.  The
+render function adds the image to a copy of the returned source
+and passes the copy back.
+
+The re-layout is not an edit: it ignores `read-only', stays off
+the undo list and leaves the buffer's modified flag as it was.
+Return nil, changing nothing, when no rendered table covers POS."
+  (when-let* ((stored (get-text-property
+                       pos 'agent-shell-markdown-table-source)))
+    (let ((start (if (and (> pos (point-min))
+                          (eq (get-text-property
+                               (1- pos) 'agent-shell-markdown-table-source)
+                              stored))
+                     (previous-single-property-change
+                      pos 'agent-shell-markdown-table-source nil (point-min))
+                   pos))
+          (end (next-single-property-change
+                pos 'agent-shell-markdown-table-source nil (point-max)))
+          (source (or source stored))
+          (inhibit-read-only t)
+          (buffer-undo-list t)
+          (modified (buffer-modified-p)))
+      (save-excursion
+        (agent-shell-markdown--render-table
+         (list (cons :source source)
+               (cons :start start)
+               (cons :end end))))
+      (restore-buffer-modified-p modified)
+      source)))
 
 (defun agent-shell-markdown--displayed-window-width ()
   "Return the body pixel width of a window showing the current buffer, or nil.

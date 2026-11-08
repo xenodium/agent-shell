@@ -3154,6 +3154,30 @@ after" nil)))))
   (should (equal (agent-shell-markdown--table-wrap-text "日本のfoo語" 3)
                  '("日" "本" "の" "foo" "語"))))
 
+(defun agent-shell-markdown-tests--image-text (text)
+  "Return TEXT with a `display' image over all of it.
+As a render function shows an equation: the source stays in the
+buffer and one image is displayed in its place."
+  (propertize text 'display '(image :type svg :data "<svg/>")))
+
+(ert-deftest agent-shell-markdown-table-wrap-text-keeps-image-whole ()
+  ;; Text under one `display' image is one word: a break at a space
+  ;; inside it would show the image once on each line.
+  (let* ((image (agent-shell-markdown-tests--image-text "\\( x + y \\)"))
+         (lines (agent-shell-markdown--table-wrap-text
+                 (concat "a " image " b") 5)))
+    (should (equal lines '("a" "\\( x + y \\)" "b")))
+    (should (equal-including-properties (nth 1 lines) image))))
+
+(ert-deftest agent-shell-markdown-table-longest-word-counts-image-whole ()
+  ;; A column is at least as wide as an image in it.  Without a
+  ;; graphical window, the image counts as the text it covers.
+  (should (= 11 (agent-shell-markdown--table-longest-word
+                 :str (concat "a "
+                              (agent-shell-markdown-tests--image-text
+                               "\\( x + y \\)")
+                              " b")))))
+
 (ert-deftest agent-shell-markdown-mirrors-face-to-font-lock-face ()
   ;; Faces are mirrored to `font-lock-face' so our styling survives
   ;; `font-lock-mode' re-fontification in comint / shell-maker buffers.
@@ -3260,6 +3284,68 @@ after" nil)))))
         (setq calls 0)
         (agent-shell-markdown-rerender-tables)
         (should (= calls 0))))))
+
+(ert-deftest agent-shell-markdown-rerender-table-from-source ()
+  ;; With SOURCE, the table at POS is laid out from it, SOURCE becomes
+  ;; its stored source, and the text around the table is left alone.
+  (with-temp-buffer
+    (insert "before\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\nafter\n")
+    (agent-shell-markdown-replace-markup)
+    (goto-char (point-min))
+    (search-forward "1")
+    (let* ((pos (match-beginning 0))
+           (stored (get-text-property pos 'agent-shell-markdown-table-source))
+           (source (replace-regexp-in-string "| 1 |" "| 123 |" stored t t)))
+      (should (eq (agent-shell-markdown-rerender-table pos source) source))
+      (goto-char (point-min))
+      (search-forward "123")
+      (should (eq (get-text-property (match-beginning 0)
+                                     'agent-shell-markdown-table-source)
+                  source))
+      (should (string-prefix-p "before\n\n" (buffer-string)))
+      (should (string-suffix-p "\n\nafter\n" (buffer-string))))))
+
+(ert-deftest agent-shell-markdown-rerender-table-from-stored-source ()
+  ;; Without SOURCE, the table is laid out again from its stored source,
+  ;; which is returned.
+  (with-temp-buffer
+    (insert "| A | B |\n|---|---|\n| 1 | 2 |\n")
+    (agent-shell-markdown-replace-markup)
+    (let ((rendered (buffer-string))
+          (stored (get-text-property (point-min)
+                                     'agent-shell-markdown-table-source)))
+      (should (equal (agent-shell-markdown-rerender-table (point-min))
+                     stored))
+      (should (equal (buffer-string) rendered)))))
+
+(ert-deftest agent-shell-markdown-rerender-table-outside-a-table ()
+  ;; POS outside a laid-out table: nil, and the buffer is not touched.
+  (with-temp-buffer
+    (insert "text\n\n| A | B |\n|---|---|\n| 1 | 2 |\n")
+    (agent-shell-markdown-replace-markup)
+    (let ((rendered (buffer-string)))
+      (should-not (agent-shell-markdown-rerender-table (point-min)))
+      (should (equal (buffer-string) rendered)))))
+
+(ert-deftest agent-shell-markdown-rerender-table-in-read-only-text ()
+  ;; A shell buffer's output is read-only.  The re-layout is not an
+  ;; edit: it goes through, stays off the undo list and leaves the
+  ;; buffer unmodified.
+  (with-temp-buffer
+    (insert "| A | B |\n|---|---|\n| 1 | 2 |\n")
+    (agent-shell-markdown-replace-markup)
+    (put-text-property (point-min) (point-max) 'read-only t)
+    (set-buffer-modified-p nil)
+    (setq buffer-undo-list nil)
+    (let ((source (replace-regexp-in-string
+                   "| 1 |" "| 123 |"
+                   (get-text-property (point-min)
+                                      'agent-shell-markdown-table-source)
+                   t t)))
+      (agent-shell-markdown-rerender-table (point-min) source)
+      (should (string-match-p "123" (buffer-string)))
+      (should-not (buffer-modified-p))
+      (should-not buffer-undo-list))))
 
 (ert-deftest agent-shell-markdown-carry-properties-drops-font-lock-face ()
   ;; `font-lock-face' is our own styling (mirrored from `face'), not a
