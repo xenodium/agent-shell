@@ -2935,9 +2935,7 @@ column and visibly misaligns the vertical pipes between rows."
            (window-live-p window)
            (fboundp 'window-text-pixel-size)
            (display-graphic-p)
-           (or (not (string-match-p (rx bos (* ascii) eos) str))
-               (agent-shell-markdown--text-has-face-p str)
-               (text-property-not-all 0 (length str) 'display nil str)))
+           (agent-shell-markdown--table-pixel-path-p str))
       ;; TODO: Make this fallback observable.  Discarding the error
       ;; means a broken pixel path silently degrades to char-width
       ;; alignment; stashing the last error in a defvar would be
@@ -3024,6 +3022,19 @@ still fits rather than overflowing and line-wrapping as a whole."
                         (max m (floor (- w (* s ratio)))))
                       natural-widths floors shrinkable)))))))
 
+(defun agent-shell-markdown--table-pixel-path-p (text)
+  "Return non-nil if TEXT must be measured in pixels in a table.
+
+That's TEXT with non-ASCII content, a `face' (whose font may render
+at a different width) or a `display' property (an image drawn in
+place of its text), for which `string-width' misjudges the width.
+
+For example, \"foo\" yields nil, while \"日本\", \"foo\" under a
+face and \"foo\" under a `display' image yield non-nil."
+  (or (not (string-match-p (rx bos (* ascii) eos) text))
+      (agent-shell-markdown--text-has-face-p text)
+      (text-property-not-all 0 (length text) 'display nil text)))
+
 (defun agent-shell-markdown--text-has-face-p (text)
   "Return non-nil if TEXT carries any `face' text property.
 Used to decide whether table cell measurement / wrap must take the
@@ -3108,6 +3119,54 @@ For example, in \"a \\=\\( x \\=\\) b\" with an image over
 \"\\=\\( x \\=\\)\", POS 2 yields 9 and POS 0 nil."
   (when (eq (car-safe (get-text-property pos 'display text)) 'image)
     (next-single-property-change pos 'display text (length text))))
+
+(cl-defun agent-shell-markdown--table-fit-images (&key text window)
+  "Return TEXT with its markdown images shrunk to one line tall.
+
+An `![alt](url)' image (see `agent-shell-markdown--replace-images')
+is sized for running text, far too large for a table cell.  Each one
+in TEXT is re-created at most one line tall, as measured in WINDOW's
+frame, a thumbnail RET still opens in full.  It stops following the
+window's width, so `agent-shell-markdown-rerender-images' leaves it
+to the table, which re-applies this cap whenever it is laid out
+again.  Other images, such as a render function's equations, are
+left as they are.
+
+For example, a 585x585 image in a frame whose lines are 20 pixels
+tall comes back 20x20."
+  (if-let* ((pos (text-property-not-all
+                  0 (length text)
+                  'agent-shell-markdown-image-width-ratio nil text)))
+      (let ((result (copy-sequence text))
+            (max-height (frame-char-height
+                         (and (window-live-p window)
+                              (window-frame window)))))
+        (while pos
+          (let ((end (next-single-property-change
+                      pos 'agent-shell-markdown-image-width-ratio result
+                      (length result))))
+            (when-let* ((image (get-text-property pos 'display result))
+                        ((eq (car-safe image) 'image))
+                        (file (image-property image :file))
+                        (capped (create-image
+                                 file nil nil
+                                 :ascent 'center
+                                 :max-width (image-property image :max-width)
+                                 :max-height (min max-height
+                                                  (or (image-property image :max-height)
+                                                      max-height)))))
+              (image-flush capped t)
+              (put-text-property pos end 'display capped result))
+            (remove-text-properties
+             pos end
+             '(agent-shell-markdown-image-width-ratio nil
+               agent-shell-markdown-image-window-width nil)
+             result)
+            (setq pos (text-property-not-all
+                       end (length result)
+                       'agent-shell-markdown-image-width-ratio nil result))))
+        result)
+    text))
 
 (defun agent-shell-markdown--table-wrap-unit (text pos window)
   "Return (END . WIDTH) of the wrap unit at POS in TEXT.
@@ -3226,11 +3285,11 @@ width exceeds the column budget, drifting the right pipe."
 (cl-defun agent-shell-markdown--pad-table-string (&key str width window force-pixel)
   "Pad STR with spaces to reach WIDTH columns.
 
-ASCII-only strings take the cheap `string-width' + spaces path.
-Any non-ASCII content (single-codepoint emoji, CJK, ZWJ
-sequences, regional-indicator flags, VS-16 emoji) routes through
-pixel-accurate measurement, which needs a live WINDOW for its font
-metrics.  Mixing the two paths within a column accumulates
+Plain ASCII strings take the cheap `string-width' + spaces path.
+Strings `agent-shell-markdown--table-pixel-path-p' flags (non-ASCII
+content such as emoji or CJK, a `face', or a `display' image) route
+through pixel-accurate measurement, which needs a live WINDOW for its
+font metrics.  Mixing the two paths within a column accumulates
 fractional drift between rows and visibly misaligns the right-edge
 pipes.
 
@@ -3245,8 +3304,7 @@ via different paths and drift sub-pixel on their right edge."
            (fboundp 'window-text-pixel-size)
            (display-graphic-p)
            (or force-pixel
-               (not (string-match-p (rx bos (* ascii) eos) str))
-               (agent-shell-markdown--text-has-face-p str)))
+               (agent-shell-markdown--table-pixel-path-p str)))
       ;; TODO: Make this fallback observable.  Discarding the error
       ;; means a broken pixel path silently degrades to char-width
       ;; alignment; stashing the last error in a defvar would be
@@ -3338,11 +3396,10 @@ logical rows (skipping the visual continuation lines)."
          ;; path so padding pins the right edge to the column's pixel
          ;; budget — when a theme styles inline-code with a wider font
          ;; the ASCII path's `string-width' undercounts and the right
-         ;; pipe drifts past the column boundary.
+         ;; pipe drifts past the column boundary.  Likewise an image
+         ;; drawn over ASCII alt text.
          (force-pixel-flags
-          (mapcar (lambda (cell)
-                    (or (not (string-match-p (rx bos (* ascii) eos) cell))
-                        (agent-shell-markdown--text-has-face-p cell)))
+          (mapcar #'agent-shell-markdown--table-pixel-path-p
                   processed-cells))
          (max-lines (apply #'max 1 (mapcar #'length wrapped)))
          (lines '()))
@@ -3407,7 +3464,9 @@ containing emoji/CJK line up with the column's right border."
               (processed-cells nil))
           (dolist (cell cells)
             (let* ((processed (agent-shell-markdown--table-apply-height-scaling
-                               (map-elt cell :content)))
+                               (agent-shell-markdown--table-fit-images
+                                :text (map-elt cell :content)
+                                :window window)))
                    (dw (agent-shell-markdown--table-display-width
                         :str processed :window window)))
               (push processed processed-cells)

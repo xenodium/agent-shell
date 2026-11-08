@@ -3180,6 +3180,52 @@ buffer and one image is displayed in its place."
     (should (equal lines '("a" "\\( x + y \\)" "b")))
     (should (equal-including-properties (nth 1 lines) image))))
 
+(ert-deftest agent-shell-markdown-table-pixel-path-p-includes-images ()
+  ;; An image over plain ASCII alt text must be padded in pixels too,
+  ;; or the cell is padded as if it were its alt text.
+  (should-not (agent-shell-markdown--table-pixel-path-p "foo"))
+  (should (agent-shell-markdown--table-pixel-path-p "日本"))
+  (should (agent-shell-markdown--table-pixel-path-p
+           (propertize "foo" 'face 'bold)))
+  (should (agent-shell-markdown--table-pixel-path-p
+           (agent-shell-markdown-tests--image-text "foo"))))
+
+(ert-deftest agent-shell-markdown-table-fit-images-caps-markdown-images ()
+  ;; A markdown image is shrunk to one line and stops tracking the
+  ;; window width, so `rerender-images' can't undo the cap.
+  (skip-unless (image-type-available-p 'svg))
+  (let ((file (make-temp-file "agent-shell-table-image" nil ".svg"
+                              "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"600\" height=\"600\"/>")))
+    (unwind-protect
+        (let* ((text (propertize "icon"
+                                 'display (create-image file nil nil :max-width 500)
+                                 'agent-shell-markdown-image-width-ratio 'default
+                                 'agent-shell-markdown-image-window-width 1000))
+               (fitted (agent-shell-markdown--table-fit-images :text text)))
+          (should (= (image-property (get-text-property 0 'display fitted)
+                                     :max-height)
+                     (frame-char-height)))
+          (should (eq (image-property (get-text-property 0 'display fitted)
+                                      :ascent)
+                      'center))
+          (should (= (image-property (get-text-property 0 'display fitted)
+                                     :max-width)
+                     500))
+          (should-not (get-text-property
+                       0 'agent-shell-markdown-image-width-ratio fitted))
+          (should-not (get-text-property
+                       0 'agent-shell-markdown-image-window-width fitted))
+          (should (get-text-property
+                   0 'agent-shell-markdown-image-width-ratio text)))
+      (delete-file file))))
+
+(ert-deftest agent-shell-markdown-table-fit-images-leaves-other-images ()
+  ;; Images a render function drew (e.g. equations) aren't ours to size.
+  (let ((text (agent-shell-markdown-tests--image-text "\\( x \\)")))
+    (should (equal-including-properties
+             (agent-shell-markdown--table-fit-images :text text)
+             text))))
+
 (ert-deftest agent-shell-markdown-table-longest-word-counts-image-whole ()
   ;; A column is at least as wide as an image in it.  Without a
   ;; graphical window, the image counts as the text it covers.
