@@ -3205,7 +3205,9 @@ width exceeds the column budget, drifting the right pipe."
             (when (< end-pos len)
               (let ((scan (1- end-pos)))
                 (while (and (>= scan pos)
-                            (or (get-text-property scan 'display text)
+                            (or (eq (car-safe (get-text-property
+                                               scan 'display text))
+                                    'image)
                                 (and (not (and (> scan pos)
                                                (memq (seq-elt text scan)
                                                      '(?\s ?\t))))
@@ -3532,31 +3534,48 @@ is safe to call on display and on resize."
             (let ((beg (prop-match-beginning match)))
               (unless (eql width (get-text-property
                                   beg 'agent-shell-markdown-table-width))
-                (push (list (copy-marker beg)
-                            (copy-marker (prop-match-end match))
-                            (get-text-property
-                             beg 'agent-shell-markdown-table-source))
+                (push (list (cons :source (get-text-property
+                                           beg 'agent-shell-markdown-table-source))
+                            (cons :start (copy-marker beg))
+                            (cons :end (copy-marker (prop-match-end match))))
                       regions))))))
-      ;; A re-layout, not a content change: keep it off the undo list and
-      ;; don't flip the buffer's modified flag.
-      (when regions
-        (let ((inhibit-read-only t)
-              (buffer-undo-list t)
-              (modified (buffer-modified-p)))
-          ;; Preserve point (`agent-shell-markdown--render-table' moves point
-          ;; and can be triggered at arbitrary times).
-          (save-excursion
-            (dolist (region (nreverse regions))
-              (agent-shell-markdown--render-table
-               (list (cons :source (nth 2 region))
-                     (cons :start (marker-position (nth 0 region)))
-                     (cons :end (marker-position (nth 1 region)))))
-              (set-marker (nth 0 region) nil)
-              (set-marker (nth 1 region) nil)))
-          (restore-buffer-modified-p modified))))))
+      (agent-shell-markdown--relayout-tables (nreverse regions)))))
 
-(defun agent-shell-markdown-rerender-table (pos &optional source)
-  "Lay out the table at POS again, and return its markdown source.
+(defun agent-shell-markdown--relayout-tables (tables)
+  "Lay out TABLES again from their markdown, without it being an edit.
+
+Each of TABLES is an alist of :source, the markdown to lay out, and
+:start and :end, markers bounding the rendered table.  The markers
+are released once used.
+
+The re-layout ignores `read-only', stays off the undo list and
+leaves the buffer's modified flag as it was.  Point is preserved.
+
+For example, TABLES as
+
+  (((:source . \"| A |\\n|---|\\n| 1 |\\n\")
+    (:start . #<marker at 1>)
+    (:end . #<marker at 34>)))
+
+lays out that one table over [1, 34)."
+  (when tables
+    (let ((inhibit-read-only t)
+          (buffer-undo-list t)
+          (modified (buffer-modified-p)))
+      ;; Preserve point (`agent-shell-markdown--render-table' moves point
+      ;; and can be triggered at arbitrary times).
+      (save-excursion
+        (dolist (table tables)
+          (agent-shell-markdown--render-table
+           (list (cons :source (map-elt table :source))
+                 (cons :start (marker-position (map-elt table :start)))
+                 (cons :end (marker-position (map-elt table :end)))))
+          (set-marker (map-elt table :start) nil)
+          (set-marker (map-elt table :end) nil)))
+      (restore-buffer-modified-p modified))))
+
+(cl-defun agent-shell-markdown-rerender-table (&key position source)
+  "Lay out the table at POSITION again, and return its markdown source.
 
 A rendered table is laid out from the markdown stored on it (see
 `agent-shell-markdown-rerender-tables').  With SOURCE, a
@@ -3574,29 +3593,47 @@ and passes the copy back.
 
 The re-layout is not an edit: it ignores `read-only', stays off
 the undo list and leaves the buffer's modified flag as it was.
-Return nil, changing nothing, when no rendered table covers POS."
-  (when-let* ((stored (get-text-property
-                       pos 'agent-shell-markdown-table-source)))
-    (let ((start (if (and (> pos (point-min))
-                          (eq (get-text-property
-                               (1- pos) 'agent-shell-markdown-table-source)
-                              stored))
-                     (previous-single-property-change
-                      pos 'agent-shell-markdown-table-source nil (point-min))
-                   pos))
-          (end (next-single-property-change
-                pos 'agent-shell-markdown-table-source nil (point-max)))
-          (source (or source stored))
-          (inhibit-read-only t)
-          (buffer-undo-list t)
-          (modified (buffer-modified-p)))
-      (save-excursion
-        (agent-shell-markdown--render-table
-         (list (cons :source source)
-               (cons :start start)
-               (cons :end end))))
-      (restore-buffer-modified-p modified)
-      source)))
+Return nil, changing nothing, when no rendered table covers
+POSITION.
+
+For example, with point inside a table rendered from
+\"| A |\\n|---|\\n| 1 |\\n\":
+
+  (agent-shell-markdown-rerender-table
+   :position (point)
+   :source \"| A |\\n|---|\\n| 123 |\\n\")
+
+lays the table out with 123 in place of 1 and returns the new
+source."
+  (when-let* ((table (agent-shell-markdown-table-at position)))
+    (agent-shell-markdown--relayout-tables
+     (list (list (cons :source (or source (map-elt table :source)))
+                 (cons :start (copy-marker (map-elt table :start)))
+                 (cons :end (copy-marker (map-elt table :end))))))
+    (or source (map-elt table :source))))
+
+(defun agent-shell-markdown-table-at (position)
+  "Return the rendered table at POSITION, or nil when there is none.
+
+The table is an alist of :source, the markdown it was laid out
+from (see `agent-shell-markdown-rerender-table'), and :start and
+:end, the bounds of its rendered text.
+
+For example, with a table rendered over [120, 168) from
+\"| A |\\n|---|\\n| 1 |\\n\", any POSITION in [120, 168) returns
+
+  ((:source . \"| A |\\n|---|\\n| 1 |\\n\")
+   (:start . 120)
+   (:end . 168))"
+  (when-let* ((source (get-text-property
+                       position 'agent-shell-markdown-table-source)))
+    (list (cons :source source)
+          (cons :start (previous-single-property-change
+                        (1+ position) 'agent-shell-markdown-table-source
+                        nil (point-min)))
+          (cons :end (next-single-property-change
+                      position 'agent-shell-markdown-table-source
+                      nil (point-max))))))
 
 (defun agent-shell-markdown--displayed-window-width ()
   "Return the body pixel width of a window showing the current buffer, or nil.
@@ -4456,11 +4493,9 @@ whose cells and the links in them navigation walks one by one.
 For example, with POSITION on a link in the last cell of a table,
 returns that table's first cell for a FROM ahead of the table, and the
 link itself for a FROM already inside it."
-  (or (when-let* ((table (save-excursion
-                           (goto-char position)
-                           (agent-shell-markdown-table--region-at-point)))
-                  ((not (and (<= (car table) from)
-                             (< from (cdr table))))))
+  (or (when-let* ((table (agent-shell-markdown-table-at position))
+                  ((not (and (<= (map-elt table :start) from)
+                             (< from (map-elt table :end))))))
         (agent-shell-markdown-table--first-cell position))
       position))
 
@@ -4482,11 +4517,11 @@ Returns nil when point isn't inside a rendered agent-shell-markdown
 table.  Navigable cells are tagged by the renderer with the
 `agent-shell-markdown-table-cell-start' text property, so separator rows
 and continuation lines of wrapped rows are skipped automatically."
-  (when-let* ((region (agent-shell-markdown-table--region-at-point)))
+  (when-let* ((table (agent-shell-markdown-table-at (point))))
     (let ((positions nil))
       (save-excursion
         (save-restriction
-          (narrow-to-region (car region) (cdr region))
+          (narrow-to-region (map-elt table :start) (map-elt table :end))
           (goto-char (point-min))
           (while (let ((m (text-property-search-forward
                            'agent-shell-markdown-table-cell-start t t)))
@@ -4494,16 +4529,6 @@ and continuation lines of wrapped rows are skipped automatically."
                      (push (prop-match-beginning m) positions)
                      t)))))
       (nreverse positions))))
-
-(defun agent-shell-markdown-table--region-at-point ()
-  "Return (START . END) of the rendered table at point, or nil."
-  (when (get-text-property (point) 'agent-shell-markdown-table-source)
-    (cons (or (previous-single-property-change
-               (1+ (point)) 'agent-shell-markdown-table-source nil (point-min))
-              (point-min))
-          (or (next-single-property-change
-               (point) 'agent-shell-markdown-table-source nil (point-max))
-              (point-max)))))
 
 (defun agent-shell-markdown--apply-faces-from (propertized buffer-start)
   "Layer `face' properties from PROPERTIZED on chars at BUFFER-START..

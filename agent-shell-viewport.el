@@ -677,8 +677,8 @@ in, landing on the item after it rather than on its next cell."
   ;; Leaving the table point is in — navigate on from its end, where its
   ;; own cells and their links are behind the search.
   (when-let* ((leave-table)
-              (table (agent-shell-markdown-table--region-at-point)))
-    (goto-char (cdr table)))
+              (table (agent-shell-markdown-table-at (point))))
+    (goto-char (map-elt table :end)))
   (let* ((current-pos (point))
          (prompt-start (agent-shell-viewport--prompt-start))
          (response-start (agent-shell-viewport--response-start))
@@ -746,8 +746,8 @@ in, as `agent-shell-viewport-next-item' does from its end."
   ;; Leaving the table point is in — navigate on from its start, where
   ;; its own cells and their links are behind the search.
   (when-let* ((leave-table)
-              (table (agent-shell-markdown-table--region-at-point)))
-    (goto-char (car table)))
+              (table (agent-shell-markdown-table-at (point))))
+    (goto-char (map-elt table :start)))
   (let* ((current-pos (point))
          (prompt-start (agent-shell-viewport--prompt-start))
          (response-start (agent-shell-viewport--response-start))

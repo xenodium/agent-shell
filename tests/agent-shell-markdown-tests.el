@@ -3154,6 +3154,17 @@ after" nil)))))
   (should (equal (agent-shell-markdown--table-wrap-text "日本のfoo語" 3)
                  '("日" "本" "の" "foo" "語"))))
 
+(ert-deftest agent-shell-markdown-table-wrap-text-breaks-after-height-scaled-cjk ()
+  ;; Graphic frames put `display' (height N) on CJK chars to even out
+  ;; row heights.  Only an image's `display' blocks a break, so these
+  ;; chars stay break points.
+  (should (equal (mapcar #'substring-no-properties
+                         (agent-shell-markdown--table-wrap-text
+                          (concat "a "
+                                  (propertize "日本語" 'display '(height 0.9)))
+                          5))
+                 '("a 日" "本語"))))
+
 (defun agent-shell-markdown-tests--image-text (text)
   "Return TEXT with a `display' image over all of it.
 As a render function shows an equation: the source stays in the
@@ -3296,7 +3307,8 @@ buffer and one image is displayed in its place."
     (let* ((pos (match-beginning 0))
            (stored (get-text-property pos 'agent-shell-markdown-table-source))
            (source (replace-regexp-in-string "| 1 |" "| 123 |" stored t t)))
-      (should (eq (agent-shell-markdown-rerender-table pos source) source))
+      (should (eq (agent-shell-markdown-rerender-table
+                   :position pos :source source) source))
       (goto-char (point-min))
       (search-forward "123")
       (should (eq (get-text-property (match-beginning 0)
@@ -3314,7 +3326,8 @@ buffer and one image is displayed in its place."
     (let ((rendered (buffer-string))
           (stored (get-text-property (point-min)
                                      'agent-shell-markdown-table-source)))
-      (should (equal (agent-shell-markdown-rerender-table (point-min))
+      (should (equal (agent-shell-markdown-rerender-table
+                      :position (point-min))
                      stored))
       (should (equal (buffer-string) rendered)))))
 
@@ -3324,8 +3337,37 @@ buffer and one image is displayed in its place."
     (insert "text\n\n| A | B |\n|---|---|\n| 1 | 2 |\n")
     (agent-shell-markdown-replace-markup)
     (let ((rendered (buffer-string)))
-      (should-not (agent-shell-markdown-rerender-table (point-min)))
+      (should-not (agent-shell-markdown-rerender-table
+                   :position (point-min)))
       (should (equal (buffer-string) rendered)))))
+
+(ert-deftest agent-shell-markdown-table-at-returns-source-and-bounds ()
+  ;; Any position in a rendered table yields the same source and bounds,
+  ;; which span exactly the table's rendered text.
+  (with-temp-buffer
+    (insert "before\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\nafter\n")
+    (agent-shell-markdown-replace-markup)
+    (goto-char (point-min))
+    (search-forward "A")
+    (let ((table (agent-shell-markdown-table-at (match-beginning 0))))
+      (should (eq (map-elt table :source)
+                  (get-text-property (match-beginning 0)
+                                     'agent-shell-markdown-table-source)))
+      (should (equal (buffer-substring (point-min) (map-elt table :start))
+                     "before\n\n"))
+      (should (string-prefix-p "\n\nafter"
+                               (buffer-substring (map-elt table :end)
+                                                 (point-max))))
+      (should (equal (agent-shell-markdown-table-at (map-elt table :start))
+                     table))
+      (should (equal (agent-shell-markdown-table-at (1- (map-elt table :end)))
+                     table)))))
+
+(ert-deftest agent-shell-markdown-table-at-outside-a-table ()
+  (with-temp-buffer
+    (insert "text\n\n| A | B |\n|---|---|\n| 1 | 2 |\n")
+    (agent-shell-markdown-replace-markup)
+    (should-not (agent-shell-markdown-table-at (point-min)))))
 
 (ert-deftest agent-shell-markdown-rerender-table-in-read-only-text ()
   ;; A shell buffer's output is read-only.  The re-layout is not an
@@ -3342,7 +3384,8 @@ buffer and one image is displayed in its place."
                    (get-text-property (point-min)
                                       'agent-shell-markdown-table-source)
                    t t)))
-      (agent-shell-markdown-rerender-table (point-min) source)
+      (agent-shell-markdown-rerender-table
+       :position (point-min) :source source)
       (should (string-match-p "123" (buffer-string)))
       (should-not (buffer-modified-p))
       (should-not buffer-undo-list))))
