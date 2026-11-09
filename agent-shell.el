@@ -1438,6 +1438,10 @@ With \\[universal-argument] prefix ARG, submit through
 `agent-shell-busy-submit-override-function' instead, which steers by
 default.  \\[agent-shell-submit-override] is bound to the same thing.
 
+With ARG at an empty prompt mid-turn, call
+`agent-shell-busy-submit-reroute-function' instead, which by default
+offers to steer the most recently queued prompt.
+
 This owns the `agent-shell-submit' name because shell-maker's
 per-start aliasing is disabled (see the `:alias-commands nil' call in
 `agent-shell--start')."
@@ -1448,9 +1452,12 @@ per-start aliasing is disabled (see the `:alias-commands nil' call in
               (eq agent-shell-session-strategy 'new-deferred))
     (user-error "Starting agent, please wait"))
   (if (shell-maker-busy)
-      (when-let* ((prompt (agent-shell--prompt-input)))
-        (agent-shell--busy-submit :prompt prompt :override arg)
-        (agent-shell--clear-prompt-input))
+      (if-let* ((prompt (agent-shell--prompt-input)))
+          (progn
+            (agent-shell--busy-submit :prompt prompt :override arg)
+            (agent-shell--clear-prompt-input))
+        (when (and arg agent-shell-busy-submit-reroute-function)
+          (funcall agent-shell-busy-submit-reroute-function)))
     (shell-maker-submit)))
 
 (defun agent-shell-submit-override ()
@@ -1461,7 +1468,11 @@ Submits through `agent-shell-busy-submit-override-function' rather than
 steering is not the default is one keystroke away.
 
 Only differs from \\[agent-shell-submit] while the agent is working:
-with no turn to queue behind or steer into, both simply submit."
+with no turn to queue behind or steer into, both simply submit.
+
+At an empty prompt mid-turn, calls
+`agent-shell-busy-submit-reroute-function' instead, so a prompt queued
+by mistake can still be sent another way (steered by default)."
   (declare (modes agent-shell-mode))
   (interactive)
   (agent-shell-submit '(4)))

@@ -832,6 +832,8 @@ When =agent-shell-persistent-prompt-enabled= is set, the shell keeps a writable 
 
 Submitting into a busy agent queues the prompt by default.  =RET= submits via =agent-shell-busy-submit-default-function= (queues), while =M-RET= and =C-u RET= submit via =agent-shell-busy-submit-override-function= (steers).  Steering is covered in the next section.
 
+Queued a prompt with =RET= when you meant to steer it?  Press =M-RET= at the empty prompt and confirm to steer the most recently queued prompt instead.
+
 To disable/hide the persistent prompt, unset the related option:
 
 #+begin_src emacs-lisp

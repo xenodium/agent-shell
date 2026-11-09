@@ -8209,6 +8209,127 @@ user's own typing rather than a delete and re-insert."
             :busy t)
            '(:handed-on "send me" :cleared t))))
 
+(cl-defun agent-shell-tests--reroute-last-queued (&key confirm send-error (input "")
+                                                       (steering t)
+                                                       (default #'agent-shell-busy-submit-queue)
+                                                       (override #'agent-shell-busy-submit-steer)
+                                                       (reroute #'agent-shell-busy-submit-reroute-queue-to-steer))
+  "Queue two prompts, then \\[agent-shell-submit-override] with INPUT typed.
+
+CONFIRM answers the question asked, SEND-ERROR makes sending the steer
+signal, and STEERING is whether the agent supports it.  DEFAULT,
+OVERRIDE and REROUTE stand in for `agent-shell-busy-submit-default-function',
+`agent-shell-busy-submit-override-function' and
+`agent-shell-busy-submit-reroute-function' when pressing it, so the two
+prompts are queued either way.
+
+Returns what was asked, steered and left pending, and whether it
+signalled."
+  (agent-shell-tests--with-persistent-prompt-shell
+   (lambda ()
+     (let (asked steered signalled)
+       (insert "just the filenames")
+       (agent-shell-submit)
+       (insert "sorted by size")
+       (agent-shell-submit)
+       (insert input)
+       (cl-letf (((symbol-function 'agent-shell-steering-supported-p)
+                  (lambda (&rest _) steering))
+                 ((symbol-function 'y-or-n-p)
+                  (lambda (question) (setq asked question) confirm))
+                 ((symbol-function 'agent-shell-experimental--send-steering)
+                  (lambda (&rest args)
+                    (when send-error
+                      (error "Send failed"))
+                    (setq steered (plist-get args :prompt)))))
+         (condition-case nil
+             (let ((agent-shell-busy-submit-default-function default)
+                   (agent-shell-busy-submit-override-function override)
+                   (agent-shell-busy-submit-reroute-function reroute))
+               (agent-shell-submit-override))
+           (error (setq signalled t))))
+       (list :asked asked
+             :steered steered
+             :pending (map-elt agent-shell--state :pending-prompts)
+             :signalled signalled)))
+   :busy t))
+
+(ert-deftest agent-shell-submit-override-reroutes-last-queued-test ()
+  "An empty \\[agent-shell-submit-override] mid-turn steers the last queued prompt."
+  (should (equal (agent-shell-tests--reroute-last-queued :confirm t)
+                 '(:asked "Steer \"sorted by size\" instead?"
+                   :steered "sorted by size"
+                   :pending ("just the filenames")
+                   :signalled nil)))
+  ;; Whitespace alone counts as an empty prompt.
+  (should (equal (agent-shell-tests--reroute-last-queued :confirm t :input "  \n  ")
+                 '(:asked "Steer \"sorted by size\" instead?"
+                   :steered "sorted by size"
+                   :pending ("just the filenames")
+                   :signalled nil)))
+  ;; Declining leaves the queue as it was.
+  (should (equal (agent-shell-tests--reroute-last-queued :confirm nil)
+                 '(:asked "Steer \"sorted by size\" instead?"
+                   :steered nil
+                   :pending ("just the filenames" "sorted by size")
+                   :signalled t)))
+  ;; A steer that fails to send puts the prompt back.
+  (should (equal (agent-shell-tests--reroute-last-queued :confirm t :send-error t)
+                 '(:asked "Steer \"sorted by size\" instead?"
+                   :steered nil
+                   :pending ("just the filenames" "sorted by size")
+                   :signalled t)))
+  ;; An agent that cannot steer is refused before asking, rather than
+  ;; having `agent-shell-busy-submit-steer' queue the prompt right back.
+  (should (equal (agent-shell-tests--reroute-last-queued :confirm t :steering nil)
+                 '(:asked nil
+                   :steered nil
+                   :pending ("just the filenames" "sorted by size")
+                   :signalled t)))
+  ;; Rerouting is disabled when there is no reroute function.
+  (should (equal (agent-shell-tests--reroute-last-queued :confirm t :reroute nil)
+                 '(:asked nil
+                   :steered nil
+                   :pending ("just the filenames" "sorted by size")
+                   :signalled nil))))
+
+(ert-deftest agent-shell-busy-submit-reroute-queue-to-steer-other-pairs-test ()
+  "The built-in reroute declines any pair of functions other than queue and steer.
+
+Taking a submission back depends on how it was submitted, which is
+unknown for any other pair, so these are left for a reroute function
+written for them."
+  (dolist (pair `((,#'agent-shell-busy-submit-queue . ,#'agent-shell-busy-submit-queue)
+                  (,#'agent-shell-busy-submit-steer . ,#'agent-shell-busy-submit-steer)
+                  (,#'agent-shell-busy-submit-steer . ,#'agent-shell-busy-submit-queue)
+                  (,#'agent-shell-busy-submit-queue . ,(lambda (_prompt) nil))))
+    (should (equal (agent-shell-tests--reroute-last-queued
+                    :confirm t :default (car pair) :override (cdr pair))
+                   '(:asked nil
+                     :steered nil
+                     :pending ("just the filenames" "sorted by size")
+                     :signalled nil)))))
+
+(ert-deftest agent-shell-prompt-queue-rejects-blank-test ()
+  "Blank prompts are refused rather than queued or submitted."
+  (with-temp-buffer
+    (setq major-mode 'agent-shell-mode)
+    (setq-local agent-shell--state (agent-shell--make-state :buffer (current-buffer)))
+    (let (submitted)
+      (cl-letf (((symbol-function 'agent-shell--shell-buffer)
+                 (lambda (&rest _) (current-buffer)))
+                ((symbol-function 'agent-shell--insert-to-shell-buffer)
+                 (lambda (&rest _) (setq submitted t)))
+                ((symbol-function 'agent-shell--prompt-queue-echo) #'ignore))
+        (should-error (agent-shell--prompt-queue-enqueue :prompt "  \n  ")
+                      :type 'user-error)
+        (cl-letf (((symbol-function 'shell-maker-busy) (lambda (&rest _) t)))
+          (should-error (agent-shell-prompt-queue "\n\n") :type 'user-error))
+        (cl-letf (((symbol-function 'shell-maker-busy) (lambda (&rest _) nil)))
+          (should-error (agent-shell-prompt-queue "") :type 'user-error))
+        (should-not submitted)
+        (should-not (map-elt agent-shell--state :pending-prompts))))))
+
 (ert-deftest agent-shell--live-input-prompt-p-zero-length-test ()
   "A collapsed prompt span is not a prompt.
 
