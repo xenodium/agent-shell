@@ -87,7 +87,7 @@ when starting a new shell."
 
 An alist of (OPTION . VALUE).  Both are the ids listed under
 \"Available config options\" when starting a new shell, so whatever
-OpenCode advertises can be set here without further agent-shell
+OpenCode advertises can be set here without further `agent-shell'
 changes.  OPTION also accepts the ACP category names (\"model\",
 \"mode\", \"thought_level\") for options carrying one.
 
