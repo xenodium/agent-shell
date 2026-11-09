@@ -2887,6 +2887,33 @@ Each rendering is returned as a propertized string."
         (dolist (rendered (agent-shell-markdown-tests--render-all-ways (car case)))
           (should (equal (substring-no-properties rendered) (cadr case))))))))
 
+(ert-deftest agent-shell-markdown-list-frames-bold-numbered-lines-against-prose ()
+  ;; A run of bold numbered steps flush against prose gets a blank line
+  ;; above and below it, like a heading.  A list hanging off the last
+  ;; step stays attached.
+  (let ((agent-shell-markdown-list-bullets '("•")))
+    (dolist (case '(("Intro\n**1. First** point.\n**2. Second** point.\nafter\n"
+                     "Intro\n\n1. First point.\n2. Second point.\n\nafter\n")
+                    ("**1. First** point.\n**2. Second** point.\nafter\n"
+                     "1. First point.\n2. Second point.\n\nafter\n")
+                    ("Intro\n**1. First** point.\n**2. Second** point.\n\nafter\n"
+                     "Intro\n\n1. First point.\n2. Second point.\n\nafter\n")
+                    ("**1. First**\n**2. Second**\n- a\n"
+                     "1. First\n2. Second\n• a\n")
+                    ("**1. First**\n**2. Second**\n**3. Third**\n"
+                     "1. First\n2. Second\n3. Third\n")
+                    ("**1. Install**\nRun it.\n**2. Configure**\nEdit it.\n"
+                     "1. Install\n\nRun it.\n\n2. Configure\n\nEdit it.\n")
+                    ("Intro:\n**1. First**\n- a\n" "Intro:\n\n1. First\n• a\n")
+                    ("**1. First**\n- a\n**2. Second**\n- b\n"
+                     "1. First\n• a\n\n2. Second\n• b\n")
+                    ("Intro\n\n**1. First**\n" "Intro\n\n1. First\n")
+                    ("Intro\n**Steps:**\n" "Intro\nSteps:\n")
+                    ("Intro\n## 1. Setup\n" "Intro\n1. Setup\n")))
+      (ert-info ((format "Markdown: %S" (car case)))
+        (dolist (rendered (agent-shell-markdown-tests--render-all-ways (car case)))
+          (should (equal (substring-no-properties rendered) (cadr case))))))))
+
 (ert-deftest agent-shell-markdown-list-keeps-blank-bordering-prose ()
   ;; A blank with a list item on only one side frames the list off from
   ;; prose and stays; only inter-item gaps are joined.

@@ -2598,7 +2598,9 @@ surrounding text read as cramped; this inserts a single blank line
 on each such side.  Tables and lists pass a predicate so their
 bottom gap waits until no further row / item can fold in, and a list
 directly under a bold numbered line like `**1. Step**' hangs off it
-without a top gap.  See
+without a top gap.  Runs of such lines flush against prose get blank
+lines of their own (see
+`agent-shell-markdown--pad-bold-list-lookalikes').  See
 `agent-shell-markdown--frame-block' for the per-side rules.
 
 For example, a block the agent emitted flush against the text on
@@ -2631,15 +2633,89 @@ gains a blank line above and below it:
      start)
     (agent-shell-markdown--pad-regions
      'agent-shell-markdown-list-rendered
-     (lambda ()
-       (seq-some (lambda (regexp)
-                   (and (looking-at regexp)
-                        (not (agent-shell-markdown--rendered-list-marker-p
-                              (match-beginning 1) (match-end 1)))))
-                 (list agent-shell-markdown--list-item-pending-regexp
-                       agent-shell-markdown--list-item-frontier-regexp)))
+     #'agent-shell-markdown--list-item-pending-p
      start
-     #'agent-shell-markdown--bold-list-lookalike-p)))
+     #'agent-shell-markdown--bold-list-lookalike-p)
+    ;; After lists, so a step below a list finds the list's bottom gap
+    ;; already in place.
+    (agent-shell-markdown--pad-bold-list-lookalikes start)))
+
+(defun agent-shell-markdown--list-item-pending-p ()
+  "Return non-nil when the line at point is or may still become a list item.
+That is, it starts with a real marker, complete or still streaming
+in (see `agent-shell-markdown--list-item-pending-regexp' and
+`agent-shell-markdown--list-item-frontier-regexp').  A marker left by
+rendered markup does not count (see
+`agent-shell-markdown--rendered-list-marker-p').
+
+For example, \"- a\", \"1. a\" and a trailing \"-\" are pending, while
+the \"1. Step\" left by \"**1. Step**\" is not."
+  (seq-some (lambda (regexp)
+              (and (looking-at regexp)
+                   (not (agent-shell-markdown--rendered-list-marker-p
+                         (match-beginning 1) (match-end 1)))))
+            (list agent-shell-markdown--list-item-pending-regexp
+                  agent-shell-markdown--list-item-frontier-regexp)))
+
+(defun agent-shell-markdown--pad-bold-list-lookalikes (&optional start)
+  "Frame runs of bold numbered steps with blank lines where they meet prose.
+
+Scans from START, or `point-min' when nil.
+
+A step like `**1. Step**' is not a list item (see
+`agent-shell-markdown--bold-list-lookalike-p'), so list framing does
+not set it apart.  A run of consecutive steps gains a blank line above
+and below it where prose sits flush against it, so it reads like a
+heading.  The bottom gap is skipped when a list hangs off the last
+step, or while the next line may still stream in as another step or
+list item.
+
+For example, the buffer:
+
+  Intro
+  1. Install
+  Run the installer.
+
+becomes:
+
+  Intro
+
+  1. Install
+
+  Run the installer."
+  (let ((inhibit-field-text-motion t))
+    (save-excursion
+      (goto-char (or start (point-min)))
+      (while (not (eobp))
+        (if (not (agent-shell-markdown--bold-list-lookalike-p))
+            (forward-line 1)
+          (when (and (> (point) (point-min))
+                     (not (save-excursion
+                            (forward-line -1)
+                            (agent-shell-markdown--blank-line-at-p (point)))))
+            (agent-shell-markdown--insert-block-padding))
+          (while (and (not (eobp))
+                      (agent-shell-markdown--bold-list-lookalike-p))
+            (forward-line 1))
+          (when (and (not (eobp))
+                     (not (agent-shell-markdown--blank-line-at-p (point)))
+                     (not (agent-shell-markdown--list-line-at-p (point)))
+                     (not (agent-shell-markdown--list-item-pending-p))
+                     (not (agent-shell-markdown--bold-list-lookalike-pending-p)))
+            (agent-shell-markdown--insert-block-padding)))))))
+
+(defun agent-shell-markdown--bold-list-lookalike-pending-p ()
+  "Return non-nil when the line at point may still become a bold step.
+That is, it is the last line, still streaming in, and opens with raw
+`*' or `_' whose bold markup has not closed yet (see
+`agent-shell-markdown--bold-list-lookalike-p').
+
+For example, a trailing \"**2. Sec\" is pending, while \"after\" or a
+complete line are not."
+  (and (looking-at-p (rx (any "*_")))
+       (save-excursion
+         (end-of-line)
+         (eobp))))
 
 (cl-defun agent-shell-markdown--find-tables (&key avoid-ranges complete)
   "Return tables to (re-)render in current buffer.
