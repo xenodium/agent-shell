@@ -2074,25 +2074,59 @@ ending text that is complete, so no newline is coming for it.")
 
 (defconst agent-shell-markdown--list-item-pending-regexp
   (rx bol (zero-or-more (any " \t"))
-      (or (any "-*+") (seq (one-or-more digit) (any ".)")))
+      (group (or (any "-*+") (seq (one-or-more digit) (any ".)"))))
       (one-or-more (any " \t")))
   "Lenient regexp: a line that is or may still become a list item.
-Used to hold off a rendered list's bottom padding while another
-item could still stream in below it.")
+Group 1 is the marker.  Used to hold off a rendered list's bottom
+padding while another item could still stream in below it.")
 
 (defconst agent-shell-markdown--list-item-frontier-regexp
   (rx bol (zero-or-more (any " \t"))
-      (or (any "-*+") (seq (one-or-more digit) (opt (any ".)"))))
+      (group (or (any "-*+") (seq (one-or-more digit) (opt (any ".)")))))
       (zero-or-more (any " \t"))
       eos)
   "Regexp: a partial list marker at the streaming frontier (buffer end).
 Matches a bare or half-typed marker whose trailing space has not
 streamed in yet (`-', `*', `1', `1.' at buffer end), unlike
 `agent-shell-markdown--list-item-pending-regexp' which requires the
-space.  Anchored at `eos', so it matches only the still-incomplete
-last line, not a mid-buffer `-foo' or a `---' divider.  Used to hold
-off a list's bottom padding so a marker mid-stream does not get a
-framing blank stranded above the item it becomes.")
+space.  Group 1 is the marker.  Anchored at `eos', so it matches only
+the still-incomplete last line, not a mid-buffer `-foo' or a `---'
+divider.  Used to hold off a list's bottom padding so a marker
+mid-stream does not get a framing blank stranded above the item it
+becomes.")
+
+(defun agent-shell-markdown--rendered-list-marker-p (start end)
+  "Return non-nil when the list marker text [START, END) is rendered markup.
+
+A real marker is still plain text when lists render.  Text matching
+the marker regexps can also be what an earlier pass or chunk left
+behind, which is recognized by the properties that output carries:
+`agent-shell-markdown-source' or `agent-shell-markdown-frozen'.  These
+outlast re-fontification, unlike `face'.  A line already tagged
+`agent-shell-markdown-list-rendered' carries them too, but is a real
+item whose line streamed in over several renders.
+
+For example, the `1.' left by \"## 1. Setup\", \"**1. Step**\",
+\"`1. x`\" or \"1\\. Not a list\" is rendered markup, while the one in
+\"1. **Step**\" is not."
+  (and (not (get-text-property start 'agent-shell-markdown-list-rendered))
+       (or (text-property-not-all start end 'agent-shell-markdown-source nil)
+           (text-property-not-all start end 'agent-shell-markdown-frozen nil))))
+
+(defun agent-shell-markdown--bold-list-lookalike-p ()
+  "Return non-nil when the line at point reads like a list item only once bold.
+That is, its marker is rendered bold markup, as in a step written
+`**1. Step**' or `**1.** Step', which renders as the plain line
+`1. Step' rather than a list item (see
+`agent-shell-markdown--rendered-list-marker-p').  A header such as
+`## 1. Step' or a plain `**Step**' does not count."
+  (and (looking-at agent-shell-markdown--list-item-pending-regexp)
+       (agent-shell-markdown--rendered-list-marker-p
+        (match-beginning 1) (match-end 1))
+       (string-match-p "\\`\\(?:\\*\\*\\|__\\)"
+                       (or (get-text-property (match-beginning 1)
+                                              'agent-shell-markdown-source)
+                           ""))))
 
 (defun agent-shell-markdown--list-bullet (depth)
   "Return the bullet glyph for nesting DEPTH, cycling the glyph set."
@@ -2206,8 +2240,10 @@ marker replaced by a glyph and gets a base indent, via
 stashed on `agent-shell-markdown-source' so
 `agent-shell-copy-as-markdown' round-trips it; a plain copy yields
 the rendered glyphs.  Lines inside AVOID-RANGES (e.g. fenced code
-blocks) are left untouched.  A list item on the last line, with no
-newline yet, renders only when COMPLETE says no more text is coming.
+blocks) are left untouched, as are lines whose marker is rendered
+markup (see `agent-shell-markdown--rendered-list-marker-p').  A list
+item on the last line, with no newline yet, renders only when COMPLETE
+says no more text is coming.
 
 For example, the buffer:
 
@@ -2224,15 +2260,18 @@ a two-column base indent."
              (line-end (match-end 0))
              (avoid (agent-shell-markdown-in-avoid-range-p
                      line-start line-end avoid-ranges)))
-        (if avoid
-            (goto-char (cdr avoid))
+        (cond
+         (avoid (goto-char (cdr avoid)))
+         ((agent-shell-markdown--rendered-list-marker-p
+           (match-beginning 2) (match-end 2)))
+         (t
           (agent-shell-markdown--render-list-line
            :line-start line-start
            :line-end line-end
            :indent-width (- (match-end 1) (match-beginning 1))
            :marker-start (match-beginning 2)
            :marker-end (match-end 2)
-           :content-start (match-end 3)))))
+           :content-start (match-end 3))))))
     ;; The loop above is newline-anchored, so a list item on the last
     ;; line is left raw: more of it may still stream in.  Render it once
     ;; COMPLETE says nothing will.  A newline just past a narrowed
@@ -2244,6 +2283,8 @@ a two-column base indent."
       (when (and (not (get-text-property (point)
                                          'agent-shell-markdown-list-rendered))
                  (looking-at agent-shell-markdown--list-item-last-line-regexp)
+                 (not (agent-shell-markdown--rendered-list-marker-p
+                       (match-beginning 2) (match-end 2)))
                  (not (agent-shell-markdown-in-avoid-range-p
                        (match-beginning 0) (match-end 0) avoid-ranges)))
         (agent-shell-markdown--render-list-line
@@ -2442,7 +2483,7 @@ in place of the gap's newline)."
                               agent-shell-markdown-source-block-rendered nil
                               agent-shell-markdown-list-rendered nil))))
 
-(defun agent-shell-markdown--frame-block (start end continues-p)
+(defun agent-shell-markdown--frame-block (start end continues-p &optional hangs-p)
   "Frame the rendered block spanning [START, END) with blank lines.
 
 Insert an untinted blank line above START and below END wherever
@@ -2455,7 +2496,11 @@ CONTINUES-P, when non-nil, is a predicate called with point at the
 following line's start; a non-nil return means that line could
 still fold into this block (a streaming table row or list item), so
 the bottom gap is deferred.  A blank line dropped there would split
-the block."
+the block.
+
+HANGS-P, when non-nil, is a predicate called with point at the
+preceding line's start; a non-nil return means the block hangs off
+that line (a list under its bold lead-in), so the top gap is skipped."
   ;; Bottom first: it sits below START, so START stays valid for the
   ;; top insert without tracking it across the edit.
   (let ((following (save-excursion
@@ -2474,7 +2519,8 @@ the block."
              (not (save-excursion
                     (goto-char start)
                     (forward-line -1)
-                    (agent-shell-markdown--blank-line-at-p (point)))))
+                    (or (agent-shell-markdown--blank-line-at-p (point))
+                        (and hangs-p (funcall hangs-p))))))
     (goto-char start)
     (agent-shell-markdown--insert-block-padding)))
 
@@ -2484,8 +2530,10 @@ A block is the run of consecutive lines that each carry PROPERTY,
 joined across their line terminators.  A line may carry PROPERTY only
 partway (a list item rendered before the rest of its line streamed in
 leaves the tail untagged); its whole line still counts, so the next
-line is still folded in rather than framed apart.  The result is where
-PROPERTY next stops, so a caller can resume scanning there.
+line is still folded in rather than framed apart.  A line carrying
+none of PROPERTY ends the block, even when the line after it carries
+PROPERTY again.  The result is where PROPERTY next stops, so a caller
+can resume scanning there.
 
 For example, with the current buffer holding two PROPERTY-tagged list
 lines (the first tagged only up to `(', the rest streamed in later):
@@ -2498,7 +2546,8 @@ one partway through the first line."
   (let ((end (or (next-single-property-change start property nil (point-max))
                  (point-max))))
     (while (let ((line-end (if (and (< end (point-max))
-                                    (not (eq (char-after end) ?\n)))
+                                    (not (eq (char-after end) ?\n))
+                                    (not (eq (char-before end) ?\n)))
                                (save-excursion (goto-char end)
                                                (line-end-position))
                              end)))
@@ -2510,10 +2559,11 @@ one partway through the first line."
                                 (point-max))))))
     end))
 
-(defun agent-shell-markdown--pad-regions (property continues-p &optional start)
+(defun agent-shell-markdown--pad-regions (property continues-p &optional start hangs-p)
   "Frame every block of PROPERTY-tagged lines with blank lines.
-CONTINUES-P is forwarded to `agent-shell-markdown--frame-block' to
-gate the bottom gap.  A block spans consecutive PROPERTY lines (see
+CONTINUES-P and HANGS-P are forwarded to
+`agent-shell-markdown--frame-block' to gate the bottom and top gaps.
+A block spans consecutive PROPERTY lines (see
 `agent-shell-markdown--block-end'), so a multi-line construct is
 framed as a whole rather than split with a blank stranded inside.
 Scans from START, or `point-min' when nil; START must sit outside a
@@ -2528,7 +2578,7 @@ See `agent-shell-markdown--pad-rendered-blocks'."
                    ;; The top insert shifts END; a marker tracks it so the
                    ;; scan resumes just past the framed block.
                    (resume (copy-marker end)))
-              (agent-shell-markdown--frame-block pos end continues-p)
+              (agent-shell-markdown--frame-block pos end continues-p hangs-p)
               (setq pos (marker-position resume))
               (set-marker resume nil))
           (setq pos (or (next-single-property-change
@@ -2546,7 +2596,9 @@ Rendered source blocks (tagged
 `agent-shell-markdown-list-rendered') that sit flush against
 surrounding text read as cramped; this inserts a single blank line
 on each such side.  Tables and lists pass a predicate so their
-bottom gap waits until no further row / item can fold in.  See
+bottom gap waits until no further row / item can fold in, and a list
+directly under a bold numbered line like `**1. Step**' hangs off it
+without a top gap.  See
 `agent-shell-markdown--frame-block' for the per-side rules.
 
 For example, a block the agent emitted flush against the text on
@@ -2580,9 +2632,14 @@ gains a blank line above and below it:
     (agent-shell-markdown--pad-regions
      'agent-shell-markdown-list-rendered
      (lambda ()
-       (or (looking-at-p agent-shell-markdown--list-item-pending-regexp)
-           (looking-at-p agent-shell-markdown--list-item-frontier-regexp)))
-     start)))
+       (seq-some (lambda (regexp)
+                   (and (looking-at regexp)
+                        (not (agent-shell-markdown--rendered-list-marker-p
+                              (match-beginning 1) (match-end 1)))))
+                 (list agent-shell-markdown--list-item-pending-regexp
+                       agent-shell-markdown--list-item-frontier-regexp)))
+     start
+     #'agent-shell-markdown--bold-list-lookalike-p)))
 
 (cl-defun agent-shell-markdown--find-tables (&key avoid-ranges complete)
   "Return tables to (re-)render in current buffer.

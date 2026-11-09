@@ -9226,6 +9226,20 @@ would ever render it."
                                       (point-min) (point-max))))))
       (delete-file image-file))))
 
+(ert-deftest agent-shell--render-deferred-markup-skips-rendered-list-lookalike-test ()
+  "A body ending in rendered markup that reads like a list item is left alone.
+
+It would otherwise be re-rendered at the end of every later turn."
+  (with-temp-buffer
+    (insert "Intro\n\n**1. Step**")
+    (put-text-property (point-min) (point-max) 'agent-shell-ui-section 'body)
+    (agent-shell--render-markdown)
+    (let ((rendered nil))
+      (cl-letf (((symbol-function 'agent-shell--render-markdown)
+                 (lambda (&rest _) (setq rendered t))))
+        (agent-shell--render-deferred-markup))
+      (should-not rendered))))
+
 (ert-deftest agent-shell--render-deferred-markup-resets-undo-history-test ()
   "Undo after a turn ending in a table undoes what was typed at the prompt.
 
