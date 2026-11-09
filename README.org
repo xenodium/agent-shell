@@ -1133,156 +1133,157 @@ always go to Evil modes if you need to with ~C-z~).
 #+END_SRC
 
 #+RESULTS:
-| Custom variable                               | Description                                                                     |
-|-----------------------------------------------+---------------------------------------------------------------------------------|
-| agent-shell-activity-group-expand-by-default  | When activity group sections should be expanded.                                |
-| agent-shell-agent-configs                     | The known agent configurations.                                                 |
-| agent-shell-anthropic-authentication          | Configuration for Anthropic authentication.                                     |
-| agent-shell-anthropic-claude-acp-command      | Command and parameters for the Anthropic Claude client.                         |
-| agent-shell-anthropic-claude-environment      | Environment variables for the Anthropic Claude client.                          |
-| agent-shell-anthropic-default-model-id        | Default Anthropic model ID.                                                     |
-| agent-shell-anthropic-default-session-mode-id | Default Anthropic session mode ID.                                              |
-| agent-shell-antigravity-acp-command           | Command and parameters for the Antigravity ACP server.                          |
-| agent-shell-antigravity-authentication        | Configuration for Antigravity authentication.                                   |
-| agent-shell-antigravity-environment           | Environment variables for the Antigravity ACP server.                           |
-| agent-shell-artist-mode-hook                  | Hook run after entering or leaving ‘agent-shell-artist-mode’.                   |
-| agent-shell-auggie-acp-command                | Command and parameters for the Auggie client.                                   |
-| agent-shell-auggie-authentication             | Configuration for Auggie authentication.                                        |
-| agent-shell-auggie-environment                | Environment variables for the Auggie client.                                    |
-| agent-shell-buffer-name-format                | Format to use when generating agent shell buffer names.                         |
-| agent-shell-busy-indicator-frames             | Frames for the busy indicator animation.                                        |
-| agent-shell-busy-submit-default-function      | Function deciding what submitting while the agent is working does.              |
-| agent-shell-busy-submit-override-function     | Function M-x agent-shell-submit-override submits through.                       |
-| agent-shell-chat-label-function               | Function returning a chat label ("Me" or the agent's name).                     |
-| agent-shell-chat-mode-enabled                 | Whether a new agent shell enables ‘agent-shell-chat-mode’ by default.           |
-| agent-shell-chat-mode-hook                    | Hook run after entering or leaving ‘agent-shell-chat-mode’.                     |
-| agent-shell-cline-acp-command                 | Command and parameters for the Cline agent client.                              |
-| agent-shell-cline-default-model-id            | Default Cline model ID.                                                         |
-| agent-shell-cline-default-session-mode-id     | Default Cline session mode ID.                                                  |
-| agent-shell-cline-environment                 | Environment variables for the Cline agent client.                               |
-| agent-shell-clipboard-image-handlers          | Handlers for saving clipboard images to a file.                                 |
-| agent-shell-codebuddy-acp-command             | Command and parameters for the CodeBuddy agent client.                          |
-| agent-shell-codebuddy-environment             | Environment variables for the CodeBuddy agent client.                           |
-| agent-shell-command-completion-enabled        | Non-nil pops agent command completion as / is typed.                            |
-| agent-shell-command-prefix                    | Prefix to apply when executing agent commands and shell commands.               |
-| agent-shell-completion-mode-hook              | Hook run after entering or leaving ‘agent-shell-completion-mode’.               |
-| agent-shell-confirm-interrupt                 | Whether to prompt for confirmation before interrupting.                         |
-| agent-shell-container-command-runner          | Prefix to apply when executing agent commands and shell commands.               |
-| agent-shell-context-sources                   | Sources to consider when determining C-c C-w automatic context.                 |
-| agent-shell-cursor-acp-command                | Command and parameters for the Cursor agent client.                             |
-| agent-shell-cursor-authentication             | Configuration for Cursor authentication.                                        |
-| agent-shell-cursor-environment                | Environment variables for the Cursor agent client.                              |
-| agent-shell-cwd-function                      | When non-nil, a function called to determine the shell’s CWD.                   |
-| agent-shell-deepseek-acp-command              | Command and parameters for the DeepSeek Harness ACP server.                     |
-| agent-shell-deepseek-authentication           | Configuration for DeepSeek Harness authentication.                              |
-| agent-shell-deepseek-default-config-options   | Default DeepSeek Harness config options, applied at session start.              |
-| agent-shell-deepseek-environment              | Environment variables for the DeepSeek Harness ACP server.                      |
-| agent-shell-display-action                    | Display action for agent shell buffers.                                         |
-| agent-shell-dot-subdir-function               | Function used by ‘agent-shell--dot-subdir’ to resolve subdirectory paths.       |
-| agent-shell-droid-acp-command                 | Command and parameters for the Factory Droid ACP client.                        |
-| agent-shell-droid-authentication              | Configuration for Factory Droid authentication.                                 |
-| agent-shell-droid-default-model-id            | Default Droid AI model ID.                                                      |
-| agent-shell-droid-default-reasoning-effort    | Default reasoning effort.                                                       |
-| agent-shell-droid-default-session-mode-id     | Default Droid AI session mode ID.                                               |
-| agent-shell-droid-environment                 | Environment variables for the Factory Droid ACP client.                         |
-| agent-shell-embed-file-size-limit             | Maximum file size in bytes for embedding with ContentBlock::Resource.           |
-| agent-shell-file-completion-enabled           | Non-nil pops project file completion as @ is typed.                             |
-| agent-shell-file-display-action               | Display action for files opened from a link, image, or ‘@file’ mention.         |
-| agent-shell-github-acp-command                | Command and parameters for the GitHub Copilot agent client.                     |
-| agent-shell-github-default-model-id           | Default GitHub Copilot model ID.                                                |
-| agent-shell-github-default-session-mode-id    | Default GitHub Copilot session mode ID.                                         |
-| agent-shell-github-environment                | Environment variables for the GitHub Copilot agent client.                      |
-| agent-shell-google-authentication             | Configuration for Google authentication.                                        |
-| agent-shell-google-gemini-acp-command         | Command and parameters for the Gemini client.                                   |
-| agent-shell-google-gemini-environment         | Environment variables for the Google Gemini client.                             |
-| agent-shell-goose-acp-command                 | Command and parameters for the Goose client.                                    |
-| agent-shell-goose-authentication              | Configuration for Goose authentication.                                         |
-| agent-shell-goose-environment                 | Environment variables for the Goose client.                                     |
-| agent-shell-header-style                      | Style for agent shell buffer headers.                                           |
-| agent-shell-hermes-acp-command                | Command and parameters for the Hermes agent client.                             |
-| agent-shell-hermes-default-session-mode-id    | Default ACP session mode for the Hermes agent.                                  |
-| agent-shell-hermes-environment                | Environment variables for the Hermes agent client.                              |
-| agent-shell-highlight-blocks                  | Whether or not to highlight source blocks.                                      |
-| agent-shell-inhibit-system-sleep              | Non-nil to keep the system awake while an agent is busy.                        |
-| agent-shell-junie-acp-command                 | Command and parameters for the JetBrains Junie ACP client.                      |
-| agent-shell-junie-default-model-id            | Default Junie model ID.                                                         |
-| agent-shell-junie-default-session-mode-id     | Default Junie session mode ID.                                                  |
-| agent-shell-junie-environment                 | Environment variables for the Junie ACP client.                                 |
-| agent-shell-kimi-acp-command                  | Command and parameters for the Kimi Code CLI client.                            |
-| agent-shell-kimi-default-model-id             | Default Kimi model ID.                                                          |
-| agent-shell-kimi-default-session-mode-id      | Default Kimi Code session mode ID.                                              |
-| agent-shell-kimi-environment                  | Environment variables for the Kimi Code CLI client.                             |
-| agent-shell-kiro-acp-command                  | Command and parameters for the Kiro CLI client.                                 |
-| agent-shell-kiro-default-model-id             | Default Kiro model ID.                                                          |
-| agent-shell-kiro-default-session-mode-id      | Default Kiro session mode ID.                                                   |
-| agent-shell-kiro-environment                  | Environment variables for the Kiro CLI client.                                  |
-| agent-shell-list-edit-mode-hook               | Hook run after entering or leaving ‘agent-shell-list-edit-mode’.                |
-| agent-shell-markdown-render-function          | Function called to render markdown in the current narrowed buffer.              |
-| agent-shell-mcp-servers                       | List of MCP servers to initialize when creating a new session.                  |
-| agent-shell-mistral-acp-command               | Command and parameters for the Mistral Vibe client.                             |
-| agent-shell-mistral-authentication            | Configuration for Mistral AI authentication.                                    |
-| agent-shell-mistral-default-model-id          | Default Mistral AI model ID.                                                    |
-| agent-shell-mistral-default-session-mode-id   | Default Mistral AI session mode ID.                                             |
-| agent-shell-mistral-environment               | Environment variables for the Mistral Vibe client.                              |
-| agent-shell-mock-agent-acp-command            | Command and parameters for the mock ACP agent.                                  |
-| agent-shell-omp-acp-command                   | Command and parameters for the Oh My Pi (omp) ACP client.                       |
-| agent-shell-omp-environment                   | Environment variables for the Oh My Pi (omp) client.                            |
-| agent-shell-openai-authentication             | Configuration for OpenAI authentication.                                        |
-| agent-shell-openai-codex-acp-command          | Command and parameters for the OpenAI Codex client.                             |
-| agent-shell-openai-codex-environment          | Environment variables for the OpenAI Codex client.                              |
-| agent-shell-openai-default-config-options     | Default Codex config options, applied at session start.                         |
-| agent-shell-openai-default-model-id           | Default Codex model ID.                                                         |
-| agent-shell-openai-default-session-mode-id    | Default Codex session mode ID.                                                  |
-| agent-shell-openclaw-acp-command              | Command and parameters for the OpenClaw ACP bridge.                             |
-| agent-shell-openclaw-default-model-id         | Default OpenClaw model ID.                                                      |
-| agent-shell-openclaw-environment              | Environment variables for the OpenClaw client.                                  |
-| agent-shell-opencode-acp-command              | Command and parameters for the OpenCode client.                                 |
-| agent-shell-opencode-authentication           | Configuration for OpenCode authentication.                                      |
-| agent-shell-opencode-default-config-options   | Default OpenCode config options, applied at session start.                      |
-| agent-shell-opencode-default-model-id         | Default OpenCode model ID.                                                      |
-| agent-shell-opencode-default-session-mode-id  | Default OpenCode session mode ID.                                               |
-| agent-shell-opencode-environment              | Environment variables for the OpenCode client.                                  |
-| agent-shell-outgoing-request-decorator        | Function to decorate outgoing ACP requests before they are sent.                |
-| agent-shell-path-resolver-function            | Function for resolving remote paths on the local file-system, and vice versa.   |
-| agent-shell-permission-icon                   | Icon displayed when shell commands require permission to execute.               |
-| agent-shell-persistent-prompt-enabled         | Whether a shell keeps a writable prompt at the buffer end at all times.         |
-| agent-shell-pi-acp-command                    | Command and parameters for the Pi ACP client.                                   |
-| agent-shell-pi-environment                    | Environment variables for the Pi client.                                        |
-| agent-shell-prefer-viewport-interaction       | Non-nil makes ‘agent-shell’ prefer viewport interaction over shell interaction. |
-| agent-shell-preferred-agent-config            | Default agent to use for all new shells.                                        |
-| agent-shell-prompt-busy-frames                | Frames animating the live prompt’s marker while the agent works.                |
-| agent-shell-qoder-acp-command                 | Command and parameters for the Qoder CLI ACP server.                            |
-| agent-shell-qoder-environment                 | Environment variables for the Qoder CLI ACP server.                             |
-| agent-shell-qwen-acp-command                  | Command and parameters for the Qwen Code client.                                |
-| agent-shell-qwen-authentication               | Configuration for Qwen Code authentication.                                     |
-| agent-shell-qwen-environment                  | Environment variables for the Qwen Code client.                                 |
-| agent-shell-screenshot-command                | The program to use for capturing screenshots.                                   |
-| agent-shell-section-functions                 | Abnormal hook run after overlays are applied (experimental).                    |
-| agent-shell-session-choices-function          | Function to transform the choices offered when starting a shell.                |
-| agent-shell-session-list-page-limit           | Maximum number of pages to request when listing sessions.                       |
-| agent-shell-session-restore-verbosity         | How much prior context to show when restoring a session.                        |
-| agent-shell-session-strategy                  | How to handle sessions when starting a new shell.                               |
-| agent-shell-show-busy-indicator               | Non-nil to show the busy indicator animation in the header and mode line.       |
-| agent-shell-show-config-icons                 | Whether to show icons in agent config selection.                                |
-| agent-shell-show-context-usage-indicator      | Whether and how to show the context usage indicator.                            |
-| agent-shell-show-cost-indicator               | Whether to show the session’s cumulative cost in the header.                    |
-| agent-shell-show-session-id                   | Non-nil to display the session ID in the header and session selection.          |
-| agent-shell-show-usage-at-turn-end            | Whether to display usage information when agent turn ends.                      |
-| agent-shell-show-welcome-message              | Non-nil to show welcome message.                                                |
-| agent-shell-status-kind-label-function        | Function to render status and kind labels.                                      |
-| agent-shell-text-file-capabilities            | Whether agents are initialized with read/write text file capabilities.          |
-| agent-shell-thought-process-expand-by-default | Whether thought process sections should be expanded by default.                 |
-| agent-shell-thought-process-icon              | Icon displayed during the AI’s thought process.                                 |
-| agent-shell-tool-use-expand-by-default        | Whether tool use sections should be expanded by default.                        |
-| agent-shell-transcript-file-path-function     | Function to generate the full transcript file path.                             |
-| agent-shell-ui-mode-hook                      | Hook run after entering or leaving ‘agent-shell-ui-mode’.                       |
-| agent-shell-user-message-expand-by-default    | Whether user message sections should be expanded by default.                    |
-| agent-shell-viewport-dismiss-on-send          | Non-nil dismisses the viewport compose window after sending.                    |
-| agent-shell-write-inhibit-minor-modes         | List of minor mode commands to inhibit during ‘fs/write_text_file’ edits.       |
-| agent-shell-xai-acp-command                   | Command and parameters for the Grok Build ACP client.                           |
-| agent-shell-xai-default-model-id              | Default Grok Build model ID.                                                    |
-| agent-shell-xai-default-session-mode-id       | Default Grok Build session mode ID.                                             |
-| agent-shell-xai-environment                   | Environment variables for the Grok Build ACP client.                            |
+| Custom variable                                | Description                                                                     |
+|------------------------------------------------+---------------------------------------------------------------------------------|
+| agent-shell-activity-group-expand-by-default   | When activity group sections should be expanded.                                |
+| agent-shell-agent-configs                      | The known agent configurations.                                                 |
+| agent-shell-anthropic-authentication           | Configuration for Anthropic authentication.                                     |
+| agent-shell-anthropic-claude-acp-command       | Command and parameters for the Anthropic Claude client.                         |
+| agent-shell-anthropic-claude-environment       | Environment variables for the Anthropic Claude client.                          |
+| agent-shell-anthropic-default-model-id         | Default Anthropic model ID.                                                     |
+| agent-shell-anthropic-default-session-mode-id  | Default Anthropic session mode ID.                                              |
+| agent-shell-antigravity-acp-command            | Command and parameters for the Antigravity ACP server.                          |
+| agent-shell-antigravity-authentication         | Configuration for Antigravity authentication.                                   |
+| agent-shell-antigravity-default-config-options | Default Antigravity config options, applied at session start.                   |
+| agent-shell-antigravity-environment            | Environment variables for the Antigravity ACP server.                           |
+| agent-shell-artist-mode-hook                   | Hook run after entering or leaving ‘agent-shell-artist-mode’.                   |
+| agent-shell-auggie-acp-command                 | Command and parameters for the Auggie client.                                   |
+| agent-shell-auggie-authentication              | Configuration for Auggie authentication.                                        |
+| agent-shell-auggie-environment                 | Environment variables for the Auggie client.                                    |
+| agent-shell-buffer-name-format                 | Format to use when generating agent shell buffer names.                         |
+| agent-shell-busy-indicator-frames              | Frames for the busy indicator animation.                                        |
+| agent-shell-busy-submit-default-function       | Function deciding what submitting while the agent is working does.              |
+| agent-shell-busy-submit-override-function      | Function M-x agent-shell-submit-override submits through.                       |
+| agent-shell-chat-label-function                | Function returning a chat label ("Me" or the agent's name).                     |
+| agent-shell-chat-mode-enabled                  | Whether a new agent shell enables ‘agent-shell-chat-mode’ by default.           |
+| agent-shell-chat-mode-hook                     | Hook run after entering or leaving ‘agent-shell-chat-mode’.                     |
+| agent-shell-cline-acp-command                  | Command and parameters for the Cline agent client.                              |
+| agent-shell-cline-default-model-id             | Default Cline model ID.                                                         |
+| agent-shell-cline-default-session-mode-id      | Default Cline session mode ID.                                                  |
+| agent-shell-cline-environment                  | Environment variables for the Cline agent client.                               |
+| agent-shell-clipboard-image-handlers           | Handlers for saving clipboard images to a file.                                 |
+| agent-shell-codebuddy-acp-command              | Command and parameters for the CodeBuddy agent client.                          |
+| agent-shell-codebuddy-environment              | Environment variables for the CodeBuddy agent client.                           |
+| agent-shell-command-completion-enabled         | Non-nil pops agent command completion as / is typed.                            |
+| agent-shell-command-prefix                     | Prefix to apply when executing agent commands and shell commands.               |
+| agent-shell-completion-mode-hook               | Hook run after entering or leaving ‘agent-shell-completion-mode’.               |
+| agent-shell-confirm-interrupt                  | Whether to prompt for confirmation before interrupting.                         |
+| agent-shell-container-command-runner           | Prefix to apply when executing agent commands and shell commands.               |
+| agent-shell-context-sources                    | Sources to consider when determining C-c C-w automatic context.                 |
+| agent-shell-cursor-acp-command                 | Command and parameters for the Cursor agent client.                             |
+| agent-shell-cursor-authentication              | Configuration for Cursor authentication.                                        |
+| agent-shell-cursor-environment                 | Environment variables for the Cursor agent client.                              |
+| agent-shell-cwd-function                       | When non-nil, a function called to determine the shell’s CWD.                   |
+| agent-shell-deepseek-acp-command               | Command and parameters for the DeepSeek Harness ACP server.                     |
+| agent-shell-deepseek-authentication            | Configuration for DeepSeek Harness authentication.                              |
+| agent-shell-deepseek-default-config-options    | Default DeepSeek Harness config options, applied at session start.              |
+| agent-shell-deepseek-environment               | Environment variables for the DeepSeek Harness ACP server.                      |
+| agent-shell-display-action                     | Display action for agent shell buffers.                                         |
+| agent-shell-dot-subdir-function                | Function used by ‘agent-shell--dot-subdir’ to resolve subdirectory paths.       |
+| agent-shell-droid-acp-command                  | Command and parameters for the Factory Droid ACP client.                        |
+| agent-shell-droid-authentication               | Configuration for Factory Droid authentication.                                 |
+| agent-shell-droid-default-model-id             | Default Droid AI model ID.                                                      |
+| agent-shell-droid-default-reasoning-effort     | Default reasoning effort.                                                       |
+| agent-shell-droid-default-session-mode-id      | Default Droid AI session mode ID.                                               |
+| agent-shell-droid-environment                  | Environment variables for the Factory Droid ACP client.                         |
+| agent-shell-embed-file-size-limit              | Maximum file size in bytes for embedding with ContentBlock::Resource.           |
+| agent-shell-file-completion-enabled            | Non-nil pops project file completion as @ is typed.                             |
+| agent-shell-file-display-action                | Display action for files opened from a link, image, or ‘@file’ mention.         |
+| agent-shell-github-acp-command                 | Command and parameters for the GitHub Copilot agent client.                     |
+| agent-shell-github-default-model-id            | Default GitHub Copilot model ID.                                                |
+| agent-shell-github-default-session-mode-id     | Default GitHub Copilot session mode ID.                                         |
+| agent-shell-github-environment                 | Environment variables for the GitHub Copilot agent client.                      |
+| agent-shell-google-authentication              | Configuration for Google authentication.                                        |
+| agent-shell-google-gemini-acp-command          | Command and parameters for the Gemini client.                                   |
+| agent-shell-google-gemini-environment          | Environment variables for the Google Gemini client.                             |
+| agent-shell-goose-acp-command                  | Command and parameters for the Goose client.                                    |
+| agent-shell-goose-authentication               | Configuration for Goose authentication.                                         |
+| agent-shell-goose-environment                  | Environment variables for the Goose client.                                     |
+| agent-shell-header-style                       | Style for agent shell buffer headers.                                           |
+| agent-shell-hermes-acp-command                 | Command and parameters for the Hermes agent client.                             |
+| agent-shell-hermes-default-session-mode-id     | Default ACP session mode for the Hermes agent.                                  |
+| agent-shell-hermes-environment                 | Environment variables for the Hermes agent client.                              |
+| agent-shell-highlight-blocks                   | Whether or not to highlight source blocks.                                      |
+| agent-shell-inhibit-system-sleep               | Non-nil to keep the system awake while an agent is busy.                        |
+| agent-shell-junie-acp-command                  | Command and parameters for the JetBrains Junie ACP client.                      |
+| agent-shell-junie-default-model-id             | Default Junie model ID.                                                         |
+| agent-shell-junie-default-session-mode-id      | Default Junie session mode ID.                                                  |
+| agent-shell-junie-environment                  | Environment variables for the Junie ACP client.                                 |
+| agent-shell-kimi-acp-command                   | Command and parameters for the Kimi Code CLI client.                            |
+| agent-shell-kimi-default-model-id              | Default Kimi model ID.                                                          |
+| agent-shell-kimi-default-session-mode-id       | Default Kimi Code session mode ID.                                              |
+| agent-shell-kimi-environment                   | Environment variables for the Kimi Code CLI client.                             |
+| agent-shell-kiro-acp-command                   | Command and parameters for the Kiro CLI client.                                 |
+| agent-shell-kiro-default-model-id              | Default Kiro model ID.                                                          |
+| agent-shell-kiro-default-session-mode-id       | Default Kiro session mode ID.                                                   |
+| agent-shell-kiro-environment                   | Environment variables for the Kiro CLI client.                                  |
+| agent-shell-list-edit-mode-hook                | Hook run after entering or leaving ‘agent-shell-list-edit-mode’.                |
+| agent-shell-markdown-render-function           | Function called to render markdown in the current narrowed buffer.              |
+| agent-shell-mcp-servers                        | List of MCP servers to initialize when creating a new session.                  |
+| agent-shell-mistral-acp-command                | Command and parameters for the Mistral Vibe client.                             |
+| agent-shell-mistral-authentication             | Configuration for Mistral AI authentication.                                    |
+| agent-shell-mistral-default-model-id           | Default Mistral AI model ID.                                                    |
+| agent-shell-mistral-default-session-mode-id    | Default Mistral AI session mode ID.                                             |
+| agent-shell-mistral-environment                | Environment variables for the Mistral Vibe client.                              |
+| agent-shell-mock-agent-acp-command             | Command and parameters for the mock ACP agent.                                  |
+| agent-shell-omp-acp-command                    | Command and parameters for the Oh My Pi (omp) ACP client.                       |
+| agent-shell-omp-environment                    | Environment variables for the Oh My Pi (omp) client.                            |
+| agent-shell-openai-authentication              | Configuration for OpenAI authentication.                                        |
+| agent-shell-openai-codex-acp-command           | Command and parameters for the OpenAI Codex client.                             |
+| agent-shell-openai-codex-environment           | Environment variables for the OpenAI Codex client.                              |
+| agent-shell-openai-default-config-options      | Default Codex config options, applied at session start.                         |
+| agent-shell-openai-default-model-id            | Default Codex model ID.                                                         |
+| agent-shell-openai-default-session-mode-id     | Default Codex session mode ID.                                                  |
+| agent-shell-openclaw-acp-command               | Command and parameters for the OpenClaw ACP bridge.                             |
+| agent-shell-openclaw-default-model-id          | Default OpenClaw model ID.                                                      |
+| agent-shell-openclaw-environment               | Environment variables for the OpenClaw client.                                  |
+| agent-shell-opencode-acp-command               | Command and parameters for the OpenCode client.                                 |
+| agent-shell-opencode-authentication            | Configuration for OpenCode authentication.                                      |
+| agent-shell-opencode-default-config-options    | Default OpenCode config options, applied at session start.                      |
+| agent-shell-opencode-default-model-id          | Default OpenCode model ID.                                                      |
+| agent-shell-opencode-default-session-mode-id   | Default OpenCode session mode ID.                                               |
+| agent-shell-opencode-environment               | Environment variables for the OpenCode client.                                  |
+| agent-shell-outgoing-request-decorator         | Function to decorate outgoing ACP requests before they are sent.                |
+| agent-shell-path-resolver-function             | Function for resolving remote paths on the local file-system, and vice versa.   |
+| agent-shell-permission-icon                    | Icon displayed when shell commands require permission to execute.               |
+| agent-shell-persistent-prompt-enabled          | Whether a shell keeps a writable prompt at the buffer end at all times.         |
+| agent-shell-pi-acp-command                     | Command and parameters for the Pi ACP client.                                   |
+| agent-shell-pi-environment                     | Environment variables for the Pi client.                                        |
+| agent-shell-prefer-viewport-interaction        | Non-nil makes ‘agent-shell’ prefer viewport interaction over shell interaction. |
+| agent-shell-preferred-agent-config             | Default agent to use for all new shells.                                        |
+| agent-shell-prompt-busy-frames                 | Frames animating the live prompt’s marker while the agent works.                |
+| agent-shell-qoder-acp-command                  | Command and parameters for the Qoder CLI ACP server.                            |
+| agent-shell-qoder-environment                  | Environment variables for the Qoder CLI ACP server.                             |
+| agent-shell-qwen-acp-command                   | Command and parameters for the Qwen Code client.                                |
+| agent-shell-qwen-authentication                | Configuration for Qwen Code authentication.                                     |
+| agent-shell-qwen-environment                   | Environment variables for the Qwen Code client.                                 |
+| agent-shell-screenshot-command                 | The program to use for capturing screenshots.                                   |
+| agent-shell-section-functions                  | Abnormal hook run after overlays are applied (experimental).                    |
+| agent-shell-session-choices-function           | Function to transform the choices offered when starting a shell.                |
+| agent-shell-session-list-page-limit            | Maximum number of pages to request when listing sessions.                       |
+| agent-shell-session-restore-verbosity          | How much prior context to show when restoring a session.                        |
+| agent-shell-session-strategy                   | How to handle sessions when starting a new shell.                               |
+| agent-shell-show-busy-indicator                | Non-nil to show the busy indicator animation in the header and mode line.       |
+| agent-shell-show-config-icons                  | Whether to show icons in agent config selection.                                |
+| agent-shell-show-context-usage-indicator       | Whether and how to show the context usage indicator.                            |
+| agent-shell-show-cost-indicator                | Whether to show the session’s cumulative cost in the header.                    |
+| agent-shell-show-session-id                    | Non-nil to display the session ID in the header and session selection.          |
+| agent-shell-show-usage-at-turn-end             | Whether to display usage information when agent turn ends.                      |
+| agent-shell-show-welcome-message               | Non-nil to show welcome message.                                                |
+| agent-shell-status-kind-label-function         | Function to render status and kind labels.                                      |
+| agent-shell-text-file-capabilities             | Whether agents are initialized with read/write text file capabilities.          |
+| agent-shell-thought-process-expand-by-default  | Whether thought process sections should be expanded by default.                 |
+| agent-shell-thought-process-icon               | Icon displayed during the AI’s thought process.                                 |
+| agent-shell-tool-use-expand-by-default         | Whether tool use sections should be expanded by default.                        |
+| agent-shell-transcript-file-path-function      | Function to generate the full transcript file path.                             |
+| agent-shell-ui-mode-hook                       | Hook run after entering or leaving ‘agent-shell-ui-mode’.                       |
+| agent-shell-user-message-expand-by-default     | Whether user message sections should be expanded by default.                    |
+| agent-shell-viewport-dismiss-on-send           | Non-nil dismisses the viewport compose window after sending.                    |
+| agent-shell-write-inhibit-minor-modes          | List of minor mode commands to inhibit during ‘fs/write_text_file’ edits.       |
+| agent-shell-xai-acp-command                    | Command and parameters for the Grok Build ACP client.                           |
+| agent-shell-xai-default-model-id               | Default Grok Build model ID.                                                    |
+| agent-shell-xai-default-session-mode-id        | Default Grok Build session mode ID.                                             |
+| agent-shell-xai-environment                    | Environment variables for the Grok Build ACP client.                            |
 
 * Commands
 #+BEGIN_SRC emacs-lisp :results table :colnames '("Binding" "Command" "Description") :exports results
