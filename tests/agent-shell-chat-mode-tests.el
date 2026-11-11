@@ -34,8 +34,7 @@ each buffer position, so every one is somewhere `window-start' can land.
 Joins them back into the single string they render as, so callers assert
 what is shown rather than how it is stored.
 
-Falls back to the label carried whole on the newline above, and then to
-ME itself where the run has no newline above to carry it."
+Falls back to the label carried whole on ME itself."
   (let ((rows (sort (seq-filter
                      (lambda (overlay)
                        (eq (overlay-get overlay 'agent-shell-chat--tag) 'me-label))
@@ -43,14 +42,9 @@ ME itself where the run has no newline above to carry it."
                                                   (line-beginning-position))
                                   (overlay-start me)))
                     (lambda (a b) (< (overlay-start a) (overlay-start b))))))
-    (cond (rows (mapconcat #'agent-shell-chat-mode-tests--row-string rows ""))
-          ((seq-some (lambda (overlay)
-                       (and (eq (overlay-get overlay 'agent-shell-chat--tag) 'me-label)
-                            (= (overlay-end overlay) (overlay-start me))
-                            (overlay-get overlay 'before-string)))
-                     (overlays-in (max (point-min) (1- (overlay-start me)))
-                                  (1+ (overlay-start me)))))
-          (t (overlay-get me 'before-string)))))
+    (if rows
+        (mapconcat #'agent-shell-chat-mode-tests--row-string rows "")
+      (overlay-get me 'before-string))))
 
 (defun agent-shell-chat-mode-tests--marker-string (me)
   "Return the string carrying ME\\='s prompt marker.
@@ -886,37 +880,46 @@ which would leave relabeling holding an overlay with no buffer."
     (should (= 1 (length (agent-shell-chat-mode-tests--me-overlays))))
     (should (= 1 (length (agent-shell-chat-mode-tests--agent-overlays))))))
 
-(ert-deftest agent-shell-chat-relabels-after-fragment-test ()
-  "A fragment rendered above the live prompt shows without an event.
-
-It lands at the prompt's start, inside the label overlay starting there,
-whose `display' draws the label in its place.  A notice like a declined
-steer fires no event, so it stayed hidden until something else relabeled
-\(agent-shell-js#47)."
-  (with-temp-buffer
-    (setq-local agent-shell--state '((:agent-config . ((:mode-line-name . "Claude"))))
-                agent-shell-chat-mode t)
-    (agent-shell-chat-mode-tests--prompt "Claude> ")
-    (insert "hello\n")
-    (agent-shell-chat-mode-tests--marker)
-    (insert "reply\n\n")
-    (agent-shell-chat-mode-tests--prompt "Claude> ")
-    (let ((agent-shell-prompt-bar-mode nil)
-          (shown (lambda ()
-                   (agent-shell-chat--displayed-substring (point-min) (point-max)))))
-      (cl-letf (((symbol-function 'agent-shell-subscribe-to) #'ignore)
-                ((symbol-function 'agent-shell-unsubscribe) #'ignore))
-        (agent-shell-chat--enable)
-        (save-excursion
-          (goto-char (- (point-max) (length "Claude> ")))
-          (insert "Note: declined.\n\n"))
-        (should-not (string-match-p "declined" (funcall shown)))
-        (run-hook-with-args 'agent-shell-section-functions nil)
-        (should (timerp agent-shell-chat--relabel-timer))
-        (cancel-timer agent-shell-chat--relabel-timer)
-        (agent-shell-chat--relabel-buffer (current-buffer))
-        (should (string-match-p "declined" (funcall shown)))
-        (agent-shell-chat--disable)))))
+(ert-deftest agent-shell-chat-streams-before-live-prompt-test ()
+  "Streaming stays visible without prompt relabeling, while drafts grow."
+  (dolist (case '(("Claude> " nil) (">" nil) ("Claude> " t)))
+    (with-temp-buffer
+      (setq-local agent-shell--state '((:agent-config . ((:mode-line-name . "Claude"))))
+                  agent-shell-chat-mode t)
+      (let ((prompt (car case))
+            (agent-shell-prompt-bar-mode (cadr case)))
+        (agent-shell-chat-mode-tests--prompt prompt)
+        (insert "hello\n")
+        (agent-shell-chat-mode-tests--marker)
+        (insert "\n\n")
+        (agent-shell-chat-mode-tests--prompt prompt)
+        (cl-letf (((symbol-function 'agent-shell-subscribe-to) #'ignore)
+                  ((symbol-function 'agent-shell-unsubscribe) #'ignore))
+          (agent-shell-chat--enable)
+          (should-not (agent-shell-chat-mode-tests--agent-overlays))
+          (let ((live (copy-marker (- (point-max) (length prompt)) t)))
+            (unless agent-shell-prompt-bar-mode
+              (insert "draft"))
+            (dolist (chunk '("First chunk\n" "Second chunk\n"))
+              (goto-char live)
+              (insert (propertize chunk 'font-lock-face nil))
+              (agent-shell-chat--schedule-relabel '((:event . agent-message-chunk)))
+              (run-hook-with-args 'agent-shell-section-functions nil)
+              (let* ((shown (agent-shell-chat--displayed-substring (point-min) (point-max)))
+                     (output (string-match chunk shown)))
+                (should output)
+                (unless agent-shell-prompt-bar-mode
+                  (should (string-match "Me" shown output))))
+              (should-not agent-shell-chat--relabel-timer)
+              (should (= 1 (length (agent-shell-chat-mode-tests--agent-overlays)))))
+            (unless agent-shell-prompt-bar-mode
+              (goto-char (point-max))
+              (insert "\nmore")
+              (let ((draft (agent-shell-chat-mode-tests--draft-overlay)))
+                (should (equal "draft\nmore"
+                               (buffer-substring-no-properties
+                                (overlay-start draft) (overlay-end draft)))))))
+          (agent-shell-chat--disable))))))
 
 (ert-deftest agent-shell-chat-absorbs-leading-blank-lines-test ()
   "A submitted prompt's overlay swallows the input's leading blank lines."
