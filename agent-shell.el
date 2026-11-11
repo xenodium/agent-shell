@@ -3149,20 +3149,20 @@ lowercase; the assembled summary capitalizes its first word.  See URL
     (:singular . "tool call") (:plural . "tool calls"))
   "Phrasing for kinds absent from `agent-shell--tool-call-kind-phrases'.")
 
-(cl-defun agent-shell--tool-call-kind-phrase (&key kind count pending)
+(cl-defun agent-shell--tool-call-kind-phrase (&key kind count unfinished)
   "Return a lowercase phrase for KIND repeated COUNT times.
-When PENDING is non-nil the present-tense verb is used, so a not-yet-run
-action reads \"run a command\" rather than \"ran a command\".  Callers
-capitalize as needed.
+When UNFINISHED is non-nil the present-tense verb is used, so an
+action still under way reads \"run a command\" rather than \"ran a
+command\".  Callers capitalize as needed.
 
   (agent-shell--tool-call-kind-phrase :kind \"execute\" :count 2)
   ;; => \"ran 2 commands\"
-  (agent-shell--tool-call-kind-phrase :kind \"execute\" :count 1 :pending t)
+  (agent-shell--tool-call-kind-phrase :kind \"execute\" :count 1 :unfinished t)
   ;; => \"run a command\""
   (let ((phrase (or (assoc-default kind agent-shell--tool-call-kind-phrases)
                     agent-shell--tool-call-kind-phrase-default)))
     (format "%s %s %s"
-            (map-elt phrase (if pending :present :past))
+            (map-elt phrase (if unfinished :present :past))
             (if (= count 1) "a" (number-to-string count))
             (map-elt phrase (if (= count 1) :singular :plural)))))
 
@@ -3225,12 +3225,12 @@ Thoughts are not counted."
           (seq-map
            (lambda (kind)
              (let* ((of-kind (seq-filter (lambda (member)
-                                          (equal (funcall member-kind member) kind))
-                                        tool-members))
-                    (pending (seq-some (lambda (member)
-                                         (member (map-elt (cdr member) :status)
-                                                 '("pending" "in_progress")))
-                                       of-kind))
+                                           (equal (funcall member-kind member) kind))
+                                         tool-members))
+                    (unfinished (seq-some (lambda (member)
+                                            (member (map-elt (cdr member) :status)
+                                                    '("pending" "in_progress")))
+                                          of-kind))
                     (paths (when (member kind '("read" "edit" "delete"))
                              (seq-map (lambda (member)
                                         (agent-shell--tool-call-file-paths (cdr member)))
@@ -3240,7 +3240,7 @@ Thoughts are not counted."
                 :count (if (and paths (not (memq nil paths)))
                            (length (seq-uniq (apply #'append paths)))
                          (length of-kind))
-                :pending pending)))
+                :unfinished unfinished)))
            (seq-uniq (seq-map member-kind tool-members))))
          (summary (string-join (if thought (cons "thought" tool-phrases) tool-phrases)
                                ", ")))
@@ -4659,6 +4659,33 @@ DIFFS is a list of diff infos as returned by
               (map-merge 'alist old-tool-call tool-call-overrides)
             tool-call-overrides))
     (map-put! state :tool-calls updated-tools)))
+
+(cl-defun agent-shell--unfinished-tool-calls (&key tool-calls)
+  "Return TOOL-CALLS whose activity group still has an unfinished member.
+
+A turn can end with tool calls still running (subagents carry on past
+it), and their tool_call_update notifications arrive out of turn.  Keep
+those calls, so an update still finds the title and kind it was rendered
+with, along with their group siblings, so the group header still counts
+every member.  Everything else is no longer needed.
+
+  (agent-shell--unfinished-tool-calls
+   :tool-calls \\='((\"t1\" . ((:group-id . \"g1\") (:status . \"completed\")))
+                 (\"t2\" . ((:group-id . \"g2\") (:status . \"completed\")))
+                 (\"t3\" . ((:group-id . \"g2\") (:status . \"pending\")))))
+  ;; => ((\"t2\" . ((:group-id . \"g2\") (:status . \"completed\")))
+  ;;     (\"t3\" . ((:group-id . \"g2\") (:status . \"pending\"))))"
+  (let ((unfinished (seq-filter (lambda (pair)
+                                  (member (map-elt (cdr pair) :status)
+                                          '("pending" "in_progress")))
+                                tool-calls)))
+    (seq-filter (lambda (pair)
+                  (or (memq pair unfinished)
+                      (when-let* ((group-id (map-elt (cdr pair) :group-id)))
+                        (seq-find (lambda (other)
+                                    (equal (map-elt (cdr other) :group-id) group-id))
+                                  unfinished))))
+                tool-calls)))
 
 (cl-defun agent-shell--make-boxed-message (&key text width)
   "Return TEXT framed in a rounded Unicode box.
@@ -9467,9 +9494,12 @@ reads the buffer's prompt capabilities."
                     :last-entry-type (map-elt (agent-shell--state) :last-entry-type)
                     :file-path agent-shell--transcript-file)
                    ;; Tool call details are no longer needed after
-                   ;; a session prompt request is finished.
+                   ;; a session prompt request is finished, unless
+                   ;; their updates are still arriving out of turn.
                    ;; Avoid accumulating them unnecessarily.
-                   (map-put! (agent-shell--state) :tool-calls nil)
+                   (map-put! (agent-shell--state) :tool-calls
+                             (agent-shell--unfinished-tool-calls
+                              :tool-calls (map-elt (agent-shell--state) :tool-calls)))
                    (agent-shell-elicitation--clear :state (agent-shell--state))
                    ;; The turn is over, so nothing is active any more: fold
                    ;; the last activity group `latest' left expanded.
@@ -9545,6 +9575,12 @@ Continue?" (agent-shell--prompt-queue-summary)))
                    (agent-shell--separate-transcript-after-agent-message
                     :last-entry-type (map-elt agent-shell--state :last-entry-type)
                     :file-path agent-shell--transcript-file)
+                   ;; The turn is over, so tidy up its tool calls and
+                   ;; forms just as a successful turn does.
+                   (map-put! agent-shell--state :tool-calls
+                             (agent-shell--unfinished-tool-calls
+                              :tool-calls (map-elt agent-shell--state :tool-calls)))
+                   (agent-shell-elicitation--clear :state agent-shell--state)
                    ;; An interrupted turn leaves no group active either.
                    (agent-shell--collapse-expanded-activity-group agent-shell--state)
                    ;; Display pending requests on failure.
@@ -10339,7 +10375,7 @@ MESSAGE-TEXT: Optional message to display after sending the response."
     (agent-shell--delete-fragment :state state :block-id (format "permission-%s" tool-call-id))
     ;; Note: Tool call data is no longer deleted here intentionally.
     ;; Subsequent tool_call_update notifications still need the data.
-    ;; It gets cleared at end of turn with all tool calls.
+    ;; It gets cleared at end of turn once its group finishes.
     ;;
     ;; Do clear :permission-request-id so consumers can distinguish
     ;; between a pending permission request and one already answered.

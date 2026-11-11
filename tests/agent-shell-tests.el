@@ -147,6 +147,25 @@
     ;; Test empty string
     (should (equal (agent-shell--shorten-paths "") ""))))
 
+(ert-deftest agent-shell--unfinished-tool-calls-test ()
+  "Test `agent-shell--unfinished-tool-calls' function."
+  (let ((tool-calls '(("t1" . ((:group-id . "g1") (:status . "completed")))
+                      ("t2" . ((:group-id . "g2") (:status . "failed")))
+                      ("t3" . ((:group-id . "g2") (:status . "in_progress")))
+                      ("t4" . ((:status . "pending")))
+                      ("t5" . ((:status . "completed")))
+                      ("t6" . ((:title . "No status"))))))
+    ;; Unfinished calls stay, along with their group siblings.
+    (should (equal (mapcar #'car (agent-shell--unfinished-tool-calls :tool-calls tool-calls))
+                   '("t2" "t3" "t4"))))
+
+  ;; A turn whose calls all finished leaves nothing behind.
+  (should-not (agent-shell--unfinished-tool-calls
+               :tool-calls '(("t1" . ((:group-id . "g1") (:status . "completed")))
+                             ("t2" . ((:group-id . "g1") (:status . "failed"))))))
+
+  (should-not (agent-shell--unfinished-tool-calls :tool-calls nil)))
+
 (ert-deftest agent-shell--make-missing-executable-error-test ()
   "Test `agent-shell--make-missing-executable-error' function."
   (let ((default-directory "/tmp/"))
@@ -7451,7 +7470,7 @@ count lets a non-completed member lift the total only."
   (should (equal "ran 2 commands"
                  (agent-shell--tool-call-kind-phrase :kind "execute" :count 2)))
   (should (equal "run a command"
-                 (agent-shell--tool-call-kind-phrase :kind "execute" :count 1 :pending t)))
+                 (agent-shell--tool-call-kind-phrase :kind "execute" :count 1 :unfinished t)))
   (should (equal "read a file"
                  (agent-shell--tool-call-kind-phrase :kind "read" :count 1)))
   ;; Unknown kinds fall back to the generic phrasing.
