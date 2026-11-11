@@ -1826,8 +1826,11 @@ with `emacs-lisp-mode' face properties on the body and a
 `agent-shell-markdown-frozen' tag covering those same chars."
   ;; Fences pair via `--source-blocks', the same scan the avoid-ranges
   ;; come from, so an inner fence never renders on its own while the
-  ;; outer block wrapping it is still open.
-  (dolist (block (or source-blocks (agent-shell-markdown--source-blocks)))
+  ;; outer block wrapping it is still open.  Back-to-front, since a
+  ;; block's `:end' marker can share its successor's `:start' position
+  ;; (no blank line between them), and the bottom padding inserted
+  ;; there would otherwise land inside the successor's range (#940).
+  (dolist (block (reverse (or source-blocks (agent-shell-markdown--source-blocks))))
     (when-let* (((map-elt block :complete))
                 (open-start (marker-position (map-nested-elt block '(:block :start))))
                 (close-end (marker-position (map-nested-elt block '(:block :end))))
@@ -2010,11 +2013,15 @@ with `emacs-lisp-mode' face properties on the body and a
                                    (marker-position body-end)
                                    'agent-shell-markdown-source source)
                 ;; Tag the whole block (top vpad through bottom vpad) so
-                ;; `--pad-source-blocks' can find it.  `body-start' has
+                ;; `--pad-rendered-blocks' can find it.  `body-start' has
                 ;; collapsed to the block's top after the header insert
-                ;; above.
+                ;; above.  Like `agent-shell-markdown-table-source', the
+                ;; value is the block's own source, so two panels rendered
+                ;; flush against each other stay distinguishable (see
+                ;; `agent-shell-markdown--separate-source-blocks').
                 (put-text-property (marker-position body-start) panel-bottom
-                                   'agent-shell-markdown-source-block-rendered t))))))))
+                                   'agent-shell-markdown-source-block-rendered
+                                   source))))))))
 
 (defconst agent-shell-markdown--table-line-regexp
   (rx line-start
@@ -2624,6 +2631,7 @@ gains a blank line above and below it:
   ;; `inhibit-field-text-motion' so `beginning-of-line' / `forward-line'
   ;; don't stop at agent-shell's `field' boundaries between output lines.
   (let ((inhibit-field-text-motion t))
+    (agent-shell-markdown--separate-source-blocks start)
     (agent-shell-markdown--pad-regions
      'agent-shell-markdown-source-block-rendered nil start)
     (agent-shell-markdown--pad-regions
@@ -2639,6 +2647,37 @@ gains a blank line above and below it:
     ;; After lists, so a step below a list finds the list's bottom gap
     ;; already in place.
     (agent-shell-markdown--pad-bold-list-lookalikes start)))
+
+(defun agent-shell-markdown--separate-source-blocks (&optional start)
+  "Insert a blank line between rendered source blocks that touch.
+
+Scans from START, or `point-min' when nil.
+
+Fences with no blank line between them render as panels flush
+against each other, which `agent-shell-markdown--pad-regions' would
+frame as a single block.  Each panel carries its own
+`agent-shell-markdown-source-block-rendered' value, so the seam
+between two such panels is a property change with the tag set on
+both sides.
+
+For example, the buffer:
+
+  ```sh
+  echo one
+  ```
+  ```sh
+  echo two
+  ```
+
+renders its two panels with an untinted blank line between them."
+  (save-excursion
+    (let ((pos (or start (point-min))))
+      (while (setq pos (next-single-property-change
+                        pos 'agent-shell-markdown-source-block-rendered))
+        (when (and (get-text-property pos 'agent-shell-markdown-source-block-rendered)
+                   (get-text-property (1- pos) 'agent-shell-markdown-source-block-rendered))
+          (goto-char pos)
+          (agent-shell-markdown--insert-block-padding))))))
 
 (defun agent-shell-markdown--list-item-pending-p ()
   "Return non-nil when the line at point is or may still become a list item.

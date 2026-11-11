@@ -2344,6 +2344,57 @@ raise SystemExit
 
 "))))
 
+(ert-deftest agent-shell-markdown-source-block-adjacent-blocks-no-blank-line ()
+  ;; Regression (#940): the first block's closing `:end' marker and the
+  ;; second block's opening `:start' marker share a position, so the
+  ;; first block's padding must not push the second block's opening
+  ;; fence into its body.
+  (let ((out (agent-shell-markdown-convert
+              "```sh\necho one\n```\n```sh\necho two\n```\n"))
+        (bodies '())
+        (pos 0))
+    (while (setq pos (text-property-not-all
+                      pos (length out)
+                      'agent-shell-markdown-source-block-body nil out))
+      (let ((end (or (next-single-property-change
+                      pos 'agent-shell-markdown-source-block-body out)
+                     (length out))))
+        (push (substring-no-properties out pos end) bodies)
+        (setq pos end)))
+    (should (equal (nreverse bodies) '("echo one" "echo two")))
+    (should-not (string-match-p "```" out))))
+
+(ert-deftest agent-shell-markdown-source-block-adjacent-blocks-framed-apart ()
+  ;; Panels rendered flush against each other gain the same untinted
+  ;; blank line as fences the agent separated, whether both blocks render
+  ;; in one pass or stream in across passes.
+  (let ((framed "
+sh ⧉
+
+echo one
+
+
+
+sh ⧉
+
+echo two
+
+"))
+    (should (equal (substring-no-properties
+                    (agent-shell-markdown-convert
+                     "```sh\necho one\n```\n```sh\necho two\n```\n"))
+                   framed))
+    (should (equal (substring-no-properties
+                    (agent-shell-markdown-convert
+                     "```sh\necho one\n```\n\n```sh\necho two\n```\n"))
+                   framed))
+    (with-temp-buffer
+      (dolist (chunk '("```sh\necho one\n```\n" "```sh\necho two\n```\n"))
+        (goto-char (point-max))
+        (insert chunk)
+        (agent-shell-markdown-replace-markup))
+      (should (equal (substring-no-properties (buffer-string)) framed)))))
+
 (ert-deftest agent-shell-markdown-source-block-body-protected-across-calls ()
   ;; Streaming: render a block, then append more markdown and re-render.
   ;; The previously-rendered body (`agent-shell-markdown-frozen t') must stay
