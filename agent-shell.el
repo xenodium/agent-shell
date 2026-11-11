@@ -994,6 +994,22 @@ context is shown rather than nothing."
                  (const :tag "Full replay" full))
   :group 'agent-shell)
 
+(defcustom agent-shell-session-fork-restore-history nil
+  "Whether to restore history when forking a session.
+
+When non-nil, load the forked session via `session/load' so its
+history is shown as `agent-shell-session-restore-verbosity'
+dictates.  Only applies when that verbosity results in
+`session/load'.
+
+When nil, forking sends `session/fork' alone and the new shell
+starts without history.
+
+Requires agents to support loading a session right after forking
+it (e.g. claude-agent-acp 0.90.0 or newer)."
+  :type 'boolean
+  :group 'agent-shell)
+
 (defvar agent-shell-session-restore-strategy nil
   "Obsolete.  Use `agent-shell-session-restore-verbosity' instead.
 
@@ -8687,13 +8703,10 @@ listing sessions to pick one to load."
                                         (propertize "Forked session" 'font-lock-face 'agent-shell-section-heading))
                     :expanded t
                     :body (or new-session-id ""))
-                   ;; Some agents (e.g. claude-agent-acp) fork by copying the
-                   ;; transcript only, returning neither models nor modes and
-                   ;; leaving the new session inactive (prompts fail with
-                   ;; "Session not found").  Resuming activates it and also
-                   ;; replays the forked history when loading.
-                   (if (or (map-elt (agent-shell--state) :supports-session-load)
-                           (map-elt (agent-shell--state) :supports-session-resume))
+                   ;; The fork is already active, so only load it when that
+                   ;; replays history.  Resuming would add nothing.
+                   (if (and agent-shell-session-fork-restore-history
+                            (agent-shell--use-session-load-p (agent-shell--state)))
                        (agent-shell--initiate-session-resume-by-id
                         :session-id new-session-id
                         :shell-buffer shell-buffer
@@ -8701,7 +8714,7 @@ listing sessions to pick one to load."
                         ;; The fork itself succeeded, so stay on it rather
                         ;; than falling back to picking another session.
                         :on-failure (lambda ()
-                                      (let ((text "Couldn't load forked session. Prompts may fail."))
+                                      (let ((text "Couldn't restore forked session history."))
                                         (message "%s" text)
                                         (agent-shell--update-bootstrapping-fragment
                                          :state (agent-shell--state)

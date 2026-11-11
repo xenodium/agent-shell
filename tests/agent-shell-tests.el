@@ -4293,17 +4293,40 @@ so the command must not append a second time."
     (should (equal (agent-shell--resume-failure-message :session-id "abc")
                    "Couldn't resume session abc. Choosing another session."))))
 
-(ert-deftest agent-shell--initiate-session-fork-by-id-resumes-fork-test ()
-  "Test forking resumes the fork and stays on it if resuming fails."
-  (dolist (resume-succeeds '(t nil))
+(ert-deftest agent-shell--initiate-session-fork-by-id-restore-history-test ()
+  "Test forking loads the fork only when that restores its history.
+
+A forked session is active as soon as the agent responds, so a
+follow-up session/load is only sent when
+`agent-shell-session-fork-restore-history' is non-nil and the
+restore verbosity replays history.  session/resume is never sent.
+A failed load stays on the fork."
+  (dolist (case '(((:restore-history . nil)
+                   (:verbosity . full)
+                   (:load-succeeds . t)
+                   (:methods . ("session/fork")))
+                  ((:restore-history . t)
+                   (:verbosity . minimal)
+                   (:load-succeeds . t)
+                   (:methods . ("session/fork")))
+                  ((:restore-history . t)
+                   (:verbosity . full)
+                   (:load-succeeds . t)
+                   (:methods . ("session/fork" "session/load")))
+                  ((:restore-history . t)
+                   (:verbosity . full)
+                   (:load-succeeds . nil)
+                   (:methods . ("session/fork" "session/load")))))
     (with-temp-buffer
-      (let ((agent-shell-session-restore-verbosity 'minimal)
+      (let ((agent-shell-session-fork-restore-history (map-elt case :restore-history))
+            (agent-shell-session-restore-verbosity (map-elt case :verbosity))
             (methods '())
             (session-init-called nil)
             (list-and-load-called nil))
         (setq-local agent-shell--state
                     (list (cons :buffer (current-buffer))
                           (cons :client 'test-client)
+                          (cons :supports-session-load t)
                           (cons :supports-session-resume t)
                           (cons :pending-restore nil)))
         (cl-letf (((symbol-function 'agent-shell--state)
@@ -4312,6 +4335,7 @@ so the command must not append a second time."
                    #'ignore)
                   ((symbol-function 'agent-shell--emit-event) #'ignore)
                   ((symbol-function 'agent-shell--set-session-from-response) #'ignore)
+                  ((symbol-function 'agent-shell--render-pending-restore) #'ignore)
                   ((symbol-function 'agent-shell-cwd) (lambda () "/tmp"))
                   ((symbol-function 'agent-shell--mcp-servers) (lambda () []))
                   ((symbol-function 'agent-shell--finalize-session-init)
@@ -4323,7 +4347,8 @@ so the command must not append a second time."
                    (lambda (&rest args)
                      (let ((method (map-elt (plist-get args :request) :method)))
                        (push method methods)
-                       (if (or (equal method "session/fork") resume-succeeds)
+                       (if (or (equal method "session/fork")
+                               (map-elt case :load-succeeds))
                            (funcall (plist-get args :on-success)
                                     '((sessionId . "forked-id")))
                          (funcall (plist-get args :on-failure) nil nil))))))
@@ -4332,7 +4357,7 @@ so the command must not append a second time."
              :session-id "parent-id"
              :shell-buffer (current-buffer)
              :on-session-init (lambda () (setq session-init-called t))))
-          (should (equal (nreverse methods) '("session/fork" "session/resume")))
+          (should (equal (nreverse methods) (map-elt case :methods)))
           (should session-init-called)
           (should-not list-and-load-called))))))
 
