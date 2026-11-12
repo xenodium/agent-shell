@@ -4482,6 +4482,80 @@ A " nil)
                              agent-shell-markdown-bold))
                    ("\n" nil)))))
 
+(ert-deftest agent-shell-markdown-convert-blockquote-source-block ()
+  ;; A fenced block inside a quote renders as a panel: the `>' markers
+  ;; leave the body and come back as bars in the panel's `line-prefix'.
+  (let* ((s (agent-shell-markdown-convert "> ```python\n> x = 1\n>     y = 2\n> ```\n"))
+         (body (string-search "x = 1" s)))
+    (should body)
+    (should (string-search "\n    y = 2" s))
+    (should-not (string-search "```" s))
+    (should (string-prefix-p "  ▌ " (get-text-property body 'line-prefix s)))
+    (should (get-text-property body 'agent-shell-markdown-frozen s))))
+
+(ert-deftest agent-shell-markdown-convert-nested-blockquote-source-block ()
+  ;; Each quote level gets its own bar.
+  (let* ((s (agent-shell-markdown-convert "> > ```sh\n> > ls\n> > ```\n"))
+         (body (string-search "ls" s)))
+    (should (string-prefix-p "  ▌ ▌ " (get-text-property body 'line-prefix s)))))
+
+(ert-deftest agent-shell-markdown-blockquote-source-block-gaps-keep-bars ()
+  ;; Framing gaps between the panel and the rest of its quote keep the
+  ;; bars, and copy back as bare `>' lines so the quote stays whole.
+  (with-temp-buffer
+    (insert "> Here:\n> ```sh\n> ls\n> ```\n> after\n")
+    (agent-shell-markdown-replace-markup :force t)
+    (goto-char (point-min))
+    (forward-line 1)
+    (should (looking-at-p "\n"))
+    (should (equal (substring-no-properties (get-text-property (point) 'line-prefix))
+                   "  ▌ "))
+    (should (equal (agent-shell-markdown-reconstruct (point-min) (point-max))
+                   "> Here:\n>\n> ```sh\n> ls\n> ```\n>\n> after\n"))))
+
+(ert-deftest agent-shell-markdown-blockquote-source-block-bare-quote-line-is-gap ()
+  ;; A bare `>' line already separating the panel from its quote
+  ;; counts as the gap, so no second one is inserted.
+  (let ((markdown "> Here:\n>\n> ```sh\n> ls\n> ```\n>\n> after\n"))
+    (with-temp-buffer
+      (insert markdown)
+      (agent-shell-markdown-replace-markup :force t)
+      (goto-char (point-min))
+      (forward-line 1)
+      (should (looking-at-p ">\n"))
+      (forward-line 1)
+      (should (get-text-property (point) 'agent-shell-markdown-source-block-rendered))
+      (should (equal (agent-shell-markdown-reconstruct (point-min) (point-max))
+                     markdown)))))
+
+(ert-deftest agent-shell-markdown-source-block-after-blockquote-has-no-bars ()
+  ;; A top-level fence right after a quote is outside it.
+  (let* ((s (agent-shell-markdown-convert "> quote\n```sh\nls\n```\n"))
+         (gap (1+ (string-search "\n" s))))
+    (should (eq (aref s gap) ?\n))
+    (should-not (get-text-property gap 'line-prefix s))
+    (should-not (string-search "▌" (get-text-property (string-search "ls" s)
+                                                      'line-prefix s)))))
+
+(ert-deftest agent-shell-markdown-blockquote-fence-inside-source-block-is-body ()
+  ;; A quoted fence inside a top-level block is body, and a closing
+  ;; fence at a different quote depth does not close a block.
+  (let ((s (agent-shell-markdown-convert "```markdown\n> ```sh\n> ls\n> ```\n```\n")))
+    (should (string-search "> ```sh\n> ls\n> ```" s)))
+  (let ((blocks (with-temp-buffer
+                  (insert "> ```sh\n> ls\n```\n")
+                  (agent-shell-markdown--source-blocks))))
+    (should (equal (length blocks) 1))
+    (should-not (map-elt (car blocks) :complete))))
+
+(ert-deftest agent-shell-markdown-source-blocks-strips-blockquote-markers-from-body ()
+  ;; External renderers get the code, not the quote markers.
+  (let ((block (car (with-temp-buffer
+                      (insert "> ```math\n> \\frac{a}{b}\n> ```\n")
+                      (agent-shell-markdown--source-blocks)))))
+    (should (equal (map-elt block :body) "\\frac{a}{b}"))
+    (should (equal (map-elt block :blockquote-depth) 1))))
+
 (ert-deftest agent-shell-markdown-blockquote-waits-for-newline-across-chunks ()
   ;; A blockquote line streamed across two chunks (`> hel' then `lo\n')
   ;; must not render until the line completes — otherwise `> hel'
