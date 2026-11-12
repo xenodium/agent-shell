@@ -770,6 +770,19 @@ while ?a and ?中 are nil."
      ((memq category '(Pc Pd Pe Pf Pi Po Ps Sc Sk Sm So))
       :punct))))
 
+(defun agent-shell-markdown--cjk-char-p (char)
+  "Return non-nil when CHAR is a CJK character, as markdown-cjk-friendly uses it.
+The spec counts wide East Asian characters (emoji aside) and Hangul.
+Emacs has no East Asian Width property, so the script stands in for it:
+Han, Kana, Hangul, Bopomofo, Yi, and CJK punctuation and fullwidth
+forms (`cjk-misc').  A nil CHAR (a buffer edge) is not CJK.
+
+For example ?中, ?あ, ?라, ?「 and ?（ are CJK, while ?a, ?\\( and ?Я
+are not."
+  (and char
+       (memq (aref char-script-table char)
+             '(han kana hangul bopomofo yi cjk-misc))))
+
 (cl-defun agent-shell-markdown--emphasis-delimiter-p (&key position length opening)
   "Return non-nil if the delimiter at POSITION can open or close emphasis.
 LENGTH is the delimiter's char count (2 for `**').  OPENING non-nil
@@ -777,15 +790,24 @@ checks an opener; nil checks a closer.  Follows the CommonMark
 left/right-flanking rules, where `_' additionally may not open or
 close inside a word.
 
+Flanking is relaxed as in markdown-cjk-friendly: a CJK character on
+either side (see `agent-shell-markdown--cjk-char-p') lets punctuation
+sit against the delimiter, so CJK text needs no space around it.
+
 For example, both star pairs in \"中**bold**文\" and \"中*it*文\"
-qualify, while neither underscore pair in \"a__b__c\" does."
-  (let* ((before (agent-shell-markdown--flanking-kind (char-before position)))
-         (after (agent-shell-markdown--flanking-kind
-                 (char-after (+ position length))))
+qualify, as does the pair in \"**가중치(Weights)**라고\", which
+CommonMark leaves literal.  Neither underscore pair in \"a__b__c\"
+does."
+  (let* ((before-char (char-before position))
+         (after-char (char-after (+ position length)))
+         (before (agent-shell-markdown--flanking-kind before-char))
+         (after (agent-shell-markdown--flanking-kind after-char))
+         (cjk (or (agent-shell-markdown--cjk-char-p before-char)
+                  (agent-shell-markdown--cjk-char-p after-char)))
          (left (and (not (eq after :space))
-                    (or (not (eq after :punct)) before)))
+                    (or (not (eq after :punct)) before cjk)))
          (right (and (not (eq before :space))
-                     (or (not (eq before :punct)) after))))
+                     (or (not (eq before :punct)) after cjk))))
     (if opening
         (and left (or (not (eq (char-after position) ?_))
                       (not right) (eq before :punct)))

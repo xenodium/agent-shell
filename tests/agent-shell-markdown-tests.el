@@ -49,6 +49,33 @@
                       (agent-shell-markdown-convert (car case)))
                      (cadr case))))))
 
+(ert-deftest agent-shell-markdown-convert-emphasis-cjk-friendly ()
+  ;; Punctuation against a delimiter with CJK on the other side, which
+  ;; CommonMark leaves literal (markdown-cjk-friendly, issue #942).
+  (dolist (case '(("**가중치(Weights)**라고"
+                   (("가중치(Weights)" (agent-shell-markdown-bold)) ("라고" nil)))
+                  ("これは**「重要」**です"
+                   (("これは" nil) ("「重要」" (agent-shell-markdown-bold))
+                    ("です" nil)))
+                  ("这是**“重点”**内容"
+                   (("这是" nil) ("“重点”" (agent-shell-markdown-bold))
+                    ("内容" nil)))
+                  ("*가중치(Weights)*라고"
+                   (("가중치(Weights)" (agent-shell-markdown-italic))
+                    ("라고" nil)))))
+    (ert-info ((format "Markdown: %S" (car case)))
+      (should (equal (agent-shell-markdown--deconstruct
+                      (agent-shell-markdown-convert (car case)))
+                     (cadr case))))))
+
+(ert-deftest agent-shell-markdown-convert-emphasis-cjk-friendly-needs-cjk ()
+  ;; The same shapes without CJK stay CommonMark.
+  (dolist (source '("**weights(W)**tail" "**вес(W)**мир" "*weights(W)*tail"))
+    (ert-info ((format "Markdown: %S" source))
+      (should (equal (agent-shell-markdown--deconstruct
+                      (agent-shell-markdown-convert source))
+                     (list (list source nil)))))))
+
 (ert-deftest agent-shell-markdown-convert-bold-delimiter-boundaries ()
   (dolist (source '("word__literal__tail" "** leading**" "**trailing **"
                     "a**\"quoted\"**b" "**unclosed"))
