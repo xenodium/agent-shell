@@ -4529,6 +4529,41 @@ A " nil)
                              agent-shell-markdown-blockquote))
                    ("\n" nil)))))
 
+(ert-deftest agent-shell-markdown-convert-blockquote-header ()
+  ;; A quoted header drops its `#' but keeps the `>' for the bar, and
+  ;; copies back as the original markdown.
+  (with-temp-buffer
+    (insert "> ## A **bold** title\n")
+    (agent-shell-markdown-replace-markup :force t)
+    (should (equal (agent-shell-markdown--deconstruct (buffer-string))
+                   '(("> " (agent-shell-markdown-blockquote))
+                     ("A " (agent-shell-markdown-header-2
+                            agent-shell-markdown-blockquote))
+                     ("bold" (agent-shell-markdown-header-2
+                              agent-shell-markdown-bold
+                              agent-shell-markdown-blockquote))
+                     (" title" (agent-shell-markdown-header-2
+                                agent-shell-markdown-blockquote))
+                     ("\n" nil))))
+    (should (get-text-property (point-min) 'display))
+    (should (equal (agent-shell-markdown-reconstruct (point-min) (point-max))
+                   "> ## A **bold** title\n"))))
+
+(ert-deftest agent-shell-markdown-convert-blockquote-divider ()
+  ;; A quoted divider draws the rule over `---' only, leaving the `>'
+  ;; to show as the quote's bar.
+  (let ((s (agent-shell-markdown-convert "> ---\n")))
+    (should (equal (substring-no-properties s) "> ---\n"))
+    (should (equal-including-properties
+             (get-text-property 0 'display s)
+             (propertize "▌" 'face 'agent-shell-markdown-blockquote)))
+    (should-not (get-text-property 1 'display s))
+    (should (equal-including-properties
+             (get-text-property 2 'display s)
+             (concat (propertize (make-string 12 ?\s) 'face '(:underline t))
+                     "\n")))
+    (should (eq (next-single-property-change 2 'display s) 5))))
+
 (ert-deftest agent-shell-markdown-convert-blockquote-source-block ()
   ;; A fenced block inside a quote renders as a panel: the `>' markers
   ;; leave the body and come back as bars in the panel's `line-prefix'.

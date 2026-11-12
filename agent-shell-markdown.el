@@ -991,31 +991,35 @@ when no more text will be appended, so a header ending the buffer
 renders too.
 
 For example, the buffer \"## My title\\n\" becomes \"My title\\n\"
-with face `agent-shell-markdown-header-2' on \"My title\"."
+with face `agent-shell-markdown-header-2' on \"My title\".  Inside a
+blockquote, \"> ## My title\\n\" becomes \"> My title\\n\", its `>'
+left for `agent-shell-markdown--style-blockquotes' to draw as a bar."
   (let ((case-fold-search nil))
     (goto-char (point-min))
     (while (re-search-forward
-            (rx bol (zero-or-more blank) (group (one-or-more "#"))
+            (rx bol
+                (group (zero-or-more (regexp agent-shell-markdown--blockquote-marker-regexp)))
+                (zero-or-more blank) (group (one-or-more "#"))
                 (one-or-more blank)
                 (group (one-or-more (not (any "\n"))))
                 (group (regexp (if complete (rx (or "\n" eos)) "\n"))))
             nil t)
-      (let* ((markup-start (match-beginning 0))
+      (let* ((markup-start (match-end 1))
              (markup-end (match-end 0))
              (avoid (agent-shell-markdown-in-avoid-range-p
                      markup-start markup-end avoid-ranges)))
         (if avoid
             (goto-char (cdr avoid))
-          (let* ((level (- (match-end 1) (match-beginning 1)))
-                 (text (buffer-substring (match-beginning 2) (match-end 2)))
+          (let* ((level (- (match-end 2) (match-beginning 2)))
+                 (text (buffer-substring (match-beginning 3) (match-end 3)))
                  (source (unless (get-text-property markup-start
                                                     'agent-shell-markdown-source)
                            (agent-shell-markdown-reconstruct
-                            markup-start (match-end 2))))
+                            markup-start (match-end 3))))
                  ;; `text' keeps the title's own properties.  Carry the newline
                  ;; separately so its trailing-whitespace invisibility does not
                  ;; hide the title.
-                 (terminator (match-string-no-properties 3))
+                 (terminator (match-string-no-properties 4))
                  (newline-properties
                   (unless (string-empty-p terminator)
                     (agent-shell-markdown--carry-properties (1- markup-end)))))
@@ -1720,17 +1724,23 @@ property that draws an underlined rule across the window, plus a
 it.  Dividers inside any of AVOID-RANGES are left untouched.
 
 The chars themselves remain in the buffer beneath the display
-property, so the source markdown round-trips through copy/save."
+property, so the source markdown round-trips through copy/save.
+
+Inside a blockquote, the rule starts after the `>' markers, which
+`agent-shell-markdown--style-blockquotes' draws as bars.  For
+example, in \"> ---\" only \"---\" is displayed as the rule."
   (let ((case-fold-search nil))
     (goto-char (point-min))
     (while (re-search-forward
-            (rx bol (zero-or-more blank)
+            (rx bol
+                (group (zero-or-more (regexp agent-shell-markdown--blockquote-marker-regexp)))
+                (zero-or-more blank)
                 (or (seq "***" (zero-or-more "*"))
                     (seq "---" (zero-or-more "-"))
                     (seq "___" (zero-or-more "_")))
                 (zero-or-more blank) eol)
             nil t)
-      (let* ((rule-start (match-beginning 0))
+      (let* ((rule-start (match-end 1))
              (rule-end (match-end 0))
              (avoid (agent-shell-markdown-in-avoid-range-p
                      rule-start rule-end avoid-ranges)))
