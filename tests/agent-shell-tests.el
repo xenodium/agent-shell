@@ -955,6 +955,106 @@ render under the queued prompt's namespace, after its text."
         (should-not (map-elt state :stream-render-pending))
         (should-not (map-elt state :stream-render-timer))))))
 
+(defmacro agent-shell-tests-with-thought-capture (&rest body)
+  "Run BODY with the thought render path instrumented.
+Binds `agent-shell--update-fragment' and the once-per-thought group
+helpers in a `cl-letf' that exposes
+
+  RENDERED      -- list of update-fragment arg plists, latest first
+  HEADER-CALLS  -- count of thought-count/header-refresh/fold-sync calls
+  STATE         -- a fresh `agent-shell--make-state' in the temp buffer
+  DISPATCH      -- a (lambda (TEXT) ...) sending one thought chunk."
+  (declare (indent 1))
+  `(let* ((rendered nil)
+          (header-calls 0)
+          (state (agent-shell--make-state :buffer (current-buffer)))
+          (dispatch
+           (lambda (text)
+             (agent-shell--on-notification
+              :state state
+              :acp-notification
+              `((method . "session/update")
+                (params
+                 (update
+                  (sessionUpdate . "agent_thought_chunk")
+                  (content (type . "text") (text . ,text)))))))))
+     (cl-letf (((symbol-function 'agent-shell--active-requests-p)
+                (lambda (&rest _) t))
+               ((symbol-function 'agent-shell--append-transcript)
+                (lambda (&rest _) nil))
+               ((symbol-function 'agent-shell--activity-group-current-id)
+                (lambda (&rest _) "g1"))
+               ((symbol-function 'agent-shell--thought-process-icon)
+                (lambda (&rest _) nil))
+               ((symbol-function 'agent-shell--count-group-thought)
+                (lambda (&rest _) (cl-incf header-calls)))
+               ((symbol-function 'agent-shell--refresh-activity-group-header)
+                (lambda (&rest _) (cl-incf header-calls)))
+               ((symbol-function 'agent-shell--sync-activity-group-fold)
+                (lambda (&rest _) (cl-incf header-calls)))
+               ((symbol-function 'agent-shell--update-fragment)
+                (lambda (&rest args) (push args rendered))))
+       ,@body)))
+
+(ert-deftest agent-shell--thought-chunks-coalesce-into-one-fragment-test ()
+  "Consecutive thought chunks must render as one batched update.
+
+Thought chunks arrive every few tokens.  Rendering each one
+synchronously saturated the main thread on long thinking blocks and
+stalled the ACP input queue behind it, so they ride the same
+`agent-shell--update-streamed-fragment' batching as message chunks --
+while still rendering as a thought: own block id, labels, grouping,
+expanded state, and navigation, with the once-per-thought group
+bookkeeping running exactly once."
+  (with-temp-buffer
+    (agent-shell-tests-with-thought-capture
+      (let ((agent-shell--stream-render-interval 30))
+        (funcall dispatch "a")
+        (funcall dispatch "b")
+        (funcall dispatch "c")
+        ;; Nothing rendered synchronously per chunk: all three are batched.
+        (should-not rendered)
+        (should (= header-calls 0))
+        (agent-shell--flush-stream-render state)
+        (should (= (length rendered) 1))
+        (let ((args (car rendered)))
+          (should (equal (substring-no-properties (plist-get args :body)) "abc"))
+          (should (equal (plist-get args :block-id) "1-agent_thought_chunk"))
+          (should (plist-get args :create-new))
+          (should (plist-get args :append))
+          ;; The thought's EXTRA-ARGS must override the streamed defaults.
+          (should-not (plist-get args :navigation))
+          (should (equal (substring-no-properties (or (plist-get args :label-left) ""))
+                         "Thinking"))
+          (should (equal (plist-get args :group-id) "g1"))
+          (should (plist-get args :render-body-images)))
+        ;; Group bookkeeping ran once, after the fragment was created.
+        (should (= header-calls 3))
+        (should-not (map-elt state :stream-render-pending))))))
+
+(ert-deftest agent-shell--thought-chunk-header-updates-once-across-batches-test ()
+  "A thought spanning several batches gets its create-time work once.
+
+Coalescing splits a streamed thought into several flushes; the
+once-per-thought count, header refresh, and fold sync must not repeat
+per flush, and only the first flush may create the fragment."
+  (with-temp-buffer
+    (agent-shell-tests-with-thought-capture
+      (let ((agent-shell--stream-render-interval 30))
+        (funcall dispatch "first half")
+        (agent-shell--flush-stream-render state)
+        (funcall dispatch " second half")
+        (agent-shell--flush-stream-render state)
+        (should (= (length rendered) 2))
+        (let ((first (nth 1 rendered))
+              (second (car rendered)))
+          (should (plist-get first :create-new))
+          (should-not (plist-get second :create-new))
+          (should (plist-get second :append))
+          (should (equal (substring-no-properties (plist-get second :body))
+                         " second half")))
+        (should (= header-calls 3))))))
+
 (ert-deftest agent-shell--on-notification-session-info-update-test ()
   "Test `session_info_update' updates the session title.
 
@@ -7731,8 +7831,11 @@ think-kind calls into Thinking."
 Drives an ACP `session/update' notification through
 `agent-shell--on-notification' and asserts the body reaching the renderer
 carries `agent-shell-thought-body', and that markdown rendered on top of
-such a body layers its own faces ahead of the base one."
-  (let ((state (list (cons :chunked-group-count 0)
+such a body layers its own faces ahead of the base one.
+
+Batching is disabled so the dispatched chunk renders synchronously."
+  (let ((agent-shell--stream-render-interval nil)
+        (state (list (cons :chunked-group-count 0)
                      (cons :activity-group-count 0)
                      ;; Pre-set so the new-thought branches (transcript
                      ;; header, group relabel) are skipped; the test only
