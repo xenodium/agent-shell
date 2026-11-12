@@ -435,6 +435,15 @@ block is left as literal text."
           (avoid-ranges))
       (save-restriction
         (narrow-to-region watermark (point-max))
+        ;; Text styled by an earlier render may have lost its `face' to
+        ;; re-fontification since.  Passes that layer a face onto a whole
+        ;; line once its newline arrives (blockquotes, headers) would
+        ;; otherwise build on the bare text, and the mirror below would
+        ;; then overwrite the surviving `font-lock-face', dropping e.g.
+        ;; the bold in "> a **b** c".
+        (with-silent-modifications
+          (agent-shell-markdown--restore-face-from-font-lock-face
+           (point-min) (point-max)))
         ;; Build the render context (fenced-block descriptors + inline
         ;; `code' ranges) once, via the same function any external code
         ;; renders a static region through, so the two cannot drift.

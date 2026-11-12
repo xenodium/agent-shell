@@ -3898,6 +3898,26 @@ returns (agent-shell-markdown-table agent-shell-markdown-table-zebra)."
                   (ensure-list (get-text-property (match-beginning 0)
                                                   'font-lock-face))))))
 
+(ert-deftest agent-shell-markdown-line-styling-keeps-markup-refontified-while-pending ()
+  ;; Bold styled while its line waits for the newline can be
+  ;; re-fontified before the blockquote or header styling lands on the
+  ;; whole line.  That styling must layer onto the bold, not replace it.
+  (dolist (chunks '(("> a **b** c" "\n")
+                    ("# a **b** c" "\n")))
+    (ert-info ((format "Chunks: %S" chunks))
+      (with-temp-buffer
+        (dolist (chunk chunks)
+          (goto-char (point-max))
+          (insert chunk)
+          (agent-shell-markdown-replace-markup)
+          ;; What re-fontification does to `face' between chunks.
+          (remove-text-properties (point-min) (point-max) '(face nil)))
+        (goto-char (point-min))
+        (search-forward "b ")
+        (should (memq 'agent-shell-markdown-bold
+                      (ensure-list (get-text-property (match-beginning 0)
+                                                      'font-lock-face))))))))
+
 (ert-deftest agent-shell-markdown-table-inside-open-fence-stays-raw ()
   ;; A table inside a fenced block whose closing fence hasn't
   ;; streamed in yet must NOT get table-rendered.  Otherwise the
