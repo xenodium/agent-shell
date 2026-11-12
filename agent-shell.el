@@ -3573,7 +3573,9 @@ Clears STATE's `:expanded-activity-group'."
                  ;; Read before `:last-entry-type' is advanced below;
                  ;; stable across a thought's streamed chunks since
                  ;; "agent_thought_chunk" keeps the run open.
-                 (group-id (agent-shell--activity-group-current-id state)))
+                 (group-id (agent-shell--activity-group-current-id state))
+                 (namespace-id (unless (agent-shell--active-requests-p state)
+                                 "out-of-turn")))
              (when new-thought-p
                (map-put! state :chunked-group-count (1+ (map-elt state :chunked-group-count)))
                (agent-shell--append-transcript
@@ -3582,7 +3584,7 @@ Clears STATE's `:expanded-activity-group'."
              (agent-shell--append-transcript
               :text (agent-shell--indent-markdown-headers content)
               :file-path agent-shell--transcript-file)
-             (agent-shell--update-fragment
+             (agent-shell--update-streamed-fragment
               :state state
               ;; Out of turn, key under a dedicated namespace so the
               ;; thought forms its own fragment rather than coalescing
@@ -3591,13 +3593,9 @@ Clears STATE's `:expanded-activity-group'."
               ;; spec's intended discriminator here, but it is optional and
               ;; only populated by newer agents, so we group by turn
               ;; boundary instead.
-              :namespace-id (unless (agent-shell--active-requests-p state) "out-of-turn")
+              :namespace-id namespace-id
               :block-id (format "%s-agent_thought_chunk"
                                 (map-elt state :chunked-group-count))
-              :label-left  (concat
-                            (when-let* ((icon (agent-shell--thought-process-icon)))
-                              (concat icon " "))
-                            (propertize "Thinking" 'font-lock-face 'agent-shell-section-heading))
               ;; Base face for the body.  The markdown styling rendered on
               ;; top layers its own faces ahead of it, so bold, links and
               ;; code spans in a thought keep their faces.  Set on both
@@ -3611,28 +3609,25 @@ Clears STATE's `:expanded-activity-group'."
                      content
                      'face 'agent-shell-thought-body
                      'font-lock-face 'agent-shell-thought-body)
-              :append (equal (map-elt state :last-entry-type)
-                             "agent_thought_chunk")
-              :expanded agent-shell-thought-process-expand-by-default
-              :group-id group-id
-              :group-label agent-shell--activity-group-label
-              :group-expanded (agent-shell--activity-group-initial-expanded-p)
-              :render-body-images t
-              :above-last-prompt (not (agent-shell--active-requests-p state)))
-             ;; Count this thought and relabel the header so a thought-only
-             ;; group reads "Thinking"/"Thought" instead of the neutral
-             ;; placeholder, and a mixed group can mention it.  Both run once
-             ;; per thought run, not per streamed chunk: the header label
-             ;; depends only on the thought count (advanced here on
-             ;; `new-thought-p') and the group's tool statuses (unchanged
-             ;; while a pure thought run streams), so relabeling on every
-             ;; chunk repeats an identical update and its buffer scan.
-             (when new-thought-p
-               (agent-shell--count-group-thought state group-id)
-               (agent-shell--refresh-activity-group-header state group-id)
-               (agent-shell--sync-activity-group-fold
-                :state state :group-id group-id
-                :namespace-id (unless (agent-shell--active-requests-p state) "out-of-turn"))))
+              :create-new new-thought-p
+              :above-last-prompt (not (agent-shell--active-requests-p state))
+              :extra-args (list
+                           :navigation nil
+                           :label-left  (concat
+                                         (when-let* ((icon (agent-shell--thought-process-icon)))
+                                           (concat icon " "))
+                                         (propertize "Thinking" 'font-lock-face 'agent-shell-section-heading))
+                           :expanded agent-shell-thought-process-expand-by-default
+                           :group-id group-id
+                           :group-label agent-shell--activity-group-label
+                           :group-expanded (agent-shell--activity-group-initial-expanded-p))
+              :on-create (when new-thought-p
+                           (lambda ()
+                             (agent-shell--count-group-thought state group-id)
+                             (agent-shell--refresh-activity-group-header state group-id)
+                             (agent-shell--sync-activity-group-fold
+                              :state state :group-id group-id
+                              :namespace-id namespace-id)))))
            (map-put! state :last-entry-type "agent_thought_chunk"))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "user_message_chunk")
            ;; A user_message_chunk replays a user submission.  Render it
@@ -5651,17 +5646,34 @@ CHUNK is an alist like:
    (:block-id . \"1-agent_message_chunk\")
    (:body . \"Hello world\")
    (:create-new . t)
-   (:above-last-prompt . nil))"
-  (agent-shell--update-fragment
-   :state state
-   :namespace-id (map-elt chunk :namespace-id)
-   :block-id (map-elt chunk :block-id)
-   :body (map-elt chunk :body)
-   :append t
-   :create-new (map-elt chunk :create-new)
-   :navigation 'never
-   :render-body-images t
-   :above-last-prompt (map-elt chunk :above-last-prompt)))
+   (:above-last-prompt . nil)
+   (:extra-args . (:navigation nil :label-left ...))
+   (:on-create . #<lambda>))
+
+EXTRA-ARGS are forwarded to `agent-shell--update-fragment' ahead of the
+defaults below, so a streamed fragment can opt out of the shared
+`:navigation never' default or supply labels and grouping (see
+`agent-shell--update-streamed-fragment').  ON-CREATE, when present, runs
+after a create-new render, in the shell buffer; it is part of the batch,
+so it fires once per created fragment rather than once per chunk."
+  (let ((extra-args (map-elt chunk :extra-args)))
+    (apply #'agent-shell--update-fragment
+           (append extra-args
+                   (list :state state
+                         :namespace-id (map-elt chunk :namespace-id)
+                         :block-id (map-elt chunk :block-id)
+                         :body (map-elt chunk :body)
+                         :append t
+                         :create-new (map-elt chunk :create-new)
+                         :navigation 'never
+                         :render-body-images t
+                         :above-last-prompt (map-elt chunk :above-last-prompt)))))
+  (when-let* (((map-elt chunk :create-new))
+              (on-create (map-elt chunk :on-create))
+              (buffer (map-elt state :buffer))
+              ((buffer-live-p buffer)))
+    (with-current-buffer buffer
+      (funcall on-create))))
 
 (defun agent-shell--flush-stream-render (state)
   "Render STATE's pending streamed text, if any."
@@ -5672,18 +5684,28 @@ CHUNK is an alist like:
     (agent-shell--render-streamed-chunk state pending)))
 
 (cl-defun agent-shell--update-streamed-fragment (&key state namespace-id block-id body
-                                                      create-new above-last-prompt)
+                                                      create-new above-last-prompt
+                                                      extra-args on-create)
   "Append BODY to streamed fragment BLOCK-ID in STATE.
 
 NAMESPACE-ID, CREATE-NEW, and ABOVE-LAST-PROMPT follow
 `agent-shell--update-fragment'.  Chunks for the same fragment are
 batched while `agent-shell--stream-render-interval' is non-nil.  A
-different fragment or CREATE-NEW flushes the previous batch first."
+different fragment or CREATE-NEW flushes the previous batch first.
+
+EXTRA-ARGS is a plist forwarded to `agent-shell--update-fragment' for
+every render of the batch, overriding its defaults (it carries e.g. a
+thought chunk's `:label-left' and grouping).  ON-CREATE is a
+no-argument callback run once, after the first render that creates the
+fragment (see `agent-shell--render-streamed-chunk').  Both ride on the
+batch's first chunk, so later coalesced chunks need not repeat them."
   (let ((chunk (list (cons :namespace-id namespace-id)
                      (cons :block-id block-id)
                      (cons :body body)
                      (cons :create-new create-new)
-                     (cons :above-last-prompt above-last-prompt)))
+                     (cons :above-last-prompt above-last-prompt)
+                     (cons :extra-args extra-args)
+                     (cons :on-create on-create)))
         (pending (map-elt state :stream-render-pending)))
     (cond
      ((not agent-shell--stream-render-interval)
