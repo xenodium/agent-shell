@@ -1774,9 +1774,13 @@ Each leading `>' character on the line is shown as `▌' via a
 `display' text property; the underlying `>' chars stay in the
 buffer so the source markdown round-trips through copy/save and
 re-rendering remains idempotent.  Remaining content on the line
-gets face `agent-shell-markdown-blockquote' (composes with any
-face already applied by an earlier pass — bold/italic/inline-code
-inside a blockquote still render).
+gets face `agent-shell-markdown-blockquote', layered beneath any face
+an earlier pass applied.  Bold, italic or inline code inside a
+blockquote keeps its own weight, slant and colour, even when the
+blockquote face sets them (e.g. a theme's `font-lock-comment-face'
+with a regular weight).  For example, \"> hello **world**\" gives
+\"world\" the faces (agent-shell-markdown-bold
+agent-shell-markdown-blockquote).
 
 Multiple nesting levels are supported: each leading `>' renders
 as its own bar, so `>> text' shows two bars and `>>> text' three.
@@ -1816,7 +1820,8 @@ left untouched."
                                   (if (eq (char-before line-end) ?\n)
                                       (1- line-end)
                                     line-end)
-                                  'agent-shell-markdown-blockquote)
+                                  'agent-shell-markdown-blockquote
+                                  t)
           (add-text-properties line-start line-end
                                '(agent-shell-markdown-frozen t
                                                              rear-nonsticky (agent-shell-markdown-frozen))))))))

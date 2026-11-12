@@ -4472,14 +4472,14 @@ A " nil)
                                 'face 'agent-shell-markdown-blockquote))))))
 
 (ert-deftest agent-shell-markdown-convert-blockquote-with-bold ()
-  ;; Inline markup inside a blockquote still renders — bold runs
-  ;; before blockquote, and the blockquote face composes on top so
-  ;; the bold text ends up with both faces.
+  ;; Inline markup inside a blockquote still renders.  The blockquote
+  ;; face goes beneath bold, so a theme whose blockquote face sets a
+  ;; regular weight cannot mask the bold.
   (should (equal (agent-shell-markdown--deconstruct
                   (agent-shell-markdown-convert "> hello **world**\n"))
                  '(("> hello " (agent-shell-markdown-blockquote))
-                   ("world" (agent-shell-markdown-blockquote
-                             agent-shell-markdown-bold))
+                   ("world" (agent-shell-markdown-bold
+                             agent-shell-markdown-blockquote))
                    ("\n" nil)))))
 
 (ert-deftest agent-shell-markdown-convert-blockquote-source-block ()
