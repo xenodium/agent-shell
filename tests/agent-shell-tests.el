@@ -816,6 +816,48 @@ block -- covering the dispatch path, not just the helper in isolation."
         (should (plist-get (car rendered) :append))
         (should-not (map-elt state :stream-render-timer))))))
 
+(ert-deftest agent-shell--on-notification-agent-thought-chunk-batches-continuations-test ()
+  "Render a thought's first chunk at once and batch its continuations."
+  (with-temp-buffer
+    (let ((agent-shell--stream-render-interval 30)
+          (state (agent-shell--make-state :buffer (current-buffer)))
+          (rendered nil)
+          (group-updates 0))
+      (cl-letf (((symbol-function 'agent-shell--active-requests-p)
+                 (lambda (_state) t))
+                ((symbol-function 'agent-shell--append-transcript)
+                 #'ignore)
+                ((symbol-function 'agent-shell--thought-process-icon)
+                 #'ignore)
+                ((symbol-function 'agent-shell--refresh-activity-group-header)
+                 (lambda (&rest _) (setq group-updates (1+ group-updates))))
+                ((symbol-function 'agent-shell--sync-activity-group-fold)
+                 (lambda (&rest _) (setq group-updates (1+ group-updates))))
+                ((symbol-function 'agent-shell--update-fragment)
+                 (lambda (&rest args) (push args rendered))))
+        (dolist (text '("a" "b" "c"))
+          (agent-shell--on-notification
+           :state state
+           :acp-notification `((method . "session/update")
+                               (params
+                                (update
+                                 (sessionUpdate . "agent_thought_chunk")
+                                 (content (type . "text") (text . ,text)))))))
+        (should (= (length rendered) 1))
+        (should (equal (substring-no-properties (plist-get (car rendered) :label-left))
+                       "Thinking"))
+        (should (equal (substring-no-properties (plist-get (car rendered) :body)) "a"))
+        (should (= group-updates 2))
+        (agent-shell--flush-stream-render state)
+        (should (= (length rendered) 2))
+        (should (equal (plist-get (car rendered) :block-id)
+                       (plist-get (cadr rendered) :block-id)))
+        (should (equal (substring-no-properties (plist-get (car rendered) :body)) "bc"))
+        (should (plist-get (car rendered) :append))
+        (should-not (plist-get (car rendered) :create-new))
+        (should-not (plist-get (car rendered) :label-left))
+        (should (= group-updates 2))))))
+
 (ert-deftest agent-shell--stream-render-flushes-on-fragment-change-test ()
   "Flush the previous batch when the fragment changes."
   (with-temp-buffer
@@ -7732,7 +7774,8 @@ Drives an ACP `session/update' notification through
 `agent-shell--on-notification' and asserts the body reaching the renderer
 carries `agent-shell-thought-body', and that markdown rendered on top of
 such a body layers its own faces ahead of the base one."
-  (let ((state (list (cons :chunked-group-count 0)
+  (let ((agent-shell--stream-render-interval nil)
+        (state (list (cons :chunked-group-count 0)
                      (cons :activity-group-count 0)
                      ;; Pre-set so the new-thought branches (transcript
                      ;; header, group relabel) are skipped; the test only

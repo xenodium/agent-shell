@@ -320,7 +320,7 @@ are applied.  Each function is called with a range alist containing:
   :group 'agent-shell)
 
 (defvar agent-shell--stream-render-interval 0.05
-  "Seconds to coalesce streamed message chunks before rendering them.
+  "Seconds to coalesce streamed message and thought chunks before rendering.
 
 Batching avoids re-rendering a growing markdown body on every chunk.
 Other fragment or plain text updates flush pending chunks first,
@@ -3564,16 +3564,38 @@ Clears STATE's `:expanded-activity-group'."
                 :above-last-prompt (not (agent-shell--active-requests-p state)))))
            (map-put! state :last-entry-type "tool_call"))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "agent_thought_chunk")
-           (let ((new-thought-p (not (equal (map-elt state :last-entry-type)
-                                            "agent_thought_chunk")))
-                 (content (agent-shell--content-block-to-markdown
-                           (map-nested-elt acp-notification '(params update content))))
-                 ;; Share the tool-call run counter so a thought lands in
-                 ;; the same activity group as the surrounding tool calls.
-                 ;; Read before `:last-entry-type' is advanced below;
-                 ;; stable across a thought's streamed chunks since
-                 ;; "agent_thought_chunk" keeps the run open.
-                 (group-id (agent-shell--activity-group-current-id state)))
+           (let* ((new-thought-p (not (equal (map-elt state :last-entry-type)
+                                             "agent_thought_chunk")))
+                  (content (agent-shell--content-block-to-markdown
+                            (map-nested-elt acp-notification '(params update content))))
+                  ;; Base face for the body.  The markdown styling rendered on
+                  ;; top layers its own faces ahead of it, so bold, links and
+                  ;; code spans in a thought keep their faces.  Set on both
+                  ;; properties for the reason
+                  ;; `agent-shell-markdown--mirror-face-to-font-lock-face'
+                  ;; gives: fontification clears a plain `face' (it covers a
+                  ;; collapsed body long before the renderer, and its mirror,
+                  ;; ever sees it), while `font-lock-face' only renders while
+                  ;; `font-lock-mode' is on.
+                  (body (agent-shell--add-text-properties
+                         content
+                         'face 'agent-shell-thought-body
+                         'font-lock-face 'agent-shell-thought-body))
+                  ;; Out of turn, key under a dedicated namespace so the
+                  ;; thought forms its own fragment rather than coalescing
+                  ;; into the previous turn's final thought (same request-count
+                  ;; and group-count).  ACP's ContentChunk.messageId is the
+                  ;; spec's intended discriminator here, but it is optional and
+                  ;; only populated by newer agents, so we group by turn
+                  ;; boundary instead.
+                  (namespace-id (unless (agent-shell--active-requests-p state)
+                                  "out-of-turn"))
+                  ;; Share the tool-call run counter so a thought lands in
+                  ;; the same activity group as the surrounding tool calls.
+                  ;; Read before `:last-entry-type' is advanced below;
+                  ;; stable across a thought's streamed chunks since
+                  ;; "agent_thought_chunk" keeps the run open.
+                  (group-id (agent-shell--activity-group-current-id state)))
              (when new-thought-p
                (map-put! state :chunked-group-count (1+ (map-elt state :chunked-group-count)))
                (agent-shell--append-transcript
@@ -3582,57 +3604,48 @@ Clears STATE's `:expanded-activity-group'."
              (agent-shell--append-transcript
               :text (agent-shell--indent-markdown-headers content)
               :file-path agent-shell--transcript-file)
-             (agent-shell--update-fragment
-              :state state
-              ;; Out of turn, key under a dedicated namespace so the
-              ;; thought forms its own fragment rather than coalescing
-              ;; into the previous turn's final thought (same request-count
-              ;; and group-count).  ACP's ContentChunk.messageId is the
-              ;; spec's intended discriminator here, but it is optional and
-              ;; only populated by newer agents, so we group by turn
-              ;; boundary instead.
-              :namespace-id (unless (agent-shell--active-requests-p state) "out-of-turn")
-              :block-id (format "%s-agent_thought_chunk"
-                                (map-elt state :chunked-group-count))
-              :label-left  (concat
-                            (when-let* ((icon (agent-shell--thought-process-icon)))
-                              (concat icon " "))
-                            (propertize "Thinking" 'font-lock-face 'agent-shell-section-heading))
-              ;; Base face for the body.  The markdown styling rendered on
-              ;; top layers its own faces ahead of it, so bold, links and
-              ;; code spans in a thought keep their faces.  Set on both
-              ;; properties for the reason
-              ;; `agent-shell-markdown--mirror-face-to-font-lock-face'
-              ;; gives: fontification clears a plain `face' (it covers a
-              ;; collapsed body long before the renderer, and its mirror,
-              ;; ever sees it), while `font-lock-face' only renders while
-              ;; `font-lock-mode' is on.
-              :body (agent-shell--add-text-properties
-                     content
-                     'face 'agent-shell-thought-body
-                     'font-lock-face 'agent-shell-thought-body)
-              :append (equal (map-elt state :last-entry-type)
-                             "agent_thought_chunk")
-              :expanded agent-shell-thought-process-expand-by-default
-              :group-id group-id
-              :group-label agent-shell--activity-group-label
-              :group-expanded (agent-shell--activity-group-initial-expanded-p)
-              :render-body-images t
-              :above-last-prompt (not (agent-shell--active-requests-p state)))
-             ;; Count this thought and relabel the header so a thought-only
-             ;; group reads "Thinking"/"Thought" instead of the neutral
-             ;; placeholder, and a mixed group can mention it.  Both run once
-             ;; per thought run, not per streamed chunk: the header label
-             ;; depends only on the thought count (advanced here on
-             ;; `new-thought-p') and the group's tool statuses (unchanged
-             ;; while a pure thought run streams), so relabeling on every
-             ;; chunk repeats an identical update and its buffer scan.
-             (when new-thought-p
-               (agent-shell--count-group-thought state group-id)
-               (agent-shell--refresh-activity-group-header state group-id)
-               (agent-shell--sync-activity-group-fold
-                :state state :group-id group-id
-                :namespace-id (unless (agent-shell--active-requests-p state) "out-of-turn"))))
+             ;; Only a thought's first chunk renders synchronously, creating
+             ;; the block with its labels and group.  The rest only append to
+             ;; its body, so they go through the same batching as message
+             ;; chunks rather than re-rendering on every chunk.
+             (if new-thought-p
+                 (progn
+                   (agent-shell--update-fragment
+                    :state state
+                    :namespace-id namespace-id
+                    :block-id (format "%s-agent_thought_chunk"
+                                      (map-elt state :chunked-group-count))
+                    :label-left  (concat
+                                  (when-let* ((icon (agent-shell--thought-process-icon)))
+                                    (concat icon " "))
+                                  (propertize "Thinking" 'font-lock-face 'agent-shell-section-heading))
+                    :body body
+                    :expanded agent-shell-thought-process-expand-by-default
+                    :group-id group-id
+                    :group-label agent-shell--activity-group-label
+                    :group-expanded (agent-shell--activity-group-initial-expanded-p)
+                    :render-body-images t
+                    :above-last-prompt (not (agent-shell--active-requests-p state)))
+                   ;; Count this thought and relabel the header so a
+                   ;; thought-only group reads "Thinking"/"Thought" instead of
+                   ;; the neutral placeholder, and a mixed group can mention
+                   ;; it.  Both run once per thought run, not per streamed
+                   ;; chunk: the header label depends only on the thought
+                   ;; count (advanced here on `new-thought-p') and the group's
+                   ;; tool statuses (unchanged while a pure thought run
+                   ;; streams), so relabeling on every chunk repeats an
+                   ;; identical update and its buffer scan.
+                   (agent-shell--count-group-thought state group-id)
+                   (agent-shell--refresh-activity-group-header state group-id)
+                   (agent-shell--sync-activity-group-fold
+                    :state state :group-id group-id :namespace-id namespace-id))
+               (agent-shell--update-streamed-fragment
+                :state state
+                :namespace-id namespace-id
+                :block-id (format "%s-agent_thought_chunk"
+                                  (map-elt state :chunked-group-count))
+                :body body
+                :above-last-prompt (not (agent-shell--active-requests-p state)))))
            (map-put! state :last-entry-type "agent_thought_chunk"))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "user_message_chunk")
            ;; A user_message_chunk replays a user submission.  Render it
