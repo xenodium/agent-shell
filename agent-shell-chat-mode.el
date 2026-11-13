@@ -337,7 +337,8 @@ so a label following it needs a full pad rather than a single newline."
     (or (= beg (point-min))
         (eq (char-before beg) ?\n))))
 
-(cl-defun agent-shell-chat--ensure-overlay (&key tag beg end props rear-advance
+(cl-defun agent-shell-chat--ensure-overlay (&key tag beg end props front-advance
+                                                 rear-advance
                                                  (anchor-beg beg)
                                                  (anchor-end end))
   "Ensure a TAG overlay spans BEG..END carrying PROPS.
@@ -352,8 +353,8 @@ of our own carries nothing.
 PROPS is an alist of overlay property to value.  Reuses an existing TAG
 overlay overlapping ANCHOR-BEG..ANCHOR-END (moving it when the span
 changed), otherwise creates one.  Reusing, and writing only what
-changed, leaves an unchanged buffer untouched: relabeling runs on every
-agent event, and each overlay write dirties its span for redisplay.
+changed, leaves an unchanged buffer untouched: each overlay write dirties
+its span for redisplay.
 
 Writing only what it is handed also means a reused overlay keeps every
 property PROPS leaves out, whoever wrote it.  A caller drawing a label
@@ -365,14 +366,13 @@ that relabeling heals an overlay a differently drawn label left behind
 ANCHOR-BEG..ANCHOR-END default to the span, and are widened only where
 an overlay is expected to sit somewhere its span no longer covers.
 
-With REAR-ADVANCE non-nil the overlay takes in text inserted at its end,
-so it can hold properties over an input still being typed: relabeling is
-event-driven, so an overlay that stopped at the caret would never grow
-to cover what follows it."
+With FRONT-ADVANCE non-nil, text inserted at the start stays outside the
+overlay.  With REAR-ADVANCE non-nil the overlay takes in text inserted at
+its end, so newly typed input remains covered."
   (let ((overlay (or (seq-find (lambda (overlay)
                                  (eq (overlay-get overlay 'agent-shell-chat--tag) tag))
                                (overlays-in anchor-beg (max anchor-end (1+ anchor-beg))))
-                     (let ((created (make-overlay beg end nil nil rear-advance)))
+                     (let ((created (make-overlay beg end nil front-advance rear-advance)))
                        (overlay-put created 'agent-shell-chat--tag tag)
                        created)))
         ;; `evaporate' is carried only while the span has text to
@@ -795,13 +795,7 @@ above, putting the first line of a multi-line input out of reach of
                (input-indent (cond ((or (not labeled) blank) "")
                                    (marker (agent-shell-chat--draft-indent))
                                    (t agent-shell-chat--body-indent)))
-               ;; The label, closed by the newline it rides rather than by the
-               ;; second half of `pad'.
-               (before (cond ((not labeled) "")
-                             (label-nl (concat lead me-label
-                                               (propertize "\n" 'face
-                                                           'default)))
-                             (t (concat lead me-label pad))))
+               (before (if labeled (concat lead me-label pad) ""))
                ;; One row per covered prompt position, where the prompt is
                ;; long enough to hold them; the overlay covering the prompt
                ;; then starts past the rows rather than under them.
@@ -820,10 +814,10 @@ above, putting the first line of a multi-line input out of reach of
                (split (<= (length label-rows) (- run-end pos)))
                (label-start (if split (+ pos (length label-rows)) pos)))
           ;; Collapse whatever blank lines precede the one the label rides.
-          (when (and label-nl (> label-nl start))
+          (when (and (or live label-nl) (< start (or label-nl pos)))
             (push
              (agent-shell-chat--ensure-overlay
-              :tag 'me-surplus :beg start :end label-nl
+              :tag 'me-surplus :beg start :end (or label-nl pos)
               :props (list (cons 'display "")
                            (cons 'line-prefix "")
                            (cons 'wrap-prefix "")))
@@ -832,44 +826,32 @@ above, putting the first line of a multi-line input out of reach of
           ;; per buffer position, so every row is somewhere `window-start' can
           ;; land (see `agent-shell-chat--label-rows').  The prompt is hidden
           ;; either way, so the rows cost nothing that was being shown.  Falls
-          ;; back to carrying the whole label on the newline above when the
+          ;; back to carrying the whole label on the prompt when the
           ;; prompt is too short to hold a row apiece.
-          (when label-nl
-            (if split
-                (seq-do-indexed
-                 (lambda (row offset)
-                   (push
-                    (agent-shell-chat--ensure-overlay
-                     :tag 'me-label
-                     :beg (+ pos offset) :end (+ pos offset 1)
-                     ;; Both `display' and `before-string' are spelled out
-                     ;; so that a reused overlay cannot keep a label drawn
-                     ;; the other way (see `agent-shell-chat--ensure-overlay').
-                     :props (append
-                             (agent-shell-chat--row-props row)
-                             ;; Above the overlay covering the prompt, whose
-                             ;; `line-prefix' would otherwise indent the label
-                             ;; with the input it belongs beside.
-                             (list (cons 'priority 100)
-                                   (cons 'line-prefix "")
-                                   (cons 'wrap-prefix ""))))
-                    kept))
-                 label-rows)
-              (push
-               (agent-shell-chat--ensure-overlay
-                :tag 'me-label :beg label-nl :end pos
-                :props (list (cons 'before-string before)
-                             ;; Spelled out for the same reason, as `nil'
-                             ;; rather than "": this overlay covers the
-                             ;; newline above, which an empty `display'
-                             ;; would hide along with it.
-                             (cons 'display nil)
-                             (cons 'line-prefix "")
-                             (cons 'wrap-prefix "")))
-               kept)))
+          (when (and label-nl split)
+            (seq-do-indexed
+             (lambda (row offset)
+               (push
+                (agent-shell-chat--ensure-overlay
+                 :tag 'me-label :front-advance t
+                 :beg (+ pos offset) :end (+ pos offset 1)
+                 ;; Both `display' and `before-string' are spelled out
+                 ;; so that a reused overlay cannot keep a label drawn
+                 ;; the other way (see `agent-shell-chat--ensure-overlay').
+                 :props (append
+                         (agent-shell-chat--row-props row)
+                         ;; Above the overlay covering the prompt, whose
+                         ;; `line-prefix' would otherwise indent the label
+                         ;; with the input it belongs beside.
+                         (list (cons 'priority 100)
+                               (cons 'line-prefix "")
+                               (cons 'wrap-prefix ""))))
+                kept))
+             label-rows))
           (push
            (agent-shell-chat--ensure-overlay
-            :tag 'me :beg (if label-nl label-start start) :end end
+            :tag 'me :beg (if (or live label-nl) label-start start) :end end
+            :front-advance t
             ;; Anchor on the prompt run, which the span may start before: the
             ;; span's start flips with `label-nl', and reuse has to survive
             ;; that flip rather than strand the overlay it should have moved.
@@ -877,7 +859,7 @@ above, putting the first line of a multi-line input out of reach of
             ;; Replace the covered prompt: with the live prompt's marker when
             ;; there is one, otherwise with \"\" to hide it.
             ;;
-            ;; Where a newline above carries the label, no *inserted* string
+            ;; Where the label has its own rows, no inserted string
             ;; stands at this position: a `before-string' here would keep
             ;; `previous-line' from settling on the input's first line.  The
             ;; marker is safe as a `display' because it stands on the covered
@@ -898,7 +880,9 @@ above, putting the first line of a multi-line input out of reach of
             ;; repeat down every row, marking or indenting the label along
             ;; with the input.
             :props (list (cons 'before-string
-                               (if label-nl "" (concat before (or marker ""))))
+                               (cond ((not label-nl) (concat before (or marker "")))
+                                     ((not split) (apply #'concat label-rows))
+                                     (t "")))
                          (cons 'display (if label-nl (or marker "") ""))
                          (cons 'line-prefix
                                (if (and label-nl (not marker)) input-indent ""))
@@ -1116,9 +1100,7 @@ newline would merge the input line into the response for line motion
 
 (defun agent-shell-chat--relabel ()
   "Apply the `Me' and agent labels to the current buffer (idempotent).
-Scans the whole buffer; cheap in practice since it walks property
-changes and skips already-labeled runs, but could be scoped to the
-active turn if it ever shows on very long conversations."
+Labels update in place after prompt or session changes."
   (agent-shell-chat--label-prompts)
   (agent-shell-chat--label-responses))
 
@@ -1138,16 +1120,24 @@ flips between hidden and `Me' immediately across all shells."
       (setq agent-shell-chat--relabel-timer nil)
       (agent-shell-chat--relabel))))
 
-(defun agent-shell-chat--schedule-relabel (&rest _)
+(defun agent-shell-chat--label-section-response (&rest _)
+  "Update response headings after a rendered section."
+  (save-restriction
+    (widen)
+    (agent-shell-chat--label-responses)))
+
+(defun agent-shell-chat--schedule-relabel (&optional event)
   "Schedule a coalesced, deferred relabel of the current buffer.
 
 Deferred so the triggering change's own text properties (e.g. the prompt
 face shell-maker applies after inserting) are in place; coalesced so a
-burst yields a single relabel.  Runs from the event subscription (which
-covers submissions, streaming, turn completion and `session-restored'),
-`shell-maker-finish-output-hook' (`clear') and
-`agent-shell-section-functions' (fragments rendered with no event)."
+burst yields a single relabel.  EVENT is the shell event alist, for
+example \='((:event . input-submitted)).  Streaming events are skipped:
+prompt overlays follow insertions, and the section hook updates response
+headings.  Also runs without EVENT from `shell-maker-finish-output-hook'."
   (when (and agent-shell-chat--labeled
+             (not (memq (map-elt event :event)
+                        '(agent-message-chunk tool-call-update)))
              (not agent-shell-chat--relabel-timer))
     (setq agent-shell-chat--relabel-timer
           (run-at-time 0 nil #'agent-shell-chat--relabel-buffer (current-buffer)))))
@@ -1194,13 +1184,12 @@ EVENT is an alist as that hook documents, for example:
   "Turn on chat labels in the current buffer and keep them in sync.
 
 Backfills existing turns, subscribes to shell events so a coalesced
-relabel tracks submissions, streaming responses, turn completion and
+relabel tracks submissions, turn completion and
 reloads (`session-restored'), and adds a buffer-local
 `shell-maker-finish-output-hook' so `clear' and the other internal
 commands (which reprint the prompt with no `agent-shell' event) relabel
-too.  A buffer-local `agent-shell-section-functions' relabels after
-fragments rendered with no event, which the live prompt's label would
-otherwise hide."
+too.  A buffer-local `agent-shell-section-functions' updates response
+headings as output arrives."
   (unless agent-shell-chat--labeled
     (setq-local agent-shell-chat--labeled t)
     ;; Chat mode draws its own busy frame (see `agent-shell-chat--live-marker').
@@ -1213,7 +1202,7 @@ otherwise hide."
     (add-hook 'shell-maker-finish-output-hook
               #'agent-shell-chat--schedule-relabel nil t)
     (add-hook 'agent-shell-section-functions
-              #'agent-shell-chat--schedule-relabel nil t)
+              #'agent-shell-chat--label-section-response nil t)
     (add-hook 'agent-shell-prompt-queue-setup-minibuffer-functions
               #'agent-shell-chat--decorate-queued-prompt)))
 
@@ -1222,7 +1211,7 @@ otherwise hide."
   (remove-hook 'shell-maker-finish-output-hook
                #'agent-shell-chat--schedule-relabel t)
   (remove-hook 'agent-shell-section-functions
-               #'agent-shell-chat--schedule-relabel t)
+               #'agent-shell-chat--label-section-response t)
   (when agent-shell-chat--subscription
     (agent-shell-unsubscribe :subscription agent-shell-chat--subscription))
   (when (timerp agent-shell-chat--relabel-timer)
