@@ -3699,13 +3699,13 @@ remaining subscribers nor propagate out of `agent-shell--emit-event'."
               ((symbol-function 'agent-shell-status)
                (lambda (&rest _) status))
               ((symbol-function 'system-sleep-block-sleep)
-               (lambda (&rest _) (setq blocked (1+ blocked)) 'token))
+               (lambda (&rest _) (setq blocked (1+ blocked)) '(:system test)))
               ((symbol-function 'system-sleep-unblock-sleep)
                (lambda (_token) (setq blocked (1- blocked)))))
       ;; Busy blocks sleep.
       (setq status 'busy)
       (agent-shell--emit-event :event 'input-submitted)
-      (should (equal (map-elt state :sleep-token) 'token))
+      (should (equal (map-elt state :sleep-token) '(:system test)))
       (should (= blocked 1))
 
       ;; Blocked (waiting on a permission) is waiting on user input, so
@@ -3741,7 +3741,7 @@ remaining subscribers nor propagate out of `agent-shell--emit-event'."
               ((symbol-function 'agent-shell-status)
                (lambda (&rest _) 'busy))
               ((symbol-function 'system-sleep-block-sleep)
-               (lambda (&rest _) (setq blocked (1+ blocked)) 'token))
+               (lambda (&rest _) (setq blocked (1+ blocked)) '(:system test)))
               ((symbol-function 'system-sleep-unblock-sleep)
                (lambda (_token) (setq blocked (1- blocked)))))
       (agent-shell--emit-event :event 'input-submitted)
@@ -3810,7 +3810,7 @@ remaining subscribers nor propagate out of `agent-shell--emit-event'."
               ((symbol-function 'agent-shell-status)
                (lambda (&rest _) 'busy))
               ((symbol-function 'system-sleep-block-sleep)
-               (lambda (&rest _) (setq blocked (1+ blocked)) 'token))
+               (lambda (&rest _) (setq blocked (1+ blocked)) '(:system test)))
               ((symbol-function 'system-sleep-unblock-sleep)
                (lambda (_token) (setq blocked (1- blocked)))))
       (agent-shell--emit-event :event 'input-submitted)
@@ -3819,6 +3819,38 @@ remaining subscribers nor propagate out of `agent-shell--emit-event'."
 
       (agent-shell--emit-event :event 'clean-up)
       (should (= blocked 0)))))
+
+(ert-deftest agent-shell--sync-system-sleep-non-token-not-released-test ()
+  "Test a non-token block result is reported and never released.
+`system-sleep-block-sleep' returns `warn''s t when, for example, logind
+requires interactive authorization."
+  ;; The `cl-letf' below is what makes
+  ;; `agent-shell--system-sleep-available-p' return non-nil, so these
+  ;; run on Emacs < 31 too, where the library is absent.
+  (let ((unblock-calls 0)
+        (messages nil)
+        (state (list (cons :buffer (current-buffer))
+                     (cons :event-subscriptions nil)
+                     (cons :sleep-token nil)))
+        (agent-shell-inhibit-system-sleep t))
+    (cl-letf (((symbol-function 'agent-shell--state)
+               (lambda () state))
+              ((symbol-function 'agent-shell-status)
+               (lambda (&rest _) 'busy))
+              ((symbol-function 'system-sleep-block-sleep)
+               (lambda (&rest _) t))
+              ((symbol-function 'system-sleep-unblock-sleep)
+               (lambda (_token) (setq unblock-calls (1+ unblock-calls))))
+              ((symbol-function 'message)
+               (lambda (format-string &rest args)
+                 (push (apply #'format format-string args) messages))))
+      (agent-shell--emit-event :event 'input-submitted)
+      (should-not (map-elt state :sleep-token))
+      (should (seq-find (lambda (msg)
+                          (string-prefix-p "Sleep inhibit unavailable" msg))
+                        messages))
+      (agent-shell--emit-event :event 'clean-up)
+      (should (= unblock-calls 0)))))
 
 (ert-deftest agent-shell-subscribe-to-prompt-ready-test ()
   "Test subscribing to `prompt-ready' event."

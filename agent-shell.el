@@ -7260,8 +7260,15 @@ recorded in STATE and released by `agent-shell--uninhibit-sleep'."
     ;; Report the failure so the user can set `agent-shell-inhibit-system-sleep'
     ;; to nil to opt out.
     (condition-case err
-        (when-let* ((token (system-sleep-block-sleep "agent-shell (agent busy)" t)))
-          (map-put! state :sleep-token token))
+        (let ((token (system-sleep-block-sleep "agent-shell (agent busy)" t)))
+          (cond
+           ((consp token)
+            (map-put! state :sleep-token token))
+           ;; Some failures (e.g. logind requiring interactive polkit
+           ;; authorization) don't signal.  `system-sleep' warns instead
+           ;; and returns `warn''s t, which isn't a token to release later.
+           (token
+            (message "Sleep inhibit unavailable.  Set `agent-shell-inhibit-system-sleep' to nil to disable."))))
       (error
        (message "Sleep inhibit unavailable (%s).  Set `agent-shell-inhibit-system-sleep' to nil to disable."
                 (error-message-string err))))))
