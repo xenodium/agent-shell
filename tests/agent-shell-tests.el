@@ -9994,6 +9994,27 @@ Then [after](https://after.example.com)
     (agent-shell-next-item)
     (should (looking-at-p "two"))))
 
+(ert-deftest agent-shell-next-item-lands-inside-a-blockquote ()
+  "Item navigation stops on a quote's first quoted character, past its bars."
+  (agent-shell-tests--with-rendered-shell
+      "Intro
+
+> > Quoted **text**
+> more
+
+After [link](https://after.com/x)
+"
+    (agent-shell-next-item)
+    (should (looking-at-p "Quoted"))
+    (agent-shell-next-item)
+    (should (looking-at-p "link"))
+    (agent-shell-previous-item)
+    (should (looking-at-p "Quoted"))
+    ;; From further inside the quote, back up to its start.
+    (search-forward "more")
+    (agent-shell-previous-item)
+    (should (looking-at-p "Quoted"))))
+
 (ert-deftest agent-shell-table-cells-claim-no-keys-of-their-own ()
   "A rendered table leaves the buffer's keys alone.
 

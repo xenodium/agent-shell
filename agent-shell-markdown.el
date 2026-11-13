@@ -1800,6 +1800,166 @@ For example, 2 returns \"▌ ▌ \" in face `agent-shell-markdown-blockquote'."
   (propertize (apply #'concat (make-list depth "▌ "))
               'face 'agent-shell-markdown-blockquote))
 
+(defvar-keymap agent-shell-markdown--blockquote-map
+  :doc "Keymap active over a rendered blockquote."
+  "RET" #'agent-shell-markdown-copy-blockquote-at-point)
+
+(defun agent-shell-markdown--blockquote-hint (_window _old-pos sensor-action)
+  "Echo the key copying a blockquote as the cursor enters one.
+
+A `cursor-sensor-functions' entry, so SENSOR-ACTION is `entered' or
+`left'.  Named rather than a closure so every line of a quote carries
+the same function, and moving between them doesn't echo again.
+
+For example, entering a quote echoes \"Press RET to copy quote\"."
+  (when-let* (((eq sensor-action 'entered))
+              (hint (agent-shell-markdown--action-hint
+                     :action #'agent-shell-markdown-copy-blockquote-at-point
+                     :keymap agent-shell-markdown--blockquote-map
+                     :verb "copy quote")))
+    (message "%s" hint)))
+
+(cl-defun agent-shell-markdown--tag-blockquote (&key start end)
+  "Mark [START, END) as part of a rendered blockquote.
+
+Tags it `agent-shell-markdown-blockquote-rendered', which item
+navigation and `agent-shell-markdown-blockquote-at-point' read, and
+binds RET to copy the quote wherever nothing inside it (a link, a code
+block's label) already binds keys of its own.
+
+For example, tagging the line \"> see docs\\n\", where `docs' renders
+a link, leaves `docs' opening its URL on RET and the rest of the line
+copying the quote."
+  (put-text-property start end 'agent-shell-markdown-blockquote-rendered t)
+  (let ((pos start))
+    (while (< pos end)
+      (let ((next (next-single-property-change pos 'keymap nil end)))
+        (unless (get-text-property pos 'keymap)
+          (add-text-properties pos next
+                               (list 'keymap agent-shell-markdown--blockquote-map
+                                     'cursor-sensor-functions
+                                     '(agent-shell-markdown--blockquote-hint))))
+        (setq pos next))))
+  (dolist (property '(agent-shell-markdown-blockquote-rendered
+                      keymap
+                      cursor-sensor-functions))
+    (agent-shell-markdown--add-rear-nonsticky start end property)))
+
+(defun agent-shell-markdown--blockquote-range (position)
+  "Return the range of the rendered blockquote holding POSITION, or nil.
+
+A quote spans every line tagged `agent-shell-markdown-blockquote-rendered'
+in a row, including any code block panel and framing gap inside it.
+
+For example, with \"> quote\\nafter\\n\" rendered from position 1, a
+POSITION of 3 returns:
+
+  ((:start . 1)
+   (:end . 9))"
+  (when (and (< position (point-max))
+             (get-text-property position 'agent-shell-markdown-blockquote-rendered))
+    `((:start . ,(previous-single-property-change
+                  (1+ position) 'agent-shell-markdown-blockquote-rendered
+                  nil (point-min)))
+      (:end . ,(next-single-property-change
+                position 'agent-shell-markdown-blockquote-rendered
+                nil (point-max))))))
+
+(cl-defun agent-shell-markdown--blockquote-entry (&key range)
+  "Return the first quoted character in RANGE, or nil when it holds none.
+
+RANGE is a blockquote range, as `agent-shell-markdown--blockquote-range'
+returns.  Skips the `>' markers, whitespace and inserted chrome (a code
+block panel's label), so navigation lands on the quote's text.
+
+For example, in a quote rendered from \"> > hello\", returns the
+position of `h'."
+  (save-excursion
+    (goto-char (map-elt range :start))
+    (while (and (< (point) (map-elt range :end))
+                (or (memq (char-after) '(?\s ?\t ?\n ?>))
+                    (equal (get-text-property (point) 'agent-shell-markdown-source)
+                           "")))
+      (forward-char 1))
+    (when (< (point) (map-elt range :end))
+      (point))))
+
+(cl-defun agent-shell-markdown--search-visible-blockquote (&key backwards)
+  "From point, return the entry of the nearest visible blockquote, or nil.
+
+The entry is the quote's first quoted character (see
+`agent-shell-markdown--blockquote-entry').  Searches forward, or
+backwards when BACKWARDS is non-nil.  The quote point is in counts while
+its entry still lies ahead in that direction: forward from its `>'
+markers, or backwards from past its entry, as point inside a source
+block returns to its label.  Quotes hidden inside collapsed text are
+skipped, as for `agent-shell-markdown--next-visible-image'.
+
+For example, with point on \"Intro\" in:
+
+  Intro
+  > first
+  > second
+
+searching forward returns the position of `f' in \"first\", and so does
+searching backwards with point on \"second\"."
+  (let ((from (point)))
+    (or (when-let* ((range (agent-shell-markdown--blockquote-range from))
+                    (entry (agent-shell-markdown--blockquote-entry :range range))
+                    ((if backwards (< entry from) (> entry from))))
+          entry)
+        (catch 'found
+          (while-let ((start (agent-shell-markdown--search-visible
+                              :property 'agent-shell-markdown-blockquote-rendered
+                              :backwards backwards)))
+            (when-let* ((entry (agent-shell-markdown--blockquote-entry
+                                :range (agent-shell-markdown--blockquote-range start))))
+              (throw 'found entry)))))))
+
+(defun agent-shell-markdown--next-visible-blockquote ()
+  "From point, return the entry of the next visible blockquote, or nil.
+
+For example, with point before a quote rendered from \"> > hello\",
+returns the position of `h'.  See
+`agent-shell-markdown--search-visible-blockquote'."
+  (agent-shell-markdown--search-visible-blockquote))
+
+(defun agent-shell-markdown--previous-visible-blockquote ()
+  "From point, return the entry of the previous visible blockquote, or nil.
+
+For example, with point after a quote rendered from \"> > hello\",
+returns the position of `h'.  See
+`agent-shell-markdown--search-visible-blockquote'."
+  (agent-shell-markdown--search-visible-blockquote :backwards t))
+
+(defun agent-shell-markdown-blockquote-at-point (&optional pos)
+  "Return the markdown quoted by the rendered blockquote at POS (or point).
+
+That's the quote's original markdown, inline markup and fenced code
+blocks included, with its own `>' markers removed.  A quote nested
+inside keeps its markers, being part of what's quoted.  Returns nil
+when POS is not in a rendered blockquote.
+
+For example, a quote rendered from \"> Use **this**:\\n> > nested\\n\"
+returns \"Use **this**:\\n> nested\"."
+  (when-let* ((range (agent-shell-markdown--blockquote-range (or pos (point)))))
+    (string-trim-right
+     (agent-shell-markdown--strip-blockquote-markers
+      (agent-shell-markdown-reconstruct (map-elt range :start) (map-elt range :end))
+      1)
+     "\n+")))
+
+(defun agent-shell-markdown-copy-blockquote-at-point (&optional pos)
+  "Copy the markdown quoted by the blockquote at POS (or point) to the kill ring.
+Copies it as `agent-shell-markdown-blockquote-at-point' returns it.
+Signals a `user-error' when point is not in a rendered blockquote."
+  (interactive)
+  (if-let* ((text (agent-shell-markdown-blockquote-at-point pos)))
+      (progn
+        (kill-new text)
+        (message "Copied quote"))
+    (user-error "No blockquote at point")))
+
 (cl-defun agent-shell-markdown--style-blockquotes (&key avoid-ranges complete)
   "Render `>'-prefixed lines as blockquotes with vertical bars.
 
@@ -1824,6 +1984,10 @@ end-of-buffer without `\\n' is treated as still streaming and
 left raw, matching the header behaviour.  Pass COMPLETE non-nil
 when no more text will be appended, so that last line renders too
 \(e.g. a response ending on a quoted line).
+
+Each line is also tagged as quoted (see
+`agent-shell-markdown--tag-blockquote'), so RET copies the quote and
+item navigation stops on it.
 
 Lines inside any of AVOID-RANGES (e.g. fenced code blocks) are
 left untouched."
@@ -1857,7 +2021,8 @@ left untouched."
                                   t)
           (add-text-properties line-start line-end
                                '(agent-shell-markdown-frozen t
-                                                             rear-nonsticky (agent-shell-markdown-frozen))))))))
+                                                             rear-nonsticky (agent-shell-markdown-frozen)))
+          (agent-shell-markdown--tag-blockquote :start line-start :end line-end))))))
 
 (defun agent-shell-markdown--display-width (&optional window)
   "Return a usable display width (in columns) for rendering.
@@ -2121,7 +2286,12 @@ with `emacs-lisp-mode' face properties on the body and a
                 (unless (zerop blockquote-depth)
                   (put-text-property (marker-position body-start) panel-bottom
                                      'agent-shell-markdown-blockquote-depth
-                                     blockquote-depth)))))))))
+                                     blockquote-depth)
+                  ;; The panel is part of the quote holding it, so RET
+                  ;; on its body copies the whole quote.
+                  (agent-shell-markdown--tag-blockquote
+                   :start (marker-position body-start)
+                   :end panel-bottom)))))))))
 
 (defconst agent-shell-markdown--table-line-regexp
   (rx line-start
@@ -2598,8 +2768,10 @@ shows \"  ▌ ▌ \" and copies as \"> >\\n\"."
                               wrap-prefix nil
                               agent-shell-markdown-source-block-rendered nil
                               agent-shell-markdown-list-rendered nil
-                              agent-shell-markdown-blockquote-depth nil))
+                              agent-shell-markdown-blockquote-depth nil
+                              agent-shell-markdown-blockquote-rendered nil))
     (when blockquote-depth
+      (agent-shell-markdown--tag-blockquote :start start :end (point))
       ;; Same plain cols as a source block panel's `line-prefix', so the
       ;; gap's bars line up with the panel's.
       (let ((prefix (concat "  " (agent-shell-markdown--blockquote-bars

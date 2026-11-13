@@ -5634,6 +5634,98 @@ for a fully-selected buffer."
     (should (equal (agent-shell-markdown-link-url-at-point)
                    "https://example.com"))))
 
+;;; Navigating and copying rendered blockquotes.
+
+(ert-deftest agent-shell-markdown-blockquote-at-point-copies-markup ()
+  ;; The quote copies as its markdown, without its own `>' markers.
+  ;; A nested quote keeps its markers, a code block its fences.
+  (with-temp-buffer
+    (insert "Intro
+
+> Use **this**:
+>
+> ```sh
+> ls
+> ```
+>
+> > nested
+
+After
+")
+    (agent-shell-markdown-replace-markup :force t)
+    (goto-char (point-min))
+    (dolist (text '("Use" "ls" "nested"))
+      (search-forward text)
+      (should (equal (agent-shell-markdown-blockquote-at-point (1- (point)))
+                     "Use **this**:
+
+```sh
+ls
+```
+
+> nested")))
+    (search-forward "After")
+    (should-not (agent-shell-markdown-blockquote-at-point (1- (point))))))
+
+(ert-deftest agent-shell-markdown-blockquote-binds-ret-to-copy ()
+  ;; RET anywhere in the quote copies it, except where something in it
+  ;; binds keys of its own: a link opens, a code block's label copies
+  ;; the code.
+  (with-temp-buffer
+    (insert "> see [docs](https://docs.com/x)
+> ```sh
+> ls
+> ```
+")
+    (agent-shell-markdown-replace-markup :force t)
+    (goto-char (point-min))
+    (should (eq (get-text-property (point) 'keymap)
+                agent-shell-markdown--blockquote-map))
+    (search-forward "docs")
+    (should-not (eq (get-text-property (1- (point)) 'keymap)
+                    agent-shell-markdown--blockquote-map))
+    (search-forward "⧉")
+    (should-not (eq (get-text-property (1- (point)) 'keymap)
+                    agent-shell-markdown--blockquote-map))
+    (search-forward "ls")
+    (should (eq (get-text-property (1- (point)) 'keymap)
+                agent-shell-markdown--blockquote-map))))
+
+(ert-deftest agent-shell-markdown-blockquote-ends-at-its-last-line ()
+  ;; A gap framing a code block after the quote is not part of it.
+  (with-temp-buffer
+    (insert "> quote
+```sh
+ls
+```
+")
+    (agent-shell-markdown-replace-markup :force t)
+    (should (equal (agent-shell-markdown--blockquote-range (point-min))
+                   `((:start . ,(point-min))
+                     (:end . ,(+ (point-min) (length "> quote\n"))))))))
+
+(ert-deftest agent-shell-markdown-next-visible-blockquote ()
+  ;; Navigation lands past the bars, on the quote's text, then moves on
+  ;; to the next quote.
+  (with-temp-buffer
+    (insert "Intro
+
+>> first
+
+middle
+
+> second
+")
+    (agent-shell-markdown-replace-markup :force t)
+    (goto-char (point-min))
+    (goto-char (agent-shell-markdown--next-visible-blockquote))
+    (should (looking-at-p "first"))
+    (goto-char (agent-shell-markdown--next-visible-blockquote))
+    (should (looking-at-p "second"))
+    (should-not (agent-shell-markdown--next-visible-blockquote))
+    (goto-char (agent-shell-markdown--previous-visible-blockquote))
+    (should (looking-at-p "first"))))
+
 ;;; Exposing rendered code block bodies at point.
 
 (ert-deftest agent-shell-markdown-source-block-at-point ()

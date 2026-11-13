@@ -6003,9 +6003,10 @@ which mid-turn is past whatever the user is typing."
   "Go to next item.
 
 Could be a prompt, an expandable item, a displayed image, a rendered
-link, a source block, or a rendered markdown table.  A table is entered
-at its first cell, then walked one cell (and one link inside a cell) at
-a time, moving on to the item after it once past its last one.
+link, a source block, a blockquote, or a rendered markdown table.  A
+table is entered at its first cell, then walked one cell (and one link
+inside a cell) at a time, moving on to the item after it once past its
+last one.
 
 With prefix LEAVE-TABLE, carry on from the end of the table point is
 in, landing on the item after it rather than on its next cell.  A wide
@@ -6048,6 +6049,8 @@ insert the character instead."
                        (agent-shell-markdown--next-visible-link)))
            (source-block-pos (save-mark-and-excursion
                                (agent-shell-markdown--next-visible-source-block)))
+           (blockquote-pos (save-mark-and-excursion
+                            (agent-shell-markdown--next-visible-blockquote)))
            (table-pos (save-mark-and-excursion
                         (agent-shell-markdown--search-visible
                          :property 'agent-shell-markdown-table-cell-start)))
@@ -6063,6 +6066,7 @@ insert the character instead."
                                                            image-pos
                                                            link-pos
                                                            source-block-pos
+                                                           blockquote-pos
                                                            table-pos)))))
            (next-pos (when positions
                        (seq-min positions))))
@@ -6076,9 +6080,9 @@ insert the character instead."
   "Go to previous item.
 
 Could be a prompt, an expandable item, a displayed image, a rendered
-link, a source block, or a rendered markdown table.  A table above is
-entered at its first cell, so navigating again from there leaves it for
-the item above it.
+link, a source block, a blockquote, or a rendered markdown table.  A
+table above is entered at its first cell, so navigating again from
+there leaves it for the item above it.
 
 With prefix LEAVE-TABLE, carry on from the start of the table point is
 in, as `agent-shell-next-item' does from its end.
@@ -6119,6 +6123,8 @@ insert the character instead."
            (source-block-pos
             (save-mark-and-excursion
               (agent-shell-markdown--previous-visible-source-block)))
+           (blockquote-pos (save-mark-and-excursion
+                            (agent-shell-markdown--previous-visible-blockquote)))
            (table-pos (save-mark-and-excursion
                         (agent-shell-markdown--search-visible
                          :property 'agent-shell-markdown-table-cell-start
@@ -6135,6 +6141,7 @@ insert the character instead."
                                                            image-pos
                                                            link-pos
                                                            source-block-pos
+                                                           blockquote-pos
                                                            table-pos)))))
            (next-pos (when positions
                        (seq-max positions))))
