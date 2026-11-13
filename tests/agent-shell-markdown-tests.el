@@ -437,6 +437,24 @@
                    (" title" (agent-shell-markdown-header-2))
                    ("\n" nil)))))
 
+(ert-deftest agent-shell-markdown-convert-header-flush-against-source-block ()
+  ;; A header with no blank line before a fence keeps its title, and
+  ;; the fence still renders as a panel (issue #947).
+  (dolist (case '(("# H\n```org\nB\n```\n" "H" agent-shell-markdown-header-1)
+                  ("###### H\n```org\nB\n```\n" "H" agent-shell-markdown-header-6)
+                  ("> # H\n```org\nB\n```\n" "> H" agent-shell-markdown-header-1)
+                  ("```sh\nls\n```\n# H\n```org\nB\n```\n" "H"
+                   agent-shell-markdown-header-1)))
+    (ert-info ((format "Markdown: %S" (car case)))
+      (let ((s (agent-shell-markdown-convert (car case))))
+        (should (string-search (concat (nth 1 case) "\n") s))
+        (should (memq (nth 2 case)
+                      (ensure-list (get-text-property (string-search "H" s)
+                                                      'face s))))
+        (should-not (string-search "```" s))
+        (should (get-text-property (string-search "B" s)
+                                   'agent-shell-markdown-source-block-rendered s))))))
+
 (ert-deftest agent-shell-markdown-convert-fenced-block-protects-markup ()
   (should (equal (agent-shell-markdown--deconstruct
                   (agent-shell-markdown-convert

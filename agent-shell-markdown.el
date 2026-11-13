@@ -1010,33 +1010,25 @@ left for `agent-shell-markdown--style-blockquotes' to draw as a bar."
                      markup-start markup-end avoid-ranges)))
         (if avoid
             (goto-char (cdr avoid))
-          (let* ((level (- (match-end 2) (match-beginning 2)))
-                 (text (buffer-substring (match-beginning 3) (match-end 3)))
-                 (source (unless (get-text-property markup-start
-                                                    'agent-shell-markdown-source)
-                           (agent-shell-markdown-reconstruct
-                            markup-start (match-end 3))))
-                 ;; `text' keeps the title's own properties.  Carry the newline
-                 ;; separately so its trailing-whitespace invisibility does not
-                 ;; hide the title.
-                 (terminator (match-string-no-properties 4))
-                 (newline-properties
-                  (unless (string-empty-p terminator)
-                    (agent-shell-markdown--carry-properties (1- markup-end)))))
-            (delete-region markup-start markup-end)
-            (goto-char markup-start)
-            (insert text)
-            (let ((end (point)))
-              (insert terminator)
-              (when newline-properties
-                (add-text-properties end (point) newline-properties))
-              (add-face-text-property
-               markup-start end
-               (intern (format "agent-shell-markdown-header-%d"
-                               (min (max level 1) 6))))
-              (when source
-                (put-text-property markup-start end
-                                   'agent-shell-markdown-source source)))))))))
+          (let ((level (- (match-end 2) (match-beginning 2)))
+                (title-end (copy-marker (match-end 3)))
+                (source (unless (get-text-property markup-start
+                                                   'agent-shell-markdown-source)
+                          (agent-shell-markdown-reconstruct
+                           markup-start (match-end 3)))))
+            ;; Delete just the `#' prefix, leaving the title and its
+            ;; newline in place.  Rewriting the whole line would drag a
+            ;; marker at the next line's start (a fenced block's, say)
+            ;; back onto the title.
+            (delete-region markup-start (match-beginning 3))
+            (add-face-text-property
+             markup-start title-end
+             (intern (format "agent-shell-markdown-header-%d"
+                             (min (max level 1) 6))))
+            (when source
+              (put-text-property markup-start title-end
+                                 'agent-shell-markdown-source source))
+            (set-marker title-end nil)))))))
 
 (cl-defun agent-shell-markdown--style-inline-code (&key avoid-ranges)
   "Strip backticks from complete inline `X` spans and face the body.
