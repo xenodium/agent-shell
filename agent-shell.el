@@ -6170,22 +6170,33 @@ composing a prompt."
 With `:INHERIT-ENV' t, also inherit system environment (as per `setenv')
 With `:LOAD-ENV' PATH-OR-PATHS, load .env files from given path(s).
 
+A value may also be a function taking no arguments.  It is called when
+the agent starts rather than now, which suits secrets that aren't
+available yet (for example, a password store still locked at init).
+Such a value is kept as a (NAME . FUNCTION) element until
+`agent-shell--resolve-environment-variables' calls it.
+
 For example:
 
   (agent-shell-make-environment-variables
     \"PATH\" \"/usr/bin\"
     \"HOME\" \"/home/user\"
+    \"SECRET\" (lambda ()
+                 (auth-source-pick-first-password :host \"example.org\"))
     :load-env \"~/.env\")
 
 Returns:
 
    (\"PATH=/usr/bin\"
-    \"HOME=/home/user\")."
+    \"HOME=/home/user\"
+    (\"SECRET\" . (lambda () ...)))."
   (unless (zerop (mod (length vars) 2))
     (error "`agent-shell-make-environment' must receive complete pairs"))
   (append (mapcan (lambda (pair)
                     (unless (keywordp (car pair))
-                      (list (format "%s=%s" (car pair) (cadr pair)))))
+                      (list (if (functionp (cadr pair))
+                                (cons (car pair) (cadr pair))
+                              (format "%s=%s" (car pair) (cadr pair))))))
                   (seq-partition vars 2))
           (when load-env
             (let ((paths (if (listp load-env) load-env (list load-env))))
@@ -6205,6 +6216,36 @@ Returns:
                       paths)))
           (when inherit-env
             process-environment)))
+
+(cl-defun agent-shell--resolve-environment-variables (&key environment-variables on-failure)
+  "Return ENVIRONMENT-VARIABLES with deferred values resolved.
+
+Strings are kept as is.  Each (NAME . FUNCTION) element, as made by
+`agent-shell-make-environment-variables', becomes \"NAME=VALUE\" with
+VALUE from calling FUNCTION.  An element whose FUNCTION signals or
+returns nil is omitted, and ON-FAILURE is called with an alist holding
+its :name and the error :message.
+
+For example:
+
+  (agent-shell--resolve-environment-variables
+   :environment-variables (list \"A=1\" (cons \"B\" (lambda () \"2\"))))
+  ;; => (\"A=1\" \"B=2\")"
+  (seq-mapcat (lambda (variable)
+                (if (stringp variable)
+                    (list variable)
+                  (condition-case err
+                      (list (format "%s=%s"
+                                    (car variable)
+                                    (or (funcall (cdr variable))
+                                        (error "Function returned nil"))))
+                    (error
+                     (when on-failure
+                       (funcall on-failure
+                                `((:name . ,(car variable))
+                                  (:message . ,(error-message-string err)))))
+                     nil))))
+              environment-variables))
 
 (defvar-local agent-shell--header-cache nil
   "Cache for graphical headers (no need for regenerating regularly).
@@ -7354,6 +7395,36 @@ the original EVENT as :idle-event."
 
 ;;; Initialization
 
+(defun agent-shell--resolve-client-environment-variables ()
+  "Resolve the deferred environment variables of the shell's client.
+
+Resolving here, rather than in the client maker, calls each deferred
+value once per agent start.  `agent-shell--start' also calls the client
+maker to validate the agent's executable, and secrets must not be
+looked up (or prompted for) on those calls.
+
+Values that fail to resolve are left out of the agent's environment and
+reported in a warning above the prompt."
+  (when-let* ((client (map-elt (agent-shell--state) :client))
+              ((map-contains-key client :environment-variables)))
+    (let* ((failures nil)
+           (resolved (agent-shell--resolve-environment-variables
+                      :environment-variables (map-elt client :environment-variables)
+                      :on-failure (lambda (failure)
+                                    (push (format "%s: %s"
+                                                  (map-elt failure :name)
+                                                  (map-elt failure :message))
+                                          failures)))))
+      (map-put! client :environment-variables resolved)
+      (when failures
+        (agent-shell--update-bootstrapping-fragment
+         :state (agent-shell--state)
+         :block-id "environment-unresolved"
+         :body (agent-shell--make-boxed-message
+                :text (format "Warning: Could not resolve environment variables (omitted):
+
+%s" (string-join (nreverse failures) "\n"))))))))
+
 (cl-defun agent-shell--initialize-client ()
   "Initialize ACP client."
   (agent-shell--update-bootstrapping-fragment
@@ -7369,6 +7440,7 @@ the original EVENT as :idle-event."
         (map-put! (agent-shell--state)
                   :client (funcall (map-elt agent-shell--state :client-maker)
                                    (map-elt agent-shell--state :buffer)))
+        (agent-shell--resolve-client-environment-variables)
         (agent-shell--emit-event :event 'init-client)
         t)
     (agent-shell--update-fragment

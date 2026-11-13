@@ -153,5 +153,31 @@
                                    '(:params _meta))
                    meta))))
 
+(ert-deftest agent-shell-anthropic-make-claude-client-deferred-environment-test ()
+  "Deferred environment values reach the client unresolved, then resolve."
+  (cl-letf (((symbol-function 'executable-find)
+             (lambda (_) "/usr/bin/claude-agent-acp")))
+    (let* ((calls 0)
+           (agent-shell-anthropic-authentication '(:api-key "test-key"))
+           (agent-shell-anthropic-claude-acp-command '("claude-agent-acp"))
+           (agent-shell-anthropic-claude-environment
+            (agent-shell-make-environment-variables
+             "PLAIN" "value"
+             "SECRET" (lambda () (setq calls (1+ calls)) "s3cret")))
+           (test-buffer (get-buffer-create "*test-buffer*")))
+      (unwind-protect
+          (let ((client (agent-shell-anthropic-make-claude-client :buffer test-buffer)))
+            (should (= calls 0))
+            (should (assoc "SECRET" (seq-remove #'stringp
+                                                (map-elt client :environment-variables))))
+            (cl-letf (((symbol-function 'agent-shell--state)
+                       (lambda () (list (cons :client client)))))
+              (agent-shell--resolve-client-environment-variables))
+            (should (= calls 1))
+            (should (equal (map-elt client :environment-variables)
+                           '("ANTHROPIC_API_KEY=test-key" "PLAIN=value" "SECRET=s3cret"))))
+        (when (buffer-live-p test-buffer)
+          (kill-buffer test-buffer))))))
+
 (provide 'agent-shell-anthropic-tests)
 ;;; agent-shell-anthropic-tests.el ends here

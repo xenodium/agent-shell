@@ -67,8 +67,15 @@ when starting a new shell."
   "Environment variables for the Kimi Code CLI client.
 
 This should be a list of environment variables to be used when
-starting the Kimi client process."
-  :type '(repeat string)
+starting the Kimi client process.
+
+A value given as a function is resolved each time the agent starts,
+rather than when this variable is set.  See
+`agent-shell-make-environment-variables'."
+  :type '(repeat (choice (string :tag "NAME=VALUE")
+                         (cons :tag "Resolved at agent start"
+                               (string :tag "Name")
+                               (function :tag "Value function"))))
   :group 'agent-shell)
 
 (defun agent-shell-kimi-make-config ()

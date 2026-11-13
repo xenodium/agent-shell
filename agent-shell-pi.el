@@ -61,13 +61,20 @@ Pi requires the pi-acp adapter for ACP integration."
 This should be a list of environment variables to be used when
 starting the Pi client process.
 
+A value given as a function is resolved each time the agent starts,
+rather than when this variable is set.  See
+`agent-shell-make-environment-variables'.
+
 Example usage to set custom environment variables:
 
   (setq agent-shell-pi-environment
         (`agent-shell-make-environment-variables'
          \"ANTHROPIC_API_KEY\" \"your-key\"
          \"PI_CODING_AGENT_DIR\" \"~/.pi/agent\"))"
-  :type '(repeat string)
+  :type '(repeat (choice (string :tag "NAME=VALUE")
+                         (cons :tag "Resolved at agent start"
+                               (string :tag "Name")
+                               (function :tag "Value function"))))
   :group 'agent-shell)
 
 (defvar-local agent-shell-pi--terminal-output-snapshots nil

@@ -50,8 +50,15 @@ The first element is the command name, and the rest are command parameters."
   "Environment variables for the Junie ACP client.
 
 This should be a list of environment variables to be used when
-starting the Junie process."
-  :type '(repeat string)
+starting the Junie process.
+
+A value given as a function is resolved each time the agent starts,
+rather than when this variable is set.  See
+`agent-shell-make-environment-variables'."
+  :type '(repeat (choice (string :tag "NAME=VALUE")
+                         (cons :tag "Resolved at agent start"
+                               (string :tag "Name")
+                               (function :tag "Value function"))))
   :group 'agent-shell)
 
 (defcustom agent-shell-junie-default-model-id

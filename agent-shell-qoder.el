@@ -47,9 +47,16 @@ The first element is the command name, and the rest are command parameters."
 This should be a list of environment variables to be used when
 starting the Qoder CLI ACP server.
 
+A value given as a function is resolved each time the agent starts,
+rather than when this variable is set.  See
+`agent-shell-make-environment-variables'.
+
 For token-based authentication, add an entry of the form
 \"QODER_PERSONAL_ACCESS_TOKEN=...\"."
-  :type '(repeat string)
+  :type '(repeat (choice (string :tag "NAME=VALUE")
+                         (cons :tag "Resolved at agent start"
+                               (string :tag "Name")
+                               (function :tag "Value function"))))
   :group 'agent-shell)
 
 (defun agent-shell-qoder-make-agent-config ()

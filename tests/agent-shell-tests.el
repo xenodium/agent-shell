@@ -110,6 +110,66 @@
                          "EXISTING_VAR=existing_value")))
       (delete-file env-file))))
 
+(ert-deftest agent-shell-make-environment-variables-defers-functions-test ()
+  (let* ((called nil)
+         (secret (lambda () (setq called t) "s3cret"))
+         (vars (agent-shell-make-environment-variables
+                "PLAIN" "value"
+                "SECRET" secret)))
+    (should-not called)
+    (should (equal vars (list "PLAIN=value" (cons "SECRET" secret))))))
+
+(ert-deftest agent-shell--resolve-environment-variables-test ()
+  (let ((failures nil))
+    (should (equal (agent-shell--resolve-environment-variables
+                    :environment-variables
+                    (list "PLAIN=value"
+                          (cons "GOOD" (lambda () "resolved"))
+                          (cons "BROKEN" (lambda () (error "Store locked")))
+                          (cons "EMPTY" (lambda () nil))
+                          "LAST=value")
+                    :on-failure (lambda (failure)
+                                  (push (cons (map-elt failure :name)
+                                              (map-elt failure :message))
+                                        failures)))
+                   '("PLAIN=value" "GOOD=resolved" "LAST=value")))
+    (should (equal (nreverse failures)
+                   '(("BROKEN" . "Store locked")
+                     ("EMPTY" . "Function returned nil"))))))
+
+(ert-deftest agent-shell--resolve-client-environment-variables-test ()
+  (let* ((calls 0)
+         (client (list (cons :command "agent")
+                       (cons :environment-variables
+                             (list "PLAIN=value"
+                                   (cons "GOOD" (lambda () (setq calls (1+ calls)) "resolved"))
+                                   (cons "BROKEN" (lambda () (error "Store locked")))))))
+         (state (list (cons :client client)))
+         (warning nil))
+    (cl-letf (((symbol-function 'agent-shell--state)
+               (lambda () state))
+              ((symbol-function 'agent-shell--update-bootstrapping-fragment)
+               (lambda (&rest args)
+                 (setq warning (plist-get args :body)))))
+      (agent-shell--resolve-client-environment-variables))
+    (should (equal (map-elt client :environment-variables)
+                   '("PLAIN=value" "GOOD=resolved")))
+    (should (= calls 1))
+    (should (string-match-p "BROKEN: Store locked" warning))
+    (should-not (string-match-p "GOOD" warning))))
+
+(ert-deftest agent-shell--resolve-client-environment-variables-no-warning-test ()
+  (let ((client (list (cons :environment-variables
+                            (list (cons "GOOD" (lambda () "resolved"))))))
+        (warned nil))
+    (cl-letf (((symbol-function 'agent-shell--state)
+               (lambda () (list (cons :client client))))
+              ((symbol-function 'agent-shell--update-bootstrapping-fragment)
+               (lambda (&rest _) (setq warned t))))
+      (agent-shell--resolve-client-environment-variables))
+    (should (equal (map-elt client :environment-variables) '("GOOD=resolved")))
+    (should-not warned)))
+
 (ert-deftest agent-shell--shorten-paths-test ()
   "Test `agent-shell--shorten-paths' function."
   ;; Mock agent-shell-cwd to return a predictable value

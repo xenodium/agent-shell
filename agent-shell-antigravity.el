@@ -52,8 +52,15 @@ variable `exec-path'."
   "Environment variables for the Antigravity ACP server.
 
 This should be a list of environment variables to be used when
-starting the Antigravity agent process."
-  :type '(repeat string)
+starting the Antigravity agent process.
+
+A value given as a function is resolved each time the agent starts,
+rather than when this variable is set.  See
+`agent-shell-make-environment-variables'."
+  :type '(repeat (choice (string :tag "NAME=VALUE")
+                         (cons :tag "Resolved at agent start"
+                               (string :tag "Name")
+                               (function :tag "Value function"))))
   :group 'agent-shell)
 
 (cl-defun agent-shell-antigravity-make-authentication (&key login api-key business agent-platform none)
