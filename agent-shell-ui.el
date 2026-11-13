@@ -1049,8 +1049,12 @@ collapsing closes them all.
   ;; The group and both children are now expanded."
   (when include-children
     (save-mark-and-excursion
-      (dolist (child (agent-shell-ui--group-children
-                      :group-qualified-id group-qualified-id))
+      ;; Last to first: expanding runs
+      ;; `agent-shell-ui-post-expand-fragment-at-point-hook', which may
+      ;; resize the body (markdown rendering does) and shift every child
+      ;; below it, leaving their enumerated positions stale (issue #945).
+      (dolist (child (seq-reverse (agent-shell-ui--group-children
+                                   :group-qualified-id group-qualified-id)))
         (unless (eq (and (map-elt (get-text-property (map-elt child :start)
                                                      'agent-shell-ui-state)
                                   :collapsed)
