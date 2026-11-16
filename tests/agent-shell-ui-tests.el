@@ -898,6 +898,33 @@ of the group shows them all collapsed."
     (should-not (get-text-property
                  (agent-shell-ui-tests--fragment-start "ns-m1") 'invisible))))
 
+(ert-deftest agent-shell-ui-toggle-fragment-recursive-body-grows-on-expand-test ()
+  "A prefix expands every child even when expanding grows a child's body.
+Expanding runs `agent-shell-ui-post-expand-fragment-at-point-hook', which
+may rewrite the body (markdown rendering does), shifting the children
+below it (issue #945)."
+  (with-temp-buffer
+    (agent-shell-ui-mode 1)
+    (dolist (id '("c1" "c2" "c3"))
+      (agent-shell-ui-update-fragment
+       (agent-shell-ui-make-fragment-model
+        :namespace-id "ns" :block-id id :group-id "grp" :group-label "T"
+        :label-left "run" :label-right id :body (concat id " body"))
+       :navigation 'always))
+    (add-hook 'agent-shell-ui-post-expand-fragment-at-point-hook
+              (lambda ()
+                (goto-char (point-max))
+                (insert " grown by rendering"))
+              nil t)
+    (goto-char (agent-shell-ui-tests--fragment-start "ns-grp"))
+    (agent-shell-ui-toggle-fragment)
+    (should (agent-shell-ui-tests--fragment-collapsed-p "ns" "grp"))
+    (agent-shell-ui-toggle-fragment '(4))
+    (should-not (agent-shell-ui-tests--fragment-collapsed-p "ns" "grp"))
+    (should-not (agent-shell-ui-tests--fragment-collapsed-p "ns" "c1"))
+    (should-not (agent-shell-ui-tests--fragment-collapsed-p "ns" "c2"))
+    (should-not (agent-shell-ui-tests--fragment-collapsed-p "ns" "c3"))))
+
 (ert-deftest agent-shell-ui-toggle-fragment-recursive-outside-group-test ()
   "A prefix on a fragment outside any group toggles just that fragment."
   (with-temp-buffer

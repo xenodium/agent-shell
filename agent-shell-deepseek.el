@@ -98,6 +98,10 @@ Harness does not offer is reported and skipped."
 This should be a list of environment variables to be used when
 starting the DeepSeek Harness ACP server.
 
+A value given as a function is resolved each time the agent starts,
+rather than when this variable is set.  See
+`agent-shell-make-environment-variables'.
+
 Example usage to set custom environment variables:
 
   (setq agent-shell-deepseek-environment
@@ -106,7 +110,10 @@ Example usage to set custom environment variables:
          \"MY_OTHER_VAR\" \"another-value\"))
 
 See `agent-shell-deepseek-authentication' for the API key."
-  :type '(repeat string)
+  :type '(repeat (choice (string :tag "NAME=VALUE")
+                         (cons :tag "Resolved at agent start"
+                               (string :tag "Name")
+                               (function :tag "Value function"))))
   :group 'agent-shell)
 
 (defun agent-shell-deepseek-make-agent-config ()

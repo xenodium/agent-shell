@@ -123,13 +123,20 @@ The first element is the command name, and the rest are command parameters."
 This should be a list of environment variables to be used when
 starting the Claude client process.
 
+A value given as a function is resolved each time the agent starts,
+rather than when this variable is set.  See
+`agent-shell-make-environment-variables'.
+
 Example usage to set a custom Anthropic API base URL:
 
   (setq agent-shell-anthropic-claude-environment
         (`agent-shell-make-environment-variables'
          \"ANTHROPIC_BASE_URL\" \"https://api.moonshot.cn/anthropic/\"
          \"ANTHROPIC_MODEL\" \"moonshot-v1-auto\"))"
-  :type '(repeat string)
+  :type '(repeat (choice (string :tag "NAME=VALUE")
+                         (cons :tag "Resolved at agent start"
+                               (string :tag "Name")
+                               (function :tag "Value function"))))
   :group 'agent-shell)
 
 (defun agent-shell-anthropic-make-claude-code-config ()

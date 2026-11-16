@@ -235,9 +235,13 @@ messages:
   "Add PROMPT to the pending prompts queue and echo the resulting queue.
 
 The running prompt (the most recent `comint-input-ring' entry) is shown
-as \"active\" and the queued prompts, PROMPT included, as \"queued\"."
+as \"active\" and the queued prompts, PROMPT included, as \"queued\".
+
+Signals a `user-error' when PROMPT is blank, as there is nothing to send."
   (unless (derived-mode-p 'agent-shell-mode)
     (error "Not in a shell"))
+  (when (string-empty-p (string-trim prompt))
+    (user-error "No prompt given"))
   (agent-shell--prompt-queue-migrate)
   (map-put! agent-shell--state :pending-prompts
             (append (map-elt agent-shell--state :pending-prompts)
@@ -401,6 +405,75 @@ user typed can put it back."
              agent-shell-busy-submit-default-function)
            prompt))
 
+(defvar agent-shell-busy-submit-reroute-function
+  #'agent-shell-busy-submit-reroute-queue-to-steer
+  "Function \\[agent-shell-submit-override] calls at an empty prompt mid-turn.
+
+Sends a prompt already submitted while the agent is working some other
+way, typically one queued with \\[agent-shell-submit] when a steer was
+meant.  Taking a submission back depends on where
+`agent-shell-busy-submit-default-function' sent it, and sending it
+instead on `agent-shell-busy-submit-override-function', so only a
+function written for a given pair of them can do it.
+
+Called with no arguments and the shell buffer current, as the functions
+it reroutes between are, and does nothing for a pair it does not handle.
+Nil disables rerouting.")
+
+(defun agent-shell-busy-submit-reroute-queue-to-steer ()
+  "Steer the most recently queued prompt instead, once confirmed.
+
+Only handles `agent-shell-busy-submit-default-function' queueing and
+`agent-shell-busy-submit-override-function' steering, and does nothing
+for any other pair, as how other functions submit is unknown here.
+
+For example, given:
+
+  :pending-prompts (\"just the filenames\" \"sorted by size\")
+
+asks:
+
+  Steer \"sorted by size\" instead? (y or n)
+
+and when confirmed, steers it and leaves (\"just the filenames\")
+pending.  The prompt is put back in the queue if steering signals.
+
+The default `agent-shell-busy-submit-reroute-function'."
+  (when (and (eq agent-shell-busy-submit-default-function
+                 #'agent-shell-busy-submit-queue)
+             (eq agent-shell-busy-submit-override-function
+                 #'agent-shell-busy-submit-steer))
+    (agent-shell--prompt-queue-migrate)
+    (let ((prompt (car (last (map-elt agent-shell--state :pending-prompts))))
+          (sent nil))
+      (unless prompt
+        (user-error "No queued prompt"))
+      ;; `agent-shell-busy-submit-steer' would queue it right back.
+      (unless (agent-shell-steering-supported-p)
+        (user-error "This agent does not support steering"))
+      (unless (y-or-n-p
+               (format "Steer \"%s\" instead?"
+                       (truncate-string-to-width
+                        (car (split-string (substring-no-properties prompt) "\n" t))
+                        40 nil nil "...")))
+        (user-error "Steering cancelled"))
+      ;; The turn may have ended while the question was up, sending the
+      ;; queue along with it.
+      (unless (eq prompt (car (last (map-elt agent-shell--state :pending-prompts))))
+        (user-error "Queued prompt already sent"))
+      (unless (shell-maker-busy)
+        (user-error "No running turn to steer into"))
+      (map-put! agent-shell--state :pending-prompts
+                (butlast (map-elt agent-shell--state :pending-prompts)))
+      (unwind-protect
+          (progn
+            (agent-shell-busy-submit-steer prompt)
+            (setq sent t))
+        (unless sent
+          (map-put! agent-shell--state :pending-prompts
+                    (append (map-elt agent-shell--state :pending-prompts)
+                            (list prompt))))))))
+
 (defun agent-shell-prompt-queue (prompt)
   "Queue or immediately send a prompt depending on shell busy state.
 
@@ -422,6 +495,8 @@ commands when the agent has reported them."
   (interactive
    (list (with-current-buffer (agent-shell--shell-buffer :no-create t)
            (agent-shell--prompt-queue-read))))
+  (when (string-empty-p (string-trim prompt))
+    (user-error "No prompt given"))
   (with-current-buffer (agent-shell--shell-buffer :no-create t)
     (if (shell-maker-busy)
         (agent-shell--prompt-queue-enqueue :prompt prompt)

@@ -63,13 +63,20 @@ Examples:
 This should be a list of environment variables to be used when
 starting the Grok Build client process.
 
+A value given as a function is resolved each time the agent starts,
+rather than when this variable is set.  See
+`agent-shell-make-environment-variables'.
+
 Example usage to set custom environment variables:
 
   (setq agent-shell-xai-environment
         (`agent-shell-make-environment-variables'
          \"MY_VAR\" \"some-value\"
          \"MY_OTHER_VAR\" \"another-value\"))"
-  :type '(repeat string)
+  :type '(repeat (choice (string :tag "NAME=VALUE")
+                         (cons :tag "Resolved at agent start"
+                               (string :tag "Name")
+                               (function :tag "Value function"))))
   :group 'agent-shell)
 
 (defcustom agent-shell-xai-default-model-id

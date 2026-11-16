@@ -663,10 +663,10 @@ Optionally set its PROMPT and RESPONSE."
   "Go to next item.
 
 Could be a prompt, an expandable item, a displayed image, a rendered
-link, a source block, or a rendered markdown table.  A table is entered
-at its first cell, then walked one cell (and one link inside a cell) at
-a time, moving on to the item after it once past its last one.  If at
-point-max, attempt to switch to next interaction.
+link, a source block, a blockquote, or a rendered markdown table.  A
+table is entered at its first cell, then walked one cell (and one link
+inside a cell) at a time, moving on to the item after it once past its
+last one.  If at point-max, attempt to switch to next interaction.
 
 With prefix LEAVE-TABLE, carry on from the end of the table point is
 in, landing on the item after it rather than on its next cell."
@@ -677,8 +677,8 @@ in, landing on the item after it rather than on its next cell."
   ;; Leaving the table point is in — navigate on from its end, where its
   ;; own cells and their links are behind the search.
   (when-let* ((leave-table)
-              (table (agent-shell-markdown-table--region-at-point)))
-    (goto-char (cdr table)))
+              (table (agent-shell-markdown-table-at (point))))
+    (goto-char (map-elt table :end)))
   (let* ((current-pos (point))
          (prompt-start (agent-shell-viewport--prompt-start))
          (response-start (agent-shell-viewport--response-start))
@@ -694,6 +694,8 @@ in, landing on the item after it rather than on its next cell."
                      (agent-shell-markdown--next-visible-link)))
          (source-block-pos (save-mark-and-excursion
                              (agent-shell-markdown--next-visible-source-block)))
+         (blockquote-pos (save-mark-and-excursion
+                          (agent-shell-markdown--next-visible-blockquote)))
          (table-pos (save-mark-and-excursion
                       (agent-shell-markdown--search-visible
                        :property 'agent-shell-markdown-table-cell-start)))
@@ -711,6 +713,7 @@ in, landing on the item after it rather than on its next cell."
                                                           image-pos
                                                           link-pos
                                                           source-block-pos
+                                                          blockquote-pos
                                                           table-pos)))))
          (next-pos (if candidates
                        (seq-min candidates)
@@ -732,10 +735,10 @@ in, landing on the item after it rather than on its next cell."
   "Go to previous item.
 
 Could be a prompt, an expandable item, a displayed image, a rendered
-link, a source block, or a rendered markdown table.  A table above is
-entered at its first cell, so navigating again from there leaves it for
-the item above it.  If at the first item, attempt to switch to previous
-interaction.
+link, a source block, a blockquote, or a rendered markdown table.  A
+table above is entered at its first cell, so navigating again from
+there leaves it for the item above it.  If at the first item, attempt
+to switch to previous interaction.
 
 With prefix LEAVE-TABLE, carry on from the start of the table point is
 in, as `agent-shell-viewport-next-item' does from its end."
@@ -746,8 +749,8 @@ in, as `agent-shell-viewport-next-item' does from its end."
   ;; Leaving the table point is in — navigate on from its start, where
   ;; its own cells and their links are behind the search.
   (when-let* ((leave-table)
-              (table (agent-shell-markdown-table--region-at-point)))
-    (goto-char (car table)))
+              (table (agent-shell-markdown-table-at (point))))
+    (goto-char (map-elt table :start)))
   (let* ((current-pos (point))
          (prompt-start (agent-shell-viewport--prompt-start))
          (response-start (agent-shell-viewport--response-start))
@@ -764,6 +767,8 @@ in, as `agent-shell-viewport-next-item' does from its end."
          (source-block-pos
           (save-mark-and-excursion
             (agent-shell-markdown--previous-visible-source-block)))
+         (blockquote-pos (save-mark-and-excursion
+                          (agent-shell-markdown--previous-visible-blockquote)))
          (table-pos (save-mark-and-excursion
                       (agent-shell-markdown--search-visible
                        :property 'agent-shell-markdown-table-cell-start
@@ -782,6 +787,7 @@ in, as `agent-shell-viewport-next-item' does from its end."
                                                           image-pos
                                                           link-pos
                                                           source-block-pos
+                                                          blockquote-pos
                                                           table-pos)))))
          (next-pos (when candidates
                      (seq-max candidates))))
@@ -1714,6 +1720,7 @@ For example, offer to kill associated shell session."
   (setq-local filter-buffer-substring-function #'agent-shell--filter-buffer-substring)
   (setq-local beginning-of-defun-function #'agent-shell--beginning-of-block)
   (setq-local end-of-defun-function #'agent-shell--end-of-block)
+  (add-hook 'xref-backend-functions #'agent-shell-markdown-xref-backend nil t)
   (setq buffer-read-only t)
   (add-hook 'kill-buffer-hook #'agent-shell-viewport--clean-up nil t))
 
