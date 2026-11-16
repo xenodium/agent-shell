@@ -1023,17 +1023,19 @@ newline would merge the input line into the response for line motion
                                    "\n"
                                  "\n\n")
                                label "\n\n"))
-               ;; A completed turn with no response text (a tool-only turn, or
-               ;; a restored empty turn) is not labeled: another marker or the
-               ;; next prompt follows the marker with only whitespace between.
+               ;; A rendered fragment starts a response even if it contains
+               ;; only whitespace: later appends won't revisit its heading.
+               ;; Without a fragment, whitespace before the next prompt is empty.
                ;; A marker at end of buffer is the active, just-submitted turn
                ;; (its output has not streamed yet), so it IS labeled.
                (response-empty (save-excursion
                                  (goto-char mend)
                                  (skip-chars-forward " \t\n")
-                                 (or (get-text-property (point) 'shell-maker--marker)
-                                     (agent-shell--prompt-face-p
-                                      (get-text-property (point) 'font-lock-face))))))
+                                 (unless (text-property-not-all
+                                          mend (point) 'agent-shell-ui-state nil)
+                                   (or (get-text-property (point) 'shell-maker--marker)
+                                       (agent-shell--prompt-face-p
+                                        (get-text-property (point) 'font-lock-face)))))))
           ;; A turn with no response is not labeled; its stale overlay, if
           ;; any, is dropped by the `--gc-overlays' sweep below.  Widen the
           ;; anchor back to the marker: a restored turn's overlay starts past
@@ -1120,11 +1122,13 @@ flips between hidden and `Me' immediately across all shells."
       (setq agent-shell-chat--relabel-timer nil)
       (agent-shell-chat--relabel))))
 
-(defun agent-shell-chat--label-section-response (&rest _)
-  "Update response headings after a rendered section."
-  (save-restriction
-    (widen)
-    (agent-shell-chat--label-responses)))
+(defun agent-shell-chat--label-section-response (section)
+  "Update response headings when SECTION creates a fragment.
+For example, a range with (:created . t) needs headings; an append does not."
+  (when (map-elt section :created)
+    (save-restriction
+      (widen)
+      (agent-shell-chat--label-responses))))
 
 (defun agent-shell-chat--schedule-relabel (&optional event)
   "Schedule a coalesced, deferred relabel of the current buffer.
@@ -1134,7 +1138,8 @@ face shell-maker applies after inserting) are in place; coalesced so a
 burst yields a single relabel.  EVENT is the shell event alist, for
 example \='((:event . input-submitted)).  Streaming events are skipped:
 prompt overlays follow insertions, and the section hook updates response
-headings.  Also runs without EVENT from `shell-maker-finish-output-hook'."
+headings for newly created fragments.  Also runs without EVENT from
+`shell-maker-finish-output-hook'."
   (when (and agent-shell-chat--labeled
              (not (memq (map-elt event :event)
                         '(agent-message-chunk tool-call-update)))
@@ -1189,7 +1194,7 @@ reloads (`session-restored'), and adds a buffer-local
 `shell-maker-finish-output-hook' so `clear' and the other internal
 commands (which reprint the prompt with no `agent-shell' event) relabel
 too.  A buffer-local `agent-shell-section-functions' updates response
-headings as output arrives."
+headings when a fragment is created, skipping updates to existing fragments."
   (unless agent-shell-chat--labeled
     (setq-local agent-shell-chat--labeled t)
     ;; Chat mode draws its own busy frame (see `agent-shell-chat--live-marker').

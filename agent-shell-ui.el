@@ -165,6 +165,7 @@ When EXPANDED is non-nil, body will be expanded by default.
 When NO-UNDO is non-nil, disable undo recording for this operation.
 
 For existing blocks, the current expansion state is preserved unless overridden.
+The returned range alist includes :created, non-nil for a new fragment.
 
 Updates to existing blocks are applied per section: a body append
 inserts the new chunk at the end of the body region without disturbing
@@ -395,7 +396,8 @@ O(accumulated-body).  Label-only updates leave the body untouched."
               ;; intervals, so on a streamed body that cost grew per chunk
               ;; (issue #757).  A body written above reports the range it
               ;; wrote; only a regenerated block has to be searched.
-              (list (cons :block block-range)
+              (list (cons :created (or create-new (not existing-start)))
+                    (cons :block block-range)
                     (cons :body (or body-range
                                     (when new-body
                                       (agent-shell-ui--body-range

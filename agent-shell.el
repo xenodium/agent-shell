@@ -306,6 +306,7 @@ Example for a lambda:
   "Abnormal hook run after overlays are applied (experimental).
 Called in `agent-shell--update-fragment' after all overlays
 are applied.  Each function is called with a range alist containing:
+  :created     - Non-nil when this update created a new fragment
   :block       - The block range with :start and :end positions
   :body        - The body range (if present)
   :label-left  - The left label range (if present)
