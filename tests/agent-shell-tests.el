@@ -10630,6 +10630,36 @@ A directory that does not exist is an error, rather than leaving
         (when (file-directory-p dir)
           (delete-directory dir))))))
 
+(ert-deftest agent-shell--start-from-shell-in-switched-project-test ()
+  "Test that a shell started from a shell starts in a switched-to project.
+
+From within a shell, a new shell starts in that shell's directory,
+unless `project-switch-project' is running the command for another
+project, in which case it starts in that project's root."
+  (let* ((shell-dir (file-name-as-directory (make-temp-file "shell-" t)))
+         (project-dir (file-name-as-directory (make-temp-file "project-" t)))
+         (shell (agent-shell-tests--make-started-shell "started-shell" shell-dir))
+         (config (agent-shell-make-agent-config
+                  :buffer-name "Fake"
+                  :shell-prompt "Fake> "
+                  :shell-prompt-regexp "Fake> ")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'shell-maker-start-v2)
+                   (lambda (&rest _)
+                     (throw 'agent-shell-tests--started default-directory))))
+          (make-directory (expand-file-name ".git" project-dir))
+          (with-current-buffer shell
+            (should (equal (catch 'agent-shell-tests--started
+                             (agent-shell--start :config config))
+                           shell-dir))
+            (let ((project-current-directory-override project-dir))
+              (should (equal (catch 'agent-shell-tests--started
+                               (agent-shell--start :config config))
+                             project-dir)))))
+      (kill-buffer shell)
+      (delete-directory shell-dir t)
+      (delete-directory project-dir t))))
+
 (ert-deftest agent-shell--send-command-renders-deferred-markup-in-viewport-test ()
   "Test the end of a turn renders the viewport's held-back markup too.
 

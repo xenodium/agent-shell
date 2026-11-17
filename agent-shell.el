@@ -5329,7 +5329,14 @@ variable (see makunbound)"))
                               :prompt (map-elt config :shell-prompt)
                               :prompt-regexp (map-elt config :shell-prompt-regexp)))
          (agent-shell--shell-maker-config shell-maker-config)
-         (default-directory (let ((cwd (or cwd (agent-shell-cwd))))
+         (default-directory (let ((cwd (or cwd
+                                          ;; A project chosen with
+                                          ;; `project-switch-project' outranks
+                                          ;; the shell it was chosen from.
+                                          (if (bound-and-true-p
+                                               project-current-directory-override)
+                                              (agent-shell--new-shell-cwd)
+                                            (agent-shell-cwd)))))
                               ;; `shell-maker-start-v2' would otherwise quietly
                               ;; fall back to "~/" and use that value forever.
                               (unless (file-directory-p cwd)
