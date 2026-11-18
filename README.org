@@ -1435,7 +1435,7 @@ always go to Evil modes if you need to with ~C-z~).
 |                                                       | agent-shell-reset-logs                                  | Reset all log buffers.                                                        |
 |                                                       | agent-shell-restart                                     | Clear conversation by restarting the agent shell in the same project.         |
 |                                                       | agent-shell-resume-session                              | Resume an existing agent session by SESSION-ID.                               |
-|                                                       | agent-shell-run-all-tests                               | Run all agent-shell tests in batch mode.                                      |
+|                                                       | agent-shell-run-all-tests                               | Run all agent-shell tests in a fresh batch Emacs, as CI does.                 |
 |                                                       | agent-shell-save-traffic                                | Save agent shell traffic to a .traffic file and reveal it in `dired'.         |
 | M-r                                                   | agent-shell-search-history                              | Search previous input history.                                                |
 |                                                       | agent-shell-send-clipboard-image                        | Paste clipboard image and insert it into `agent-shell'.                       |

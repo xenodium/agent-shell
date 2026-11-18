@@ -246,4 +246,6 @@ Tests live under the tests directory:
 
 Opening any file under the =tests= directory will load the =agent-shell-run-all-tests= command.
 
-Run tests with =M-x agent-shell-run-all-tests=.
+Run tests with =M-x agent-shell-run-all-tests=. This loads agent-shell and its tests from disk in a fresh =emacs --batch -Q=, just like CI, so your own Emacs session is left untouched.
+
+To debug failures in the interactive ERT buffer, use =C-u M-x agent-shell-run-all-tests= instead. This reloads the test files into your current Emacs, but runs them against whichever agent-shell is already loaded, so reload any changed =agent-shell*.el= files first.
