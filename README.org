@@ -1286,6 +1286,7 @@ always go to Evil modes if you need to with ~C-z~).
 | agent-shell-show-usage-at-turn-end             | Whether to display usage information when agent turn ends.                      |
 | agent-shell-show-welcome-message               | Non-nil to show welcome message.                                                |
 | agent-shell-status-kind-label-function         | Function to render status and kind labels.                                      |
+| agent-shell-system-prompt                      | Instructions appended to the agent’s default system prompt.                     |
 | agent-shell-text-file-capabilities             | Whether agents are initialized with read/write text file capabilities.          |
 | agent-shell-thought-process-expand-by-default  | Whether thought process sections should be expanded by default.                 |
 | agent-shell-thought-process-icon               | Icon displayed during the AI’s thought process.                                 |

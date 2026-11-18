@@ -767,6 +767,7 @@ Each element can be:
                                               default-session-mode-id
                                               default-config-options
                                               session-meta
+                                              system-prompt
                                               mcp-servers
                                               notification-adapter
                                               notification-handler
@@ -800,6 +801,8 @@ Keyword arguments:
 - SESSION-META: Optional alist of agent-specific metadata sent as `_meta'
   with session-creating requests (`session/new', `session/load',
   `session/resume', and `session/fork').
+- SYSTEM-PROMPT: Optional string appended to the agent's default system
+  prompt, taking precedence over the global `agent-shell-system-prompt'.
 - MCP-SERVERS: Optional list of MCP servers for this agent, taking
   precedence over the global `agent-shell-mcp-servers'.  Same shape as
   that variable.
@@ -825,6 +828,7 @@ Returns an alist with all specified values."
     (:default-session-mode-id . ,default-session-mode-id)       ;; function
     (:default-config-options . ,default-config-options)         ;; function
     (:session-meta . ,session-meta)
+    (:system-prompt . ,system-prompt)
     (:mcp-servers . ,mcp-servers)
     (:notification-adapter . ,notification-adapter)            ;; function
     (:notification-handler . ,notification-handler)            ;; function
@@ -1250,6 +1254,19 @@ configured to merely preselect (see `agent-shell-preferred-agent-config')."
   (pcase (agent-shell--preferred-config-and-mode)
     (`(,config . nil) config)))
 
+(defcustom agent-shell-system-prompt nil
+  "Instructions appended to the agent's default system prompt.
+
+Sent when a session is created, loaded, resumed or forked, to agents
+advertising the `systemPrompt' session capability.  For example:
+
+  (setq agent-shell-system-prompt \"Keep answers short.\")
+
+An agent config's `:system-prompt' takes precedence over this value."
+  :type '(choice (const :tag "None" nil)
+                 string)
+  :group 'agent-shell)
+
 (defcustom agent-shell-mcp-servers nil
   "List of MCP servers to initialize when creating a new session.
 
@@ -1364,6 +1381,7 @@ OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
         (cons :supports-session-load nil)
         (cons :supports-session-resume nil)
         (cons :supports-session-fork nil)
+        (cons :supports-system-prompt nil)
         (cons :supports-steering nil)
         (cons :resume-session-id nil)
         (cons :fork-session-id nil)
@@ -7552,7 +7570,16 @@ Must provide ON-INITIATED (lambda ())."
                      (map-put! agent-shell--state :supports-session-fork
                                (and (listp acp-session-capabilities)
                                     (assq 'fork acp-session-capabilities)
+                                    t))
+                     (map-put! agent-shell--state :supports-system-prompt
+                               (and (listp acp-session-capabilities)
+                                    (assq 'systemPrompt acp-session-capabilities)
                                     t)))
+                   (when (and (not (map-elt agent-shell--state :supports-system-prompt))
+                              (or (map-nested-elt agent-shell--state '(:agent-config :system-prompt))
+                                  agent-shell-system-prompt))
+                     (message "%s does not support system prompts, ignoring the configured one"
+                              (map-nested-elt agent-shell--state '(:agent-config :mode-line-name))))
                    ;; Save prompt capabilities from agent, converting to internal symbols
                    (when-let* ((prompt-capabilities
                                 (map-nested-elt acp-response '(agentCapabilities promptCapabilities))))
@@ -8399,7 +8426,8 @@ overwrites an existing fragment with equivalent content."
    :request (acp-make-session-new-request
              :cwd (agent-shell--resolve-path (agent-shell-cwd))
              :mcp-servers (agent-shell--mcp-servers)
-             :meta (map-nested-elt (agent-shell--state) '(:agent-config :session-meta)))
+             :meta (map-nested-elt (agent-shell--state) '(:agent-config :session-meta))
+             :system-prompt (agent-shell--system-prompt))
    :buffer (current-buffer)
    :on-success (lambda (acp-response)
                  (map-put! agent-shell--state
@@ -8728,12 +8756,14 @@ listing sessions to pick one to load."
                      :session-id session-id
                      :cwd cwd
                      :mcp-servers mcp-servers
-                     :meta (map-nested-elt (agent-shell--state) '(:agent-config :session-meta)))
+                     :meta (map-nested-elt (agent-shell--state) '(:agent-config :session-meta))
+                     :system-prompt (agent-shell--system-prompt))
                   (acp-make-session-resume-request
                    :session-id session-id
                    :cwd cwd
                    :mcp-servers mcp-servers
-                   :meta (map-nested-elt (agent-shell--state) '(:agent-config :session-meta)))))
+                   :meta (map-nested-elt (agent-shell--state) '(:agent-config :session-meta))
+                   :system-prompt (agent-shell--system-prompt))))
      :buffer (current-buffer)
      :on-success (lambda (acp-load-response)
                    (agent-shell--set-session-from-response
@@ -8782,7 +8812,8 @@ listing sessions to pick one to load."
              :session-id session-id
              :cwd (agent-shell--resolve-path (agent-shell-cwd))
              :mcp-servers (agent-shell--mcp-servers)
-             :meta (map-nested-elt (agent-shell--state) '(:agent-config :session-meta)))
+             :meta (map-nested-elt (agent-shell--state) '(:agent-config :session-meta))
+             :system-prompt (agent-shell--system-prompt))
    :buffer (current-buffer)
    :on-success (lambda (acp-fork-response)
                  (let ((new-session-id (map-elt acp-fork-response 'sessionId)))
@@ -8962,12 +8993,14 @@ For example, with a function returning (session-id . \"abc\"):
                                                     :session-id acp-session-id
                                                     :cwd cwd
                                                     :mcp-servers mcp-servers
-                                                    :meta (map-nested-elt (agent-shell--state) '(:agent-config :session-meta)))
+                                                    :meta (map-nested-elt (agent-shell--state) '(:agent-config :session-meta))
+                                                    :system-prompt (agent-shell--system-prompt))
                                                  (acp-make-session-resume-request
                                                   :session-id acp-session-id
                                                   :cwd cwd
                                                   :mcp-servers mcp-servers
-                                                  :meta (map-nested-elt (agent-shell--state) '(:agent-config :session-meta)))))
+                                                  :meta (map-nested-elt (agent-shell--state) '(:agent-config :session-meta))
+                                                  :system-prompt (agent-shell--system-prompt))))
                                     :buffer (current-buffer)
                                     :on-success (lambda (acp-load-response)
                                                   (agent-shell--set-session-from-response
@@ -9074,6 +9107,16 @@ The agent config's `:mcp-servers' take precedence over the global
                      (agent-shell--make-mcp-server
                       :overrides (agent-shell--eval-dynamic-values server)))
                    servers))))
+
+(defun agent-shell--system-prompt ()
+  "Return the system prompt string to send with session requests, or nil.
+
+The agent config's `:system-prompt' takes precedence over the global
+`agent-shell-system-prompt'.  Return nil if the agent does not
+advertise the `systemPrompt' session capability."
+  (when (map-elt agent-shell--state :supports-system-prompt)
+    (or (map-nested-elt agent-shell--state '(:agent-config :system-prompt))
+        agent-shell-system-prompt)))
 
 (cl-defun agent-shell--subscribe-to-client-events (&key state)
   "Subscribe SHELL and STATE to ACP events."

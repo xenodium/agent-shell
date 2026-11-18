@@ -3546,6 +3546,58 @@ driven by a single helper on both paths."
                        (url . "https://global/mcp")
                        (headers . []))])))))
 
+(ert-deftest agent-shell--system-prompt-test ()
+  "Per-agent `:system-prompt' wins, and nothing is sent without the capability."
+  (let ((agent-shell-system-prompt "Global prompt."))
+    ;; The agent config's prompt wins when present.
+    (let ((agent-shell--state
+           (agent-shell--make-state
+            :agent-config (agent-shell-make-agent-config
+                           :identifier 'test
+                           :system-prompt "Per-agent prompt."))))
+      (map-put! agent-shell--state :supports-system-prompt t)
+      (should (equal (agent-shell--system-prompt) "Per-agent prompt.")))
+    ;; Falls back to the global variable when the config has no override.
+    (let ((agent-shell--state
+           (agent-shell--make-state
+            :agent-config (agent-shell-make-agent-config :identifier 'test))))
+      (map-put! agent-shell--state :supports-system-prompt t)
+      (should (equal (agent-shell--system-prompt) "Global prompt."))
+      ;; Agents not advertising the capability get no prompt.
+      (map-put! agent-shell--state :supports-system-prompt nil)
+      (should-not (agent-shell--system-prompt))))
+  (let ((agent-shell-system-prompt nil)
+        (agent-shell--state
+         (agent-shell--make-state
+          :agent-config (agent-shell-make-agent-config :identifier 'test))))
+    (map-put! agent-shell--state :supports-system-prompt t)
+    (should-not (agent-shell--system-prompt))))
+
+(ert-deftest agent-shell--initiate-new-session-sends-system-prompt-test ()
+  "Send the configured system prompt with session/new."
+  (with-temp-buffer
+    (let ((agent-shell-system-prompt "Keep answers short.")
+          (request nil))
+      (setq-local agent-shell--state
+                  (agent-shell--make-state
+                   :agent-config (agent-shell-make-agent-config :identifier 'test)
+                   :buffer (current-buffer)))
+      (map-put! agent-shell--state :supports-system-prompt t)
+      (cl-letf (((symbol-function 'agent-shell--state)
+                 (lambda () agent-shell--state))
+                ((symbol-function 'agent-shell-cwd) (lambda () "/tmp"))
+                ((symbol-function 'agent-shell--resolve-path) (lambda (path) path))
+                ((symbol-function 'agent-shell--mcp-servers) (lambda () []))
+                ((symbol-function 'agent-shell--send-request)
+                 (lambda (&rest args)
+                   (setq request (plist-get args :request)))))
+        (agent-shell--initiate-new-session :shell-buffer (current-buffer)
+                                           :on-session-init #'ignore))
+      (should (equal (map-nested-elt request '(:params systemPrompt))
+                     '((mode . "append")
+                       (content . [((type . "text")
+                                    (text . "Keep answers short."))])))))))
+
 (ert-deftest agent-shell--completion-bounds-test ()
   "Test `agent-shell--completion-bounds' function."
   (let ((path-chars "[:alnum:]/_.-"))
