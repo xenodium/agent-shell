@@ -26,16 +26,7 @@ jobs:
       - name: Run tests
         env:
           EMACS_TEST_JUNIT_REPORT: '1'
-        run: |
-          emacs --batch -Q \
-            -L . \
-            -L ../acp \
-            -L ../shell-maker \
-            -L ../compat \
-            --eval '(setq ert-load-file-name "test-results")' \
-            --load tests/agent-shell-fakes.el \
-            $(find tests -name '*-tests.el' | sort | sed 's/^/--load /') \
-            -f ert-run-tests-batch-and-exit
+        run: make test
 
       - name: Upload test results
         if: success() || failure()
