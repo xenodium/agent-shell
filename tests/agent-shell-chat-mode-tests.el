@@ -918,6 +918,94 @@ steer fires no event, so it stayed hidden until something else relabeled
         (should (string-match-p "declined" (funcall shown)))
         (agent-shell-chat--disable)))))
 
+(defun agent-shell-chat-mode-tests--overlay-snapshot ()
+  "Return every chat label overlay's tag, span and drawing properties."
+  (sort (seq-keep
+         (lambda (overlay)
+           (when-let* ((tag (overlay-get overlay 'agent-shell-chat--tag)))
+             (format "%S" (list tag (overlay-start overlay) (overlay-end overlay)
+                                (seq-map (lambda (prop) (overlay-get overlay prop))
+                                         '(before-string display line-prefix
+                                                         wrap-prefix after-string))))))
+         (overlays-in (point-min) (point-max)))
+        #'string<))
+
+(ert-deftest agent-shell-chat-relabels-last-turn-test ()
+  "Relabeling the last turn alone matches relabeling the whole buffer.
+
+Streamed output lands before the live prompt, inside its label overlay,
+and relabeling from the last end-of-prompt marker uncovers it."
+  (with-temp-buffer
+    (setq-local agent-shell--state '((:agent-config . ((:mode-line-name . "Claude"))))
+                agent-shell-chat-mode t)
+    (agent-shell-chat-mode-tests--prompt "Claude> ")
+    (insert "first\n")
+    (agent-shell-chat-mode-tests--marker)
+    (insert "one\n\n")
+    (agent-shell-chat-mode-tests--prompt "Claude> ")
+    (insert "second\n")
+    (agent-shell-chat-mode-tests--marker)
+    (insert "two\n\n")
+    (agent-shell-chat-mode-tests--prompt "Claude> ")
+    (let ((agent-shell-prompt-bar-mode nil)
+          (agent-shell-chat-label-function
+           (lambda (label)
+             (format " %s %S " (map-elt label :text) (map-elt label :prompt-start)))))
+      (agent-shell-chat--relabel)
+      (save-excursion
+        (goto-char (- (point-max) (length "Claude> ")))
+        (insert "streamed\n\n"))
+      (should-not (string-match-p "streamed" (agent-shell-chat--displayed-substring
+                                              (point-min) (point-max))))
+      (agent-shell-chat--relabel (agent-shell-chat--last-marker-start))
+      (should (string-match-p "streamed" (agent-shell-chat--displayed-substring
+                                          (point-min) (point-max))))
+      (let ((scoped (agent-shell-chat-mode-tests--overlay-snapshot)))
+        (agent-shell-chat--relabel)
+        (should (equal scoped (agent-shell-chat-mode-tests--overlay-snapshot)))))))
+
+(ert-deftest agent-shell-chat-schedules-scoped-relabel-test ()
+  "Streaming relabels the last turn; earlier changes relabel the whole buffer."
+  (with-temp-buffer
+    (setq-local agent-shell--state '((:agent-config . ((:mode-line-name . "Claude"))))
+                agent-shell-chat-mode t)
+    (agent-shell-chat-mode-tests--prompt "Claude> ")
+    (insert "first\n")
+    (agent-shell-chat-mode-tests--marker)
+    (insert "one\n\n")
+    (agent-shell-chat-mode-tests--prompt "Claude> ")
+    (let ((agent-shell-prompt-bar-mode nil)
+          (relabeled-from 'unset))
+      (cl-letf (((symbol-function 'agent-shell-subscribe-to) #'ignore)
+                ((symbol-function 'agent-shell-unsubscribe) #'ignore)
+                ((symbol-function 'agent-shell-chat--relabel)
+                 (lambda (&optional from) (setq relabeled-from from))))
+        (agent-shell-chat--enable)
+        (dolist (case `(((:events . (((:event . agent-message-chunk))))
+                         (:scoped . t))
+                        ((:events . (((:event . turn-complete))))
+                         (:scoped . nil))
+                        ((:sections . (((:block . ((:start . ,(1- (point-max))))))))
+                         (:scoped . t))
+                        ((:sections . (((:block . ((:start . 1))))))
+                         (:scoped . nil))
+                        ((:events . (((:event . agent-message-chunk))))
+                         (:sections . (nil))
+                         (:scoped . nil))
+                        ;; Hooks left by an earlier version of chat mode.
+                        ((:old-hooks . (((:event . agent-message-chunk))
+                                     ((:block . ((:start . ,(1- (point-max))))))))
+                         (:scoped . nil))))
+          (seq-do #'agent-shell-chat--relabel-after-event (map-elt case :events))
+          (seq-do #'agent-shell-chat--relabel-after-section (map-elt case :sections))
+          (seq-do #'agent-shell-chat--schedule-relabel (map-elt case :old-hooks))
+          (cancel-timer agent-shell-chat--relabel-timer)
+          (agent-shell-chat--relabel-buffer (current-buffer))
+          (should (equal relabeled-from
+                         (when (map-elt case :scoped)
+                           (agent-shell-chat--last-marker-start)))))
+        (agent-shell-chat--disable)))))
+
 (ert-deftest agent-shell-chat-absorbs-leading-blank-lines-test ()
   "A submitted prompt's overlay swallows the input's leading blank lines."
   (agent-shell-chat-mode-tests--with-shell
