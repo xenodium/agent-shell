@@ -9966,6 +9966,15 @@ hides that."
       ;; insert an end-of-prompt marker of its own on the next update.
       (should-not (equal (map-elt rendered :last-entry-type) "user_message_chunk")))))
 
+(ert-deftest agent-shell-experimental--steered-prompt-prefix-property-test ()
+  "Only the `[steer] ' prefix carries `agent-shell-steer-prefix'.
+Chat mode hides that span and labels the prompt as steered instead."
+  (let* ((text (map-elt (agent-shell-tests--render-steered-prompt "filenames") :text))
+         (prefix (text-property-any 0 (length text) 'agent-shell-steer-prefix t text)))
+    (should (equal "[steer] "
+                   (substring text prefix (next-single-property-change
+                                           prefix 'agent-shell-steer-prefix text))))))
+
 (ert-deftest agent-shell-experimental--steered-image-preview-test ()
   "A steered image mention is displayed in the posted user message."
   (let* ((rendered (agent-shell-tests--render-steered-prompt

@@ -347,8 +347,9 @@ for the marker; without it such a search runs to the next submission and
 takes the rest of the turn's output as this prompt's body.
 
 The `[steer]' prefix carries the one thing this shape would otherwise
-lose -- that the prompt was injected into a running turn rather than
-typed before one.
+lose: that the prompt was injected into a running turn rather than
+typed before one.  It carries `agent-shell-steer-prefix', so chat mode
+can hide it and say so in the prompt's label instead.
 
 The turn can end while the steer is in flight, leaving a live input
 prompt at the buffer end by the time the agent answers.  Rendering above
@@ -375,7 +376,10 @@ send it as input."
              :text (concat (propertize (map-nested-elt state '(:agent-config :shell-prompt))
                                        'font-lock-face 'agent-shell-prompt
                                        'field 'output)
-                           (propertize (concat "[steer] " prompt)
+                           (propertize "[steer] "
+                                       'font-lock-face 'agent-shell-input
+                                       'agent-shell-steer-prefix t)
+                           (propertize prompt
                                        'font-lock-face 'agent-shell-input))
              :create-new t)
             (shell-maker-insert-end-of-prompt-marker)

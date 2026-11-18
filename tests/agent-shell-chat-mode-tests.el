@@ -273,14 +273,60 @@ without an `agent-shell-chat--tag' are left alone."
       (agent-shell-chat-mode-tests--marker)
       (insert "hi there\n")
       (agent-shell-chat--relabel)
-      (should (member '((:text . "Me") (:role . user) (:prompt-start . 1)) labels))
-      (should (member '((:text . "Claude") (:role . agent) (:prompt-start . 1)) labels))
+      (should (member '((:text . "Me") (:role . user) (:prompt-start . 1) (:steered . nil)) labels))
+      (should (member '((:text . "Claude") (:role . agent) (:prompt-start . 1) (:steered . nil)) labels))
       (should (string-match-p
                "<Me>" (agent-shell-chat-mode-tests--label-string
                        (car (agent-shell-chat-mode-tests--me-overlays)))))
       (should (string-match-p
                "<Claude>" (agent-shell-chat-mode-tests--agent-label-string
                            (car (agent-shell-chat-mode-tests--agent-overlays))))))))
+
+(ert-deftest agent-shell-chat-boxed-label-steered-test ()
+  "The default label marks a steered prompt's `Me'."
+  (let ((me (agent-shell-chat-boxed-label
+             '((:text . "Me") (:role . user) (:steered . t)))))
+    (should (equal " Me  steer" me))
+    (should (eq 'agent-shell-chat-me-label (get-text-property 0 'face me)))
+    (should (eq 'default (get-text-property (string-match "steer" me) 'face me)))))
+
+(ert-deftest agent-shell-chat-steered-prompt-test ()
+  "A steered prompt keeps its `Me' label, marked as steered.
+Its `[steer] ' prefix stays in the buffer but is hidden with the prompt,
+since the label now says so."
+  (let* ((labels nil)
+         (agent-shell-chat-label-function
+          (lambda (label)
+            (push label labels)
+            (agent-shell-chat-boxed-label label))))
+    (agent-shell-chat-mode-tests--with-shell
+      (agent-shell-chat-mode-tests--prompt "Claude> ")
+      (insert "list the files")
+      (agent-shell-chat-mode-tests--marker)
+      (insert "\nListing\n\n")
+      (let ((steer-start (point)))
+        (agent-shell-chat-mode-tests--prompt "Claude> ")
+        (insert (propertize "[steer] " 'agent-shell-steer-prefix t)
+                "just the filenames")
+        (agent-shell-chat-mode-tests--marker)
+        (insert "\nDone\n\n")
+        (agent-shell-chat-mode-tests--prompt "Claude> ")
+        (agent-shell-chat--relabel)
+        (should (member `((:text . "Me") (:role . user)
+                          (:prompt-start . ,steer-start) (:steered . t))
+                        labels))
+        (should (member '((:text . "Me") (:role . user)
+                          (:prompt-start . 1) (:steered . nil))
+                        labels))
+        ;; The first turn's, the steered one's, then the live prompt's.
+        (let ((steered (nth 1 (agent-shell-chat-mode-tests--me-overlays))))
+          (should (string-match-p
+                   "Me  steer" (agent-shell-chat-mode-tests--label-string steered)))
+          ;; Covers the prefix, stopping at the input proper.
+          (should (equal "just the filenames"
+                         (buffer-substring-no-properties
+                          (overlay-end steered)
+                          (+ (overlay-end steered) (length "just the filenames"))))))))))
 
 (ert-deftest agent-shell-chat-label-function-prompt-start-test ()
   "Both labels of a turn are told where its prompt starts; the live prompt is not."
@@ -300,12 +346,12 @@ without an `agent-shell-chat--tag' are left alone."
       (insert "second\n\n")
       (agent-shell-chat-mode-tests--prompt "Claude> ")
       (agent-shell-chat--relabel)
-      (should (member '((:text . "Me") (:role . user) (:prompt-start . 1)) labels))
-      (should (member '((:text . "Claude") (:role . agent) (:prompt-start . 1)) labels))
-      (should (member '((:text . "Me") (:role . user) (:prompt-start . 47)) labels))
-      (should (member '((:text . "Claude") (:role . agent) (:prompt-start . 47)) labels))
+      (should (member '((:text . "Me") (:role . user) (:prompt-start . 1) (:steered . nil)) labels))
+      (should (member '((:text . "Claude") (:role . agent) (:prompt-start . 1) (:steered . nil)) labels))
+      (should (member '((:text . "Me") (:role . user) (:prompt-start . 47) (:steered . nil)) labels))
+      (should (member '((:text . "Claude") (:role . agent) (:prompt-start . 47) (:steered . nil)) labels))
       ;; The live prompt is labeled, but stands for no turn yet.
-      (should (member '((:text . "Me") (:role . user) (:prompt-start . nil)) labels)))))
+      (should (member '((:text . "Me") (:role . user) (:prompt-start . nil) (:steered . nil)) labels)))))
 
 (ert-deftest agent-shell-chat-row-props-test ()
   "A row holding a `display' is drawn as a `before-string'."

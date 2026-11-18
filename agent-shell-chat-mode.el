@@ -111,9 +111,13 @@ Called with an alist, for example:
 
   \\='((:text . \"Me\")
     (:role . user)
-    (:prompt-start . 1234))
+    (:prompt-start . 1234)
+    (:steered . nil))
 
 :role is `user' for the \"Me\" label and `agent' for the agent's.
+
+:steered is non-nil for the \"Me\" label of a prompt steered into a
+running turn (see `agent-shell-prompt-steer').
 
 :prompt-start is where the turn's prompt starts (as in
 `agent-shell-prompt-ranges'), shared by both of its labels.  nil for the
@@ -183,18 +187,20 @@ A hint only: see `agent-shell-chat--find-live-marker-overlay'.")
 
 ;;; Labels
 
-(defun agent-shell-chat--label (text role &optional prompt-start)
+(cl-defun agent-shell-chat--label (&key text role prompt-start steered)
   "Return the chat label for TEXT, as `agent-shell-chat-label-function' draws it.
 
 ROLE is `user' or `agent'.  PROMPT-START is where the turn's prompt
-starts, or nil when the label stands for no turn yet.
+starts, or nil when the label stands for no turn yet.  STEERED is
+non-nil for a prompt steered into a running turn.
 
-For example, (agent-shell-chat--label \"Me\" \\='user) returns \" Me \" in
-`agent-shell-chat-me-label' by default."
+For example, (agent-shell-chat--label :text \"Me\" :role \\='user) returns
+\" Me \" in `agent-shell-chat-me-label' by default."
   (funcall agent-shell-chat-label-function
            (list (cons :text text)
                  (cons :role role)
-                 (cons :prompt-start prompt-start))))
+                 (cons :prompt-start prompt-start)
+                 (cons :steered steered))))
 
 (defun agent-shell-chat-boxed-label (label)
   "Return LABEL's text padded and propertized as a boxed badge.
@@ -203,12 +209,16 @@ The default `agent-shell-chat-label-function'.  The face is picked by
 LABEL's :role (see `agent-shell-chat-me-label' and
 `agent-shell-chat-agent-label'), and carries the box.
 
+A :steered label is followed by \"steer\", outside the badge.
+
 For example, over \\='((:text . \"Me\") (:role . user)) returns \" Me \"
-in `agent-shell-chat-me-label'."
-  (propertize (format " %s " (map-elt label :text))
-              'face (if (eq (map-elt label :role) 'user)
-                        'agent-shell-chat-me-label
-                      'agent-shell-chat-agent-label)))
+in `agent-shell-chat-me-label', and \" Me  steer\" when :steered too."
+  (concat (propertize (format " %s " (map-elt label :text))
+                      'face (if (eq (map-elt label :role) 'user)
+                                'agent-shell-chat-me-label
+                              'agent-shell-chat-agent-label))
+          (when (map-elt label :steered)
+            (propertize " steer" 'face 'default))))
 
 (defun agent-shell-chat--row-props (row)
   "Return overlay properties drawing label ROW on the position it covers.
@@ -787,13 +797,25 @@ it, so the result matches overlaying every run."
                                ;; butting the label against the content.
                                (not (get-char-property raw-start 'invisible))))
                (start (if keep-term (1+ raw-start) raw-start))
+               ;; A steered prompt's input opens with a `[steer] ' prefix
+               ;; (see `agent-shell-experimental--render-steered-prompt').
+               ;; The label says so instead, so it is hidden with the prompt.
+               (steered (and (not live)
+                             (get-text-property run-end 'agent-shell-steer-prefix)))
                ;; The live prompt keeps its in-progress input (never swallow
                ;; it); a submitted turn swallows the input's leading blank lines.
                (end (if (or blank live) run-end
                       (save-excursion (goto-char run-end)
+                                      (when steered
+                                        (goto-char (next-single-property-change
+                                                    run-end 'agent-shell-steer-prefix
+                                                    nil input-end)))
                                       (skip-chars-forward " \t\n")
                                       (point))))
-               (me-label (agent-shell-chat--label "Me" 'user (unless live pos)))
+               (me-label (agent-shell-chat--label :text "Me"
+                                                  :role 'user
+                                                  :prompt-start (unless live pos)
+                                                  :steered steered))
                ;; Face the padding and marker `default' so they do not inherit
                ;; the covered text's face: a display string's unfaced chars
                ;; take the face of the text they replace, and after a code
@@ -1060,10 +1082,11 @@ responses from that marker on."
         (let* ((mbeg (match-beginning 0))
                (mend (match-end 0))
                (label (agent-shell-chat--label
-                       name 'agent
-                       (when-let* ((prompt-start (map-elt (car ranges) :prompt-start))
-                                   ((< prompt-start mbeg)))
-                         prompt-start)))
+                       :text name
+                       :role 'agent
+                       :prompt-start (when-let* ((prompt-start (map-elt (car ranges) :prompt-start))
+                                                 ((< prompt-start mbeg)))
+                                       prompt-start)))
                (end (save-excursion
                       (goto-char mend)
                       ;; Swallow the response's leading blank lines, but stop
@@ -1283,7 +1306,7 @@ replaced by the label, a blank line, and the marker the input follows:
     ;; Laid out as the shell lays out its own live prompt, without its
     ;; leading pad: nothing sits above this one to separate it from.
     (overlay-put overlay 'before-string
-                 (concat (agent-shell-chat--label "Me" 'user)
+                 (concat (agent-shell-chat--label :text "Me" :role 'user)
                          (propertize "\n\n" 'face 'default)
                          (propertize (concat agent-shell-chat--body-indent
                                              agent-shell-chat--prompt)
