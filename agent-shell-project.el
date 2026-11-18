@@ -74,11 +74,15 @@ When nil (the default), `agent-shell-cwd' uses project root detection."
 Within a shell, return the directory it started in.  Elsewhere, return
 the directory a new shell would start in: `agent-shell-cwd-function'
 if set, else the project root, else `default-directory'."
+  (if (and (bound-and-true-p agent-shell--state)
+           (eq (map-elt agent-shell--state :buffer) (current-buffer)))
+      (expand-file-name default-directory)
+    (agent-shell--new-shell-cwd)))
+
+(defun agent-shell--new-shell-cwd ()
+  "Return the directory a new shell would start in."
   (expand-file-name
-   (or (when (and (bound-and-true-p agent-shell--state)
-                  (eq (map-elt agent-shell--state :buffer) (current-buffer)))
-         default-directory)
-       (when agent-shell-cwd-function
+   (or (when agent-shell-cwd-function
          (funcall agent-shell-cwd-function))
        (when (and (boundp 'projectile-mode)
                   projectile-mode
