@@ -4830,6 +4830,52 @@ A failed load stays on the fork."
     (let ((agent-shell-session-choices-function (lambda (_candidates) '(("Bogus" . :bogus)))))
       (should-error (agent-shell--apply-session-choices choices) :type 'user-error))))
 
+(ert-deftest agent-shell--filter-notice-test ()
+  "Test `agent-shell--filter-notice'."
+  ;; nil displays notices unchanged, ending in a newline.
+  (let ((agent-shell-notice-filter-function nil))
+    (should (equal (agent-shell--filter-notice
+                    :text "[idle-compaction] disarmed: prompt\n")
+                   "[idle-compaction] disarmed: prompt\n"))
+    (should (equal (agent-shell--filter-notice :text "Rate limited")
+                   "Rate limited\n")))
+  ;; The filter sees the text without its trailing newline.
+  (let* ((seen nil)
+         (agent-shell-notice-filter-function
+          (lambda (notice)
+            (setq seen (map-elt notice :text)))))
+    (agent-shell--filter-notice :text "[idle-compaction] armed\n")
+    (should (equal seen "[idle-compaction] armed")))
+  ;; Returning nil drops the notice.
+  (let ((agent-shell-notice-filter-function
+         (lambda (notice)
+           (unless (string-prefix-p "[idle-compaction]" (map-elt notice :text))
+             (map-elt notice :text)))))
+    (should-not (agent-shell--filter-notice
+                 :text "[idle-compaction] disarmed: prompt\n"))
+    (should (equal (agent-shell--filter-notice :text "Rate limited\n")
+                   "Rate limited\n")))
+  ;; Returning a string transforms the notice.
+  (let ((agent-shell-notice-filter-function
+         (lambda (notice)
+           (upcase (map-elt notice :text)))))
+    (should (equal (agent-shell--filter-notice
+                    :text "[idle-compaction] disarmed: prompt\n")
+                   "[IDLE-COMPACTION] DISARMED: PROMPT\n")))
+  ;; Returning a non-string displays the notice unfiltered.
+  (let ((agent-shell-notice-filter-function (lambda (_notice) 'nope))
+        (inhibit-message t))
+    (should (equal (agent-shell--filter-notice
+                    :text "[idle-compaction] disarmed: prompt\n")
+                   "[idle-compaction] disarmed: prompt\n")))
+  ;; A signalling filter displays the notice unfiltered.
+  (let ((agent-shell-notice-filter-function (lambda (_notice) (error "Boom")))
+        (debug-on-error nil)
+        (inhibit-message t))
+    (should (equal (agent-shell--filter-notice
+                    :text "[idle-compaction] disarmed: prompt\n")
+                   "[idle-compaction] disarmed: prompt\n"))))
+
 (ert-deftest agent-shell--prompt-select-session-new-shell-test ()
   "Test `agent-shell--prompt-select-session' returns nil for the new-shell choice."
   (let ((noninteractive nil)

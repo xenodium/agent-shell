@@ -314,6 +314,32 @@ are applied.  Each function is called with a range alist containing:
   :type 'hook
   :group 'agent-shell)
 
+(defcustom agent-shell-notice-filter-function nil
+  "Function to filter or transform notices before they are displayed.
+
+Notices are errors and stderr output reported by the agent, shown
+under the \"Notices\" section.
+
+When nil, all notices are displayed unchanged.
+
+Otherwise called with an alist containing:
+
+  :text  The notice text, without its trailing newline.  Agent stderr
+         is delivered one line per notice.
+
+Return the text to display (possibly modified), or nil to drop the
+notice.
+
+For example, to drop idle-compaction notices:
+
+  (setq agent-shell-notice-filter-function
+        (lambda (notice)
+          (unless (string-prefix-p \"[idle-compaction]\"
+                                   (map-elt notice :text))
+            (map-elt notice :text))))"
+  :type '(choice (const :tag "Display all" nil) function)
+  :group 'agent-shell)
+
 (defcustom agent-shell-highlight-blocks t
   "Whether or not to highlight source blocks."
   :type 'boolean
@@ -9125,21 +9151,57 @@ advertise the `systemPrompt' session capability."
     (or (map-nested-elt agent-shell--state '(:agent-config :system-prompt))
         agent-shell-system-prompt)))
 
+(cl-defun agent-shell--filter-notice (&key text)
+  "Return notice TEXT as `agent-shell-notice-filter-function' displays it.
+
+Return nil if the notice should be dropped.  The filter sees TEXT
+without its trailing newline, and the returned text always ends in one.
+
+A filter that signals or returns a non-string is reported via `message'
+and TEXT is displayed unfiltered, so a broken filter never loses
+notices.
+
+For example, with `agent-shell-notice-filter-function' set to upcase
+the text:
+
+  (agent-shell--filter-notice :text \"rate limited\\n\")
+  ;; => \"RATE LIMITED\\n\""
+  (let* ((text (string-remove-suffix "\n" text))
+         (filtered (condition-case-unless-debug err
+                       (if agent-shell-notice-filter-function
+                           (funcall agent-shell-notice-filter-function
+                                    `((:text . ,text)))
+                         text)
+                     (error
+                      (message "`agent-shell-notice-filter-function' failed: %S" err)
+                      text))))
+    (cond
+     ((null filtered)
+      nil)
+     ((stringp filtered)
+      (concat filtered "\n"))
+     (t
+      (message "`agent-shell-notice-filter-function' must return a string or nil, got: %S"
+               filtered)
+      (concat text "\n")))))
+
 (cl-defun agent-shell--subscribe-to-client-events (&key state)
   "Subscribe SHELL and STATE to ACP events."
   (acp-subscribe-to-errors
    :client (map-elt state :client)
    :on-error (lambda (acp-error)
-               (agent-shell--update-fragment
-                :state state
-                :block-id (format "%s-notices"
-                                  (map-elt state :request-count))
-                :label-left (propertize "Notices" 'font-lock-face 'agent-shell-section-heading)
-                :body (or (map-elt acp-error 'message)
-                          (map-elt acp-error 'data)
-                          "Something is up ¯\\_ (ツ)_/¯")
-                :append t
-                :above-last-prompt (not (shell-maker-busy)))))
+               (when-let* ((text (agent-shell--filter-notice
+                                  :text (or (map-elt acp-error 'message)
+                                            (map-elt acp-error 'data)
+                                            "Something is up ¯\\_ (ツ)_/¯"))))
+                 (agent-shell--update-fragment
+                  :state state
+                  :block-id (format "%s-notices"
+                                    (map-elt state :request-count))
+                  :label-left (propertize "Notices" 'font-lock-face 'agent-shell-section-heading)
+                  :body text
+                  :append t
+                  :above-last-prompt (not (shell-maker-busy))))))
   (acp-subscribe-to-notifications
    :client (map-elt state :client)
    :on-notification (lambda (acp-notification)
