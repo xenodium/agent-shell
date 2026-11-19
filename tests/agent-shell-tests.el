@@ -8239,6 +8239,17 @@ prompt."
             :busy t)
            '(:asked-minibuffer nil :quoted-at-prompt t :ends-after-quote t))))
 
+(ert-deftest agent-shell--block-quote-survives-font-lock-test ()
+  "A quote keeps its face when font-lock fontifies the shell buffer."
+  (with-temp-buffer
+    (setq-local font-lock-defaults '(nil t))
+    (insert (agent-shell--block-quote "quoted"))
+    (font-lock-ensure)
+    (goto-char (point-min))
+    (search-forward "quoted")
+    (should (eq (get-text-property (match-beginning 0) 'font-lock-face)
+                'agent-shell-markdown-blockquote))))
+
 (ert-deftest agent-shell--can-insert-into-prompt-p-test ()
   "Text can go into the prompt unless the shell is busy with none live."
   (should (agent-shell-tests--with-persistent-prompt-shell

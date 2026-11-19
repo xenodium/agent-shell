@@ -11425,6 +11425,7 @@ property tells `agent-shell--filter-buffer-substring' to drop the
      0 (length rendered)
      (list 'wrap-prefix wrap
            'face 'agent-shell-markdown-blockquote
+           'font-lock-face 'agent-shell-markdown-blockquote
            'agent-shell-block-quote t)
      rendered)
     (while (string-match (rx line-start ">") rendered pos)
