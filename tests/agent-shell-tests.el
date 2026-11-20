@@ -964,6 +964,32 @@ block -- covering the dispatch path, not just the helper in isolation."
         (should-not (map-elt state :stream-render-timer))
         (should-not (map-elt state :stream-render-pending))))))
 
+(ert-deftest agent-shell--stream-render-timer-defers-mid-redisplay-test ()
+  "Keep a batch pending when its timer fires mid-redisplay (issue #953)."
+  (with-temp-buffer
+    (let ((agent-shell--stream-render-interval 0.01)
+          (state (agent-shell--make-state :buffer (current-buffer)))
+          (rendered nil)
+          (unsafe t))
+      (cl-letf (((symbol-function 'agent-shell--update-fragment)
+                 (lambda (&rest args) (push (plist-get args :body) rendered)))
+                ((symbol-function 'agent-shell--text-change-unsafe-p)
+                 (lambda () unsafe)))
+        (agent-shell--update-streamed-fragment :state state :block-id "a" :body "tail")
+        (let ((first-timer (map-elt state :stream-render-timer)))
+          (with-timeout (2 (ert-fail "Timer never fired"))
+            (while (eq first-timer (map-elt state :stream-render-timer))
+              (accept-process-output nil 0.005))))
+        (should-not rendered)
+        (should (map-elt state :stream-render-timer))
+        (should (map-elt state :stream-render-pending))
+        (setq unsafe nil)
+        (with-timeout (2 (ert-fail "Rearmed timer never flushed the batch"))
+          (while (not rendered)
+            (accept-process-output nil 0.005)))
+        (should (equal rendered '("tail")))
+        (should-not (map-elt state :stream-render-timer))))))
+
 (ert-deftest agent-shell--stream-render-flush-without-pending-is-noop-test ()
   "Flushing with nothing pending renders nothing."
   (with-temp-buffer

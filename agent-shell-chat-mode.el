@@ -52,6 +52,7 @@
 
 (declare-function agent-shell-subscribe-to "agent-shell")
 (declare-function agent-shell-unsubscribe "agent-shell")
+(declare-function agent-shell--text-change-unsafe-p "agent-shell")
 
 (defvar agent-shell--state)
 (defvar agent-shell-show-busy-indicator)
@@ -1218,18 +1219,24 @@ flips between hidden and `Me' immediately across all shells."
 (defun agent-shell-chat--relabel-buffer (buffer)
   "Relabel BUFFER, clearing its pending relabel timer.
 
+Retries shortly instead when run mid-redisplay (see
+`agent-shell--text-change-unsafe-p').
+
 Relabels only the last turn when every change since the previous
 relabel came after that turn's end-of-prompt marker, and the whole
 buffer otherwise."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (let ((from (when-let* ((change agent-shell-chat--earliest-change)
-                              (marker (agent-shell-chat--last-marker-start))
-                              ((<= marker change)))
-                    marker)))
-        (setq agent-shell-chat--relabel-timer nil)
-        (setq agent-shell-chat--earliest-change nil)
-        (agent-shell-chat--relabel from)))))
+      (if (agent-shell--text-change-unsafe-p)
+          (setq agent-shell-chat--relabel-timer
+                (run-at-time 0.05 nil #'agent-shell-chat--relabel-buffer buffer))
+        (let ((from (when-let* ((change agent-shell-chat--earliest-change)
+                                (marker (agent-shell-chat--last-marker-start))
+                                ((<= marker change)))
+                      marker)))
+          (setq agent-shell-chat--relabel-timer nil)
+          (setq agent-shell-chat--earliest-change nil)
+          (agent-shell-chat--relabel from))))))
 
 (defun agent-shell-chat--schedule-relabel (&rest _)
   "Schedule a coalesced, deferred relabel of the whole current buffer.

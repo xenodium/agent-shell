@@ -5688,17 +5688,36 @@ the reported range down to the newly inserted chars."
   (when-let* ((untagged (text-property-not-all start end 'field 'output)))
     (add-text-properties untagged end '(field output))))
 
+(defun agent-shell--text-change-unsafe-p ()
+  "Return non-nil if a timer must not change buffer text right now.
+
+Redisplay binds `inhibit-redisplay' around the Lisp it runs, and
+`with-silent-modifications' binds `inhibit-modification-hooks'.  A
+fontification function that calls `sit-for' (as emojify does) runs due
+timers in there, and text inserted from them leaves the display iterator
+on stale positions, aborting Emacs (issue #953).
+
+For example, returns t when called from a timer that emojify's
+`sit-for' ran during fontification, and nil from an ordinary timer."
+  (or inhibit-redisplay inhibit-modification-hooks))
+
 (defun agent-shell--arm-stream-render-timer (state)
-  "Schedule STATE's pending batch without postponing an existing timer."
+  "Schedule STATE's pending batch without postponing an existing timer.
+
+When the timer fires mid-redisplay (see
+`agent-shell--text-change-unsafe-p'), the batch stays pending and the
+timer is rearmed."
   (unless (map-elt state :stream-render-timer)
     (map-put! state :stream-render-timer
               (run-at-time agent-shell--stream-render-interval nil
                            (lambda ()
                              (map-put! state :stream-render-timer nil)
-                             (when-let* ((buffer (map-elt state :buffer))
-                                         ((buffer-live-p buffer)))
-                               (with-current-buffer buffer
-                                 (agent-shell--flush-stream-render state))))))))
+                             (if (agent-shell--text-change-unsafe-p)
+                                 (agent-shell--arm-stream-render-timer state)
+                               (when-let* ((buffer (map-elt state :buffer))
+                                           ((buffer-live-p buffer)))
+                                 (with-current-buffer buffer
+                                   (agent-shell--flush-stream-render state)))))))))
 
 (defun agent-shell--cancel-stream-render-timer (state)
   "Cancel STATE's pending stream render timer, if any."
@@ -11520,11 +11539,16 @@ indicator (see `agent-shell-busy-indicator-frames' and
 `agent-shell-prompt-busy-frames') costs no redisplay while busy.
 
 For example, with both set to \"(busy)\", a turn redraws on its starting
-tick, its first busy tick and its ending tick, and on none in between."
+tick, its first busy tick and its ending tick, and on none in between.
+
+Busy ticks landing mid-redisplay (see `agent-shell--text-change-unsafe-p')
+are skipped; the next one catches up."
   (let ((shell-frames nil)
         (viewport-frames nil))
     (lambda (_heartbeat status)
       (when-let* (((buffer-live-p shell-buffer))
+                  ((not (and (eq status 'busy)
+                             (agent-shell--text-change-unsafe-p))))
                   (frames (with-current-buffer shell-buffer
                             (list (agent-shell--busy-indicator-frame)
                                   (agent-shell-chat--busy-frame)
@@ -12465,12 +12489,17 @@ For example:
 
 (defun agent-shell--realign-rendered (buffer)
   "Re-align BUFFER's window-relative markdown: tables and images.
-Deferred worker for `agent-shell--realign-on-change'."
+Deferred worker for `agent-shell--realign-on-change'.  Reschedules
+itself when run mid-redisplay (see `agent-shell--text-change-unsafe-p')."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (setq agent-shell--realign-timer nil)
-      (agent-shell-markdown-rerender-tables)
-      (agent-shell-markdown-rerender-images))))
+      (if (agent-shell--text-change-unsafe-p)
+          (setq agent-shell--realign-timer
+                (run-with-idle-timer 0.15 nil #'agent-shell--realign-rendered
+                                     buffer))
+        (setq agent-shell--realign-timer nil)
+        (agent-shell-markdown-rerender-tables)
+        (agent-shell-markdown-rerender-images)))))
 
 (defun agent-shell--realign-on-change (window)
   "Re-align the window-relative markdown of the buffer shown in WINDOW.
