@@ -10896,5 +10896,17 @@ at or after point, which puts diagnostics from other lines at point."
                  (lambda (&optional _beg _end) (list diagnostic))))
         (should-not (agent-shell--get-flymake-error-context))))))
 
+(ert-deftest agent-shell-active-message-hide-twice-test ()
+  "Hiding an active message a second time shows nothing."
+  (let ((active-message (agent-shell-active-message-show :text "Loading..."))
+        (messages nil))
+    (agent-shell-active-message-hide :active-message active-message)
+    (cl-letf (((symbol-function 'message)
+               (lambda (format-string &rest args)
+                 (when format-string
+                   (push (apply #'format format-string args) messages)))))
+      (agent-shell-active-message-hide :active-message active-message))
+    (should-not messages)))
+
 (provide 'agent-shell-tests)
 ;;; agent-shell-tests.el ends here
