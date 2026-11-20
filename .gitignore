@@ -3,3 +3,4 @@ agent-shell-autoloads.el
 
 *.elc
 
+/scratch/
