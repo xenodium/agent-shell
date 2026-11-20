@@ -5314,9 +5314,9 @@ own banner, passing along their shell-maker config."
    ;; Align bullets with the welcome text.
    (let ((agent-shell-markdown-list-line-prefix (make-string 7 ?\s)))
      (agent-shell-markdown-convert
-      "- `2026-10-13` [agent-shell 0.87 updates](https://xenodium.com/agent-shell-0-87-updates){tracking-label=\"(new)\"}
-- `2026-09-22` [agent-shell 0.78 updates](https://xenodium.com/agent-shell-0-78-updates)
-- `2026-08-15` [agent-shell 0.73 updates](https://xenodium.com/agent-shell-0-73-updates)"
+      "- `2026-11-19` [agent-shell 0.98 updates](https://xenodium.com/agent-shell-0-98-updates){tracking-label=\"(new)\"}
+- `2026-10-13` [agent-shell 0.87 updates](https://xenodium.com/agent-shell-0-87-updates){tracking-label=\"(new)\"}
+- `2026-09-22` [agent-shell 0.78 updates](https://xenodium.com/agent-shell-0-78-updates)"
       :tracking-file (locate-user-emacs-file "agent-shell/markdown-links.eld")))
    "\n\n"
    "       FUNDING\n\n"
