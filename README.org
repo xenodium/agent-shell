@@ -66,6 +66,10 @@ Works with 24 agents today, and any other that speaks ACP:
 
 Do take a look at all these blog posts as they showcase most =agent-shell= features.
 
+- [[https://xenodium.com/agent-shell-0-98-updates][agent-shell 0.98 updates]].
+- [[https://xenodium.com/agent-shell-0-87-updates][agent-shell 0.87 updates]].
+- [[https://xenodium.com/agent-shell-0-78-updates][agent-shell 0.78 updates]].
+- [[https://xenodium.com/agent-shell-0-73-updates][agent-shell 0.73 updates]].
 - [[https://xenodium.com/agent-shell-0-63-updates][agent-shell 0.63 updates]].
 - [[https://xenodium.com/agent-shell-0-55-updates][agent-shell 0.55 updates]].
 - [[https://xenodium.com/agent-shell-0-47-1-updates][agent-shell 0.47 updates]].
