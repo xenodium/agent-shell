@@ -1569,13 +1569,18 @@ For example, the buffer \"see ![logo](logo.png)\" becomes
                  (path (agent-shell-markdown--resolve-image-url
                         url
                         :image-cache-directory image-cache-directory
-                        :allow-bare-relative t)))
+                        :allow-bare-relative t))
+                 ;; Optionally make a local copy for the inline image preview,
+                 ;; so paths on a TRAMP connection render.  Cache is never
+                 ;; cleared.
+                 (local-path (let ((local (file-local-copy path)))
+                               (if local local path))))
             (cond
              ((and path
                    (image-supported-file-p path)
                    (display-graphic-p))
               (let ((image (create-image
-                            path nil nil
+                            local-path nil nil
                             :max-width (or (map-elt attributes :max-width)
                                            (agent-shell-markdown--image-max-width))
                             :max-height (map-elt attributes :max-height))))
