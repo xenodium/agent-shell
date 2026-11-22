@@ -639,13 +639,12 @@ image-rendering path as `![alt](uri)'."
   (let* ((long-line (concat (make-string agent-shell--tool-output-max-line-length ?a)
                             (make-string agent-shell--tool-output-max-line-length ?z)))
          (omitted (- (length long-line) (* 2 agent-shell--tool-output-truncation-context-length)))
-         (output (concat "short\n" long-line "\nlast")))
+         (output (concat "short β\n" long-line "\n\nlast\n" long-line "\n"))
+         (shortened (concat (make-string agent-shell--tool-output-truncation-context-length ?a)
+                            (format " ... [%d characters omitted] ... " omitted)
+                            (make-string agent-shell--tool-output-truncation-context-length ?z))))
     (should (equal (agent-shell--truncate-tool-output-lines output)
-                   (concat "short\n"
-                           (make-string agent-shell--tool-output-truncation-context-length ?a)
-                           (format " ... [%d characters omitted] ... " omitted)
-                           (make-string agent-shell--tool-output-truncation-context-length ?z)
-                           "\nlast")))
+                   (concat "short β\n" shortened "\n\nlast\n" shortened "\n")))
     (should (equal (agent-shell--truncate-tool-output-lines
                     (make-string agent-shell--tool-output-max-line-length ?x))
                    (make-string agent-shell--tool-output-max-line-length ?x)))))

@@ -9519,17 +9519,24 @@ Lines longer than `agent-shell--tool-output-max-line-length' keep
 `agent-shell--tool-output-truncation-context-length' characters at each
 end, with an omitted-character count between them.  For example, a
 33000-character line reports that 32600 characters were omitted."
-  (if (<= (length output) agent-shell--tool-output-max-line-length)
-      output
-    (mapconcat (lambda (line)
-                 (if (<= (length line) agent-shell--tool-output-max-line-length)
-                     line
-                   (format "%s ... [%d characters omitted] ... %s"
-                           (substring line 0 agent-shell--tool-output-truncation-context-length)
-                           (- (length line) (* 2 agent-shell--tool-output-truncation-context-length))
-                           (substring line (- agent-shell--tool-output-truncation-context-length)))))
-               (split-string output "\n")
-               "\n")))
+  (let ((limit agent-shell--tool-output-max-line-length)
+        (context agent-shell--tool-output-truncation-context-length)
+        (length (length output))
+        (line-start 0)
+        (copy-from 0)
+        parts)
+    (while (< (+ line-start limit) length)
+      (let* ((line-end (or (string-search "\n" output line-start) length))
+             (line-length (- line-end line-start)))
+        (when (> line-length limit)
+          (push (substring output copy-from (+ line-start context)) parts)
+          (push (format " ... [%d characters omitted] ... "
+                        (- line-length (* 2 context))) parts)
+          (setq copy-from (- line-end context)))
+        (setq line-start (1+ line-end))))
+    (if parts
+        (apply #'concat (nreverse (cons (substring output copy-from) parts)))
+      output)))
 
 (defun agent-shell--tool-call-update-output-markdown (acp-update)
   "Return markdown output for ACP-UPDATE, a `tool_call_update' update.
