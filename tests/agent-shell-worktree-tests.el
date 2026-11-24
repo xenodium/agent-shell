@@ -158,4 +158,27 @@
       (when (file-in-directory-p directory temporary-file-directory)
         (delete-directory directory t)))))
 
+(ert-deftest agent-shell-worktree-trailing-slash-failure-test ()
+  "Signal an error when creation fails for a path with a trailing slash."
+  (let* ((directory (make-temp-file "agent-shell-worktree-slash " t))
+         (main (expand-file-name "main" directory))
+         (target (expand-file-name ".agent-shell/worktrees/slash" main))
+         (started nil)
+         (agent-shell-cwd-function nil)
+         (agent-shell-dot-subdir-function #'agent-shell--dot-subdir-in-repo)
+         (agent-shell-worktree-create-function #'ignore))
+    (unwind-protect
+        (progn
+          (agent-shell-worktree-test--repository main)
+          (let ((default-directory (file-name-as-directory main)))
+            (cl-letf (((symbol-function 'read-directory-name)
+                       (lambda (&rest _) (file-name-as-directory target)))
+                      ((symbol-function 'agent-shell)
+                       (lambda (&rest _) (setq started t))))
+              (should-error (agent-shell-new-worktree-shell) :type 'user-error)))
+          (should-not started)
+          (should-not (file-exists-p target)))
+      (when (file-in-directory-p directory temporary-file-directory)
+        (delete-directory directory t)))))
+
 ;;; agent-shell-worktree-tests.el ends here

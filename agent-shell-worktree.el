@@ -163,9 +163,10 @@ The user is prompted to confirm or edit the worktree path before creation."
          (worktrees-dir (agent-shell--dot-subdir "worktrees"))
          (worktree-name (agent-shell-worktree--generate-name))
          (default-path (file-name-concat worktrees-dir worktree-name))
-         (worktree-path (expand-file-name (read-directory-name
-                                           "Worktree directory: "
-                                           default-path))))
+         (worktree-path (directory-file-name
+                         (expand-file-name (read-directory-name
+                                            "Worktree directory: "
+                                            default-path)))))
     (when (file-exists-p worktree-path)
       (user-error "Directory already exists: %s" worktree-path))
     (make-directory (file-name-directory worktree-path) t)
