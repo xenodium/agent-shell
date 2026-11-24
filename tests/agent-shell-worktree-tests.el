@@ -123,4 +123,39 @@
       (when (file-in-directory-p directory temporary-file-directory)
         (delete-directory directory t)))))
 
+(ert-deftest agent-shell-worktree-create-function-test ()
+  "Create a sparse worktree with a custom create function."
+  (let* ((directory (make-temp-file "agent-shell-worktree-sparse " t))
+         (main (expand-file-name "main" directory))
+         (expected (expand-file-name ".agent-shell/worktrees/sparse" main))
+         (started-directory nil)
+         (agent-shell-cwd-function nil)
+         (agent-shell-dot-subdir-function #'agent-shell--dot-subdir-in-repo)
+         (agent-shell-worktree-create-function
+          (lambda (path)
+            (agent-shell-worktree-test--git default-directory "worktree" "add" "--no-checkout" path)
+            (agent-shell-worktree-test--git path "sparse-checkout" "set" "--cone" "src")
+            (agent-shell-worktree-test--git path "checkout"))))
+    (unwind-protect
+        (progn
+          (agent-shell-worktree-test--repository main)
+          (dolist (file '("src/file" "data/file"))
+            (make-empty-file (expand-file-name file main) t))
+          (agent-shell-worktree-test--git main "add" ".")
+          (agent-shell-worktree-test--git
+           main "-c" "user.name=Worktree Test" "-c" "user.email=worktree@example.com"
+           "commit" "-qm" "Add files")
+          (let ((default-directory (file-name-as-directory main)))
+            (cl-letf (((symbol-function 'agent-shell-worktree--generate-name) (lambda () "sparse"))
+                      ((symbol-function 'read-directory-name)
+                       (lambda (_prompt directory &rest _) directory))
+                      ((symbol-function 'agent-shell)
+                       (lambda (&rest _) (setq started-directory default-directory))))
+              (agent-shell-new-worktree-shell)))
+          (should (file-equal-p started-directory expected))
+          (should (file-exists-p (expand-file-name "src/file" expected)))
+          (should-not (file-exists-p (expand-file-name "data" expected))))
+      (when (file-in-directory-p directory temporary-file-directory)
+        (delete-directory directory t)))))
+
 ;;; agent-shell-worktree-tests.el ends here
