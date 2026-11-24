@@ -4976,6 +4976,101 @@ which is stubbed here so the test exercises only the policy."
     (should-not (agent-shell-markdown--fetch-remote-image "file:///tmp/x.png" "/tmp/img-cache"))
     (should-not (agent-shell-markdown--fetch-remote-image "https://example.com/img?id=1" "/tmp/img-cache"))))
 
+(ert-deftest agent-shell-markdown--local-image-path-test ()
+  "Test `agent-shell-markdown--local-image-path'.
+
+Local paths pass through untouched.  A remote path is copied into the
+cache once per modification time; with no cache, or a failed copy, it
+yields nil."
+  (let ((cache (make-temp-file "agent-shell-image-cache" t))
+        (mtime '(26000 0))
+        (copies 0))
+    (unwind-protect
+        (progn
+          ;; Local: returned as is, nothing copied.
+          (cl-letf (((symbol-function 'copy-file)
+                     (lambda (&rest _) (error "Should not copy"))))
+            (should (equal (agent-shell-markdown--local-image-path
+                            :path "/tmp/a.png" :image-cache-directory cache)
+                           "/tmp/a.png")))
+          (cl-letf (((symbol-function 'file-remote-p) (lambda (&rest _) t))
+                    ((symbol-function 'file-attributes)
+                     (lambda (&rest _)
+                       (list nil 1 0 0 nil mtime nil 0 "-rw-r--r--" t 0 0)))
+                    ((symbol-function 'copy-file)
+                     (lambda (_from to &rest _)
+                       (setq copies (1+ copies))
+                       (with-temp-file to (insert "png")))))
+            ;; Remote: copied into the cache, keeping its extension.
+            (let ((first (agent-shell-markdown--local-image-path
+                          :path "/ssh:host:/tmp/a.png" :image-cache-directory cache)))
+              (should (string-prefix-p (file-name-as-directory cache) first))
+              (should (string-suffix-p ".png" first))
+              (should (file-exists-p first))
+              ;; Rendering again reuses the copy.
+              (should (equal (agent-shell-markdown--local-image-path
+                              :path "/ssh:host:/tmp/a.png" :image-cache-directory cache)
+                             first))
+              (should (= copies 1))
+              ;; An edited image is copied afresh.
+              (setq mtime '(26000 1))
+              (should-not (equal (agent-shell-markdown--local-image-path
+                                  :path "/ssh:host:/tmp/a.png" :image-cache-directory cache)
+                                 first))
+              (should (= copies 2)))
+            ;; No cache: remote images are not copied.
+            (should-not (agent-shell-markdown--local-image-path
+                         :path "/ssh:host:/tmp/b.png" :image-cache-directory nil))
+            (should (= copies 2)))
+          ;; A failed copy yields nil rather than signaling.
+          (cl-letf (((symbol-function 'file-remote-p) (lambda (&rest _) t))
+                    ((symbol-function 'file-attributes)
+                     (lambda (&rest _)
+                       (list nil 1 0 0 nil mtime nil 0 "-rw-r--r--" t 0 0)))
+                    ((symbol-function 'copy-file)
+                     (lambda (&rest _) (error "Connection lost"))))
+            (should-not (agent-shell-markdown--local-image-path
+                         :path "/ssh:host:/tmp/c.png" :image-cache-directory cache))))
+      (delete-directory cache t))))
+
+(ert-deftest agent-shell-markdown-remote-image-renders-local-copy-test ()
+  "Test remote images display their local copy yet open the remote file.
+
+Covers both `![alt](path)' markup and bare image-path lines, and that
+the cache directory reaches `agent-shell-markdown--local-image-path'."
+  (dolist (markdown '("![remote](/ssh:host:/tmp/a.png)\n"
+                      "/ssh:host:/tmp/a.png\n"))
+    (let ((loaded nil)
+          (visited nil)
+          (cache-directories nil))
+      (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _d) t))
+                ((symbol-function 'image-supported-file-p) (lambda (_f) t))
+                ((symbol-function 'agent-shell-markdown--resolve-image-url)
+                 (lambda (url &rest _) url))
+                ((symbol-function 'agent-shell-markdown--local-image-path)
+                 (cl-function
+                  (lambda (&key image-cache-directory &allow-other-keys)
+                    (push image-cache-directory cache-directories)
+                    "/cache/copy.png")))
+                ((symbol-function 'create-image)
+                 (lambda (file &rest _)
+                   (setq loaded file)
+                   '(image :type png :fake t)))
+                ((symbol-function 'image-flush) (lambda (&rest _) nil))
+                ((symbol-function 'agent-shell-markdown-visit-file)
+                 (cl-function (lambda (&key file &allow-other-keys)
+                                (setq visited file)))))
+        (with-temp-buffer
+          (insert markdown)
+          (agent-shell-markdown-replace-markup :render-images t
+                                               :image-cache-directory "/cache")
+          (should (equal loaded "/cache/copy.png"))
+          (should (equal cache-directories '("/cache")))
+          (let ((pos (text-property-not-all (point-min) (point-max) 'display nil)))
+            (should pos)
+            (funcall (lookup-key (get-text-property pos 'keymap) (kbd "RET"))))
+          (should (equal visited "/ssh:host:/tmp/a.png")))))))
+
 (ert-deftest agent-shell-markdown--resolve-image-url-bare-relative-test ()
   "Test `agent-shell-markdown--resolve-image-url' gates bare relative paths.
 
@@ -5000,6 +5095,34 @@ common than an image meant to render."
             (should-not (agent-shell-markdown--resolve-image-url
                          "data:image/png;base64,AAAA" :allow-bare-relative t))))
       (delete-directory directory t))))
+
+(ert-deftest agent-shell-markdown--resolve-image-url-tramp-test ()
+  "Test `agent-shell-markdown--resolve-image-url' never opens a connection.
+
+A path on a host with no open connection stays nil without being
+looked up, since a lookup would connect.  An open connection resolves
+the path, and a lookup that signals (the connection dropped) gives nil."
+  (let ((connected nil)
+        (looked-up nil)
+        (exists t))
+    (cl-letf (((symbol-function 'file-remote-p)
+               (lambda (file &optional _identification connected-only)
+                 (and (string-prefix-p "/ssh:" file)
+                      (or (not connected-only) connected)
+                      "/ssh:host:")))
+              ((symbol-function 'file-exists-p)
+               (lambda (_file)
+                 (setq looked-up t)
+                 (if (eq exists 'signal)
+                     (signal 'remote-file-error '("Tramp failed to connect"))
+                   exists))))
+      (should-not (agent-shell-markdown--resolve-image-url "/ssh:host:/tmp/a.png"))
+      (should-not looked-up)
+      (setq connected t)
+      (should (equal (agent-shell-markdown--resolve-image-url "/ssh:host:/tmp/a.png")
+                     "/ssh:host:/tmp/a.png"))
+      (setq exists 'signal)
+      (should-not (agent-shell-markdown--resolve-image-url "/ssh:host:/tmp/a.png")))))
 
 (ert-deftest agent-shell-markdown--resolve-image-url-remote-test ()
   "Test that `agent-shell-markdown--resolve-image-url' fetches http(s) urls.

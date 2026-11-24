@@ -501,7 +501,8 @@ block is left as literal text."
            :image-cache-directory image-cache-directory
            :complete (or force complete))
           (agent-shell-markdown--replace-image-file-paths
-           :avoid-ranges avoid-ranges))
+           :avoid-ranges avoid-ranges
+           :image-cache-directory image-cache-directory))
         ;; After the markup passes, so a URL already consumed as a
         ;; `[title](url)' destination or an image's is not seen again.
         (agent-shell-markdown--linkify-urls :avoid-ranges avoid-ranges)
@@ -1472,7 +1473,8 @@ file on RET or \\`mouse-1'.  Entering the image echoes that key and the
 ones that resize it (see `agent-shell-markdown--image-hint'), since
 a displayed image otherwise gives no sign that it acts.  Remote http
 URLs are downloaded into IMAGE-CACHE-DIRECTORY first (see
-`agent-shell-markdown--fetch-remote-image').
+`agent-shell-markdown--fetch-remote-image'), as are files on a remote
+host such as over TRAMP (see `agent-shell-markdown--local-image-path').
 
 When a remote image can't be shown inline (no IMAGE-CACHE-DIRECTORY,
 the download failed, or a non-graphical display), its markup is
@@ -1569,13 +1571,19 @@ For example, the buffer \"see ![logo](logo.png)\" becomes
                  (path (agent-shell-markdown--resolve-image-url
                         url
                         :image-cache-directory image-cache-directory
-                        :allow-bare-relative t)))
+                        :allow-bare-relative t))
+                 ;; What `create-image' loads: `path', or a cached local
+                 ;; copy when `path' is remote.  RET still opens `path'.
+                 (image-path (when (and path
+                                        (image-supported-file-p path)
+                                        (display-graphic-p))
+                               (agent-shell-markdown--local-image-path
+                                :path path
+                                :image-cache-directory image-cache-directory))))
             (cond
-             ((and path
-                   (image-supported-file-p path)
-                   (display-graphic-p))
+             (image-path
               (let ((image (create-image
-                            path nil nil
+                            image-path nil nil
                             :max-width (or (map-elt attributes :max-width)
                                            (agent-shell-markdown--image-max-width))
                             :max-height (map-elt attributes :max-height))))
@@ -1633,7 +1641,7 @@ For example, the buffer \"see ![logo](logo.png)\" becomes
                     (put-text-property markup-start end
                                        'agent-shell-markdown-source source)))))))))))))
 
-(cl-defun agent-shell-markdown--replace-image-file-paths (&key avoid-ranges)
+(cl-defun agent-shell-markdown--replace-image-file-paths (&key avoid-ranges image-cache-directory)
   "Render bare image-path lines as displayed images.
 
 A line that is solely a local path or `file://' URI ending in a
@@ -1644,7 +1652,10 @@ carrying a `display' property with the image and a keymap that
 opens the file, whose key is echoed along with the resizing ones as
 the cursor enters the image (see
 `agent-shell-markdown--image-hint').  Lines inside any of
-AVOID-RANGES are left untouched, as are unresolvable paths.
+AVOID-RANGES are left untouched, as are unresolvable paths.  A path on
+a remote host, such as over TRAMP, is shown from a copy in
+IMAGE-CACHE-DIRECTORY, and left untouched when that is nil (see
+`agent-shell-markdown--local-image-path').
 
 For example, a buffer line containing just `/abs/path/img.png'
 renders the image in place of that text."
@@ -1666,11 +1677,14 @@ renders the image in place of that text."
                  (path-end (match-end 1))
                  (raw (buffer-substring-no-properties path-start path-end))
                  (resolved (agent-shell-markdown--resolve-image-url raw)))
-            (when (and resolved
-                       (image-supported-file-p resolved)
-                       (display-graphic-p))
+            (when-let* (((and resolved
+                              (image-supported-file-p resolved)
+                              (display-graphic-p)))
+                        (image-path (agent-shell-markdown--local-image-path
+                                     :path resolved
+                                     :image-cache-directory image-cache-directory)))
               (let* ((image (create-image
-                             resolved nil nil
+                             image-path nil nil
                              :max-width (agent-shell-markdown--image-max-width)))
                      (open-action (lambda () (interactive)
                                     (agent-shell-markdown-visit-file :file resolved)))
@@ -5849,12 +5863,46 @@ an image."
                                            :file cache-path
                                            :content-type-prefix "image/"))))
 
+(cl-defun agent-shell-markdown--local-image-path (&key path image-cache-directory)
+  "Return a local file path `create-image' can load for the image at PATH.
+
+Returns PATH itself when it is local.  A remote PATH (say, over TRAMP)
+is copied into IMAGE-CACHE-DIRECTORY, since `create-image' only reads
+local files, and the copy's path is returned instead.  The copy is named
+from the md5 of PATH and its modification time, so a re-render reuses it
+while an edited image is copied afresh.  Returns nil for a remote PATH
+when IMAGE-CACHE-DIRECTORY is nil or the copy fails.
+
+For example, \"/tmp/a.png\" returns \"/tmp/a.png\", whereas
+\"/ssh:host:/tmp/a.png\" returns a path like
+\"IMAGE-CACHE-DIRECTORY/3f2a...9c.png\"."
+  (if (not (file-remote-p path))
+      path
+    (when-let* (((stringp image-cache-directory))
+                (modified (file-attribute-modification-time
+                           (ignore-errors (file-attributes path))))
+                (cache-path (expand-file-name
+                             (format "%s%s"
+                                     (md5 (format "%s|%s" path modified))
+                                     (file-name-extension path t))
+                             image-cache-directory)))
+      (if (file-exists-p cache-path)
+          cache-path
+        (ignore-errors
+          (make-directory image-cache-directory t)
+          (copy-file path cache-path t)
+          cache-path)))))
+
 (cl-defun agent-shell-markdown--resolve-image-url (url &key image-cache-directory allow-bare-relative)
   "Resolve image URL to an absolute local file path, or nil.
 Handles http(s) URLs (downloaded into IMAGE-CACHE-DIRECTORY and cached via
 `agent-shell-markdown--fetch-remote-image'; not fetched when
 IMAGE-CACHE-DIRECTORY is nil), file:// URIs, absolute paths, and paths
 starting with `~/', `./', or `../'.
+
+A path on a remote host, such as over TRAMP, resolves only while a
+connection to that host is already open, as rendering must never open
+one.
 
 ALLOW-BARE-RELATIVE additionally accepts a path naming no directory at
 all, such as `logo.png', resolved against `default-directory'.  Off by
@@ -5886,7 +5934,12 @@ path."
                                                   url)))
                         url)))
                 (expanded (expand-file-name path))
-                ((file-exists-p expanded)))
+                ;; Rendering must never open a connection: one to an
+                ;; unreachable host signals, and one wanting a password
+                ;; blocks on a prompt mid-render.
+                ((or (not (file-remote-p expanded))
+                     (file-remote-p expanded nil t)))
+                ((ignore-errors (file-exists-p expanded))))
       expanded)))
 
 (defun agent-shell-markdown--image-max-width ()
