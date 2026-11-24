@@ -9760,7 +9760,9 @@ reads the buffer's prompt capabilities."
                         :state (agent-shell--state)
                         :block-id (format "%s-usage" (map-elt (agent-shell--state) :request-count))
                         :label-left (propertize "Usage" 'font-lock-face 'agent-shell-section-heading)
-                        :body (agent-shell--format-usage (map-elt (agent-shell--state) :usage) t)
+                        :body (funcall agent-shell-usage-format-function
+                                       (map-elt (agent-shell--state) :usage))
+                        :expanded agent-shell-usage-expand-by-default
                         :create-new t))
                      (unless success
                        (agent-shell--update-fragment

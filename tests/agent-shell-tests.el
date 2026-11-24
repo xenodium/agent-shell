@@ -1442,6 +1442,63 @@ The fallback triggers when `agent-shell--build-content-blocks' fails."
         (should (equal (map-elt (map-elt data :usage) :total-tokens)
                        1500))))))
 
+(ert-deftest agent-shell--send-command-turn-end-usage-test ()
+  "Test the turn-end usage block follows the usage defcustoms."
+  (dolist (expand '(nil t))
+    (let ((captured-on-success nil)
+          (fragment nil)
+          (agent-shell--state (list (cons :buffer (current-buffer))
+                                    (cons :event-subscriptions nil)
+                                    (cons :client 'test-client)
+                                    (cons :session (list (cons :id "test-session") (cons :title nil)))
+                                    (cons :last-entry-type nil)
+                                    (cons :tool-calls nil)
+                                    (cons :usage (list (cons :total-tokens 0)))
+                                    (cons :idle-timer nil)))
+          (agent-shell-show-busy-indicator nil)
+          (agent-shell-show-usage-at-turn-end t)
+          (agent-shell-usage-expand-by-default expand)
+          (agent-shell-usage-format-function
+           (lambda (usage)
+             (format "total=%s" (map-elt usage :total-tokens)))))
+      (cl-letf (((symbol-function 'agent-shell--state)
+                 (lambda () agent-shell--state))
+                ((symbol-function 'agent-shell--send-request)
+                 (lambda (&rest args)
+                   (setq captured-on-success (plist-get args :on-success))))
+                ((symbol-function 'agent-shell--finish-output)
+                 (lambda (&rest _)))
+                ((symbol-function 'agent-shell--update-fragment)
+                 (lambda (&rest args) (setq fragment args)))
+                ((symbol-function 'agent-shell--prompt-queue-process-next)
+                 (lambda (&rest _))))
+        (agent-shell--send-command
+         :prompt "Hello"
+         :shell-buffer (current-buffer))
+        (funcall captured-on-success
+                 `((stopReason . "end_turn")
+                   (usage . ((totalTokens . 1500)))))
+        (should (equal (plist-get fragment :body) "total=1500"))
+        (should (eq (plist-get fragment :expanded) expand))))))
+
+(ert-deftest agent-shell-usage-format-functions-test ()
+  "Test the built-in usage format functions."
+  (let ((usage (list (cons :input-tokens 1000)
+                     (cons :output-tokens 110)
+                     (cons :total-tokens 1110)
+                     (cons :context-used 6000)
+                     (cons :context-size 1000000))))
+    (should (equal (substring-no-properties
+                    (agent-shell-usage-one-line-format usage))
+                   (substring-no-properties
+                    (agent-shell--format-usage usage))))
+    (should-not (string-match-p "\n" (agent-shell-usage-one-line-format usage)))
+    (should (equal (substring-no-properties
+                    (agent-shell-usage-multiline-format usage))
+                   (substring-no-properties
+                    (agent-shell--format-usage usage t))))
+    (should (string-match-p "\n" (agent-shell-usage-multiline-format usage)))))
+
 (ert-deftest agent-shell--send-command-asks-to-drain-queue-on-cancel-test ()
   "Test a cancelled turn moves on to the queued prompts only if confirmed.
 

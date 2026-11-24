@@ -47,6 +47,34 @@ context window usage, and cost information after each agent response."
   :type 'boolean
   :group 'agent-shell)
 
+(defcustom agent-shell-usage-expand-by-default nil
+  "Whether the usage section shown at turn end should be expanded by default.
+
+When nil (the default), the usage section is collapsed.
+When non-nil, the usage section is expanded.
+
+Only applies when `agent-shell-show-usage-at-turn-end' is non-nil."
+  :type 'boolean
+  :group 'agent-shell)
+
+(defcustom agent-shell-usage-format-function #'agent-shell-usage-multiline-format
+  "Function returning the usage text shown at turn end.
+
+Called with one argument, the usage alist, with keys like
+`:input-tokens', `:output-tokens', `:thought-tokens',
+`:cached-read-tokens', `:total-tokens', `:context-used',
+`:context-size', `:cost-amount' and `:cost-currency'.  Should return
+a (possibly propertized) string.
+
+Also used by `agent-shell-show-usage'.
+
+Built-in choices are `agent-shell-usage-multiline-format' and
+`agent-shell-usage-one-line-format'."
+  :type '(choice (const :tag "Multiline" agent-shell-usage-multiline-format)
+                 (const :tag "One line" agent-shell-usage-one-line-format)
+                 (function :tag "Custom function"))
+  :group 'agent-shell)
+
 (defcustom agent-shell-show-context-usage-indicator 'detailed
   "Whether and how to show the context usage indicator.
 
@@ -129,7 +157,26 @@ a more polished presentation method."
     (error "Not in an agent-shell buffer"))
   (unless (agent-shell--usage-has-data-p (map-elt agent-shell--state :usage))
     (error "Usage not available"))
-  (message "\n%s\n" (agent-shell--format-usage (map-elt agent-shell--state :usage) t)))
+  (message "\n%s\n" (funcall agent-shell-usage-format-function
+                              (map-elt agent-shell--state :usage))))
+
+(defun agent-shell-usage-multiline-format (usage)
+  "Return USAGE formatted as right-aligned labeled rows.
+
+For example:
+
+   Context: 6k/1m (0.6%)
+    Tokens: 1k in · 110 out · 5k cached (6k total)
+      Cost: $0.01"
+  (agent-shell--format-usage usage t))
+
+(defun agent-shell-usage-one-line-format (usage)
+  "Return USAGE formatted as a single line.
+
+For example:
+
+  Context: 6k/1m (0.6%) Tokens: 1k in · 110 out (1k total) Cost: $0.01"
+  (agent-shell--format-usage usage))
 
 (defun agent-shell--format-usage (usage &optional multiline)
   "Format USAGE data as a display string.
