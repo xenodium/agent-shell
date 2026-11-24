@@ -10861,6 +10861,77 @@ project, in which case it starts in that project's root."
       (delete-directory shell-dir t)
       (delete-directory project-dir t))))
 
+(ert-deftest agent-shell--shell-buffer-from-shell-in-switched-project-test ()
+  "Test that a shell looked up from a shell is in a switched-to project.
+
+From within a shell, `agent-shell--shell-buffer' returns that shell,
+unless `project-switch-project' is running the command for another
+project, in which case it returns that project's shell, or nil when
+it has none."
+  (let* ((shell-dir (file-name-as-directory (make-temp-file "shell-" t)))
+         (project-dir (file-name-as-directory (make-temp-file "project-" t)))
+         (empty-dir (file-name-as-directory (make-temp-file "empty-" t)))
+         (shell (agent-shell-tests--make-started-shell "started-shell" shell-dir))
+         (project-shell (agent-shell-tests--make-started-shell
+                         "project-shell" project-dir)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'agent-shell-buffers)
+                   (lambda () (list shell project-shell))))
+          (make-directory (expand-file-name ".git" project-dir))
+          (make-directory (expand-file-name ".git" empty-dir))
+          (with-current-buffer shell
+            (setq major-mode 'agent-shell-mode)
+            (should (eq (agent-shell--shell-buffer :no-create t) shell))
+            (let ((project-current-directory-override project-dir))
+              (should (eq (agent-shell--shell-buffer :no-create t)
+                          project-shell)))
+            (let ((project-current-directory-override empty-dir))
+              (should-not (agent-shell--shell-buffer :no-create t
+                                                     :no-error t)))))
+      (kill-buffer shell)
+      (kill-buffer project-shell)
+      (delete-directory shell-dir t)
+      (delete-directory project-dir t)
+      (delete-directory empty-dir t))))
+
+(ert-deftest agent-shell--dwim-from-shell-in-switched-project-test ()
+  "Test that `agent-shell' in a shell toggles it only outside a project switch.
+
+While `project-switch-project' is running the command for a project,
+`agent-shell--dwim' displays that project's shell instead of toggling
+the shell it was run from."
+  (let* ((shell-dir (file-name-as-directory (make-temp-file "shell-" t)))
+         (project-dir (file-name-as-directory (make-temp-file "project-" t)))
+         (shell (agent-shell-tests--make-started-shell "started-shell" shell-dir))
+         (project-shell (agent-shell-tests--make-started-shell
+                         "project-shell" project-dir))
+         (agent-shell-prefer-viewport-interaction nil)
+         (agent-shell-context-sources nil)
+         (toggled nil)
+         (displayed nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'agent-shell-buffers)
+                   (lambda () (list shell project-shell)))
+                  ((symbol-function 'agent-shell-toggle)
+                   (lambda () (setq toggled t)))
+                  ((symbol-function 'agent-shell--display-and-insert-context)
+                   (lambda (buffer _text) (setq displayed buffer))))
+          (make-directory (expand-file-name ".git" project-dir))
+          (with-current-buffer shell
+            (setq major-mode 'agent-shell-mode)
+            (agent-shell--dwim)
+            (should toggled)
+            (should-not displayed)
+            (setq toggled nil)
+            (let ((project-current-directory-override project-dir))
+              (agent-shell--dwim))
+            (should-not toggled)
+            (should (eq displayed project-shell))))
+      (kill-buffer shell)
+      (kill-buffer project-shell)
+      (delete-directory shell-dir t)
+      (delete-directory project-dir t))))
+
 (ert-deftest agent-shell--send-command-renders-deferred-markup-in-viewport-test ()
   "Test the end of a turn renders the viewport's held-back markup too.
 

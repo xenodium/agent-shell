@@ -1596,6 +1596,7 @@ handles viewport mode detection, existing shell reuse, and project context."
     (error ":new-shell and :switch-to-shell are mutually exclusive"))
   (if agent-shell-prefer-viewport-interaction
       (if (and (not new-shell)
+               (not (bound-and-true-p project-current-directory-override))
                (or (derived-mode-p 'agent-shell-viewport-view-mode)
                    (derived-mode-p 'agent-shell-viewport-edit-mode)))
           (agent-shell-toggle)
@@ -1636,7 +1637,10 @@ handles viewport mode detection, existing shell reuse, and project context."
                   (text (agent-shell--context :shell-buffer shell-buffer)))
              (agent-shell--display-and-insert-context shell-buffer text)))
           (t
-           (if (derived-mode-p 'agent-shell-mode)
+           (if (and (derived-mode-p 'agent-shell-mode)
+                    ;; A project chosen with `project-switch-project'
+                    ;; outranks the shell it was chosen from.
+                    (not (bound-and-true-p project-current-directory-override)))
                (let* ((shell-buffer (agent-shell--shell-buffer :no-create t))
                       (text (agent-shell--context :shell-buffer shell-buffer)))
                  (agent-shell-toggle)
@@ -9864,6 +9868,9 @@ Resolution order:
 4. If there are shells in current project, return the first one found.
 5. Otherwise, ask user to pick one.
 
+While `project-switch-project' runs the command for a project, steps 2
+and 3 are skipped and step 4 looks in that project.
+
 When NO-CREATE is nil (default), prompt to create a new shell if none exists.
 When NO-CREATE is non-nil, return existing shell or nil/error if none exists.
 When NO-ERROR is non-nil, return nil instead of raising an error.
@@ -9873,12 +9880,19 @@ Returns a buffer object or nil."
          ;; and reused when creating one (which only happens after that), since
          ;; `agent-shell-cwd-function' may be expensive or interactive.
          (cwd nil)
-         (shell-buffer (or (agent-shell-viewport--shell-buffer
-                            (or viewport-buffer (current-buffer)))
-                           (if (derived-mode-p 'agent-shell-mode)
+         ;; A project chosen with `project-switch-project' outranks the
+         ;; shell or viewport it was chosen from.
+         (switched (bound-and-true-p project-current-directory-override))
+         (shell-buffer (or (when (or viewport-buffer (not switched))
+                             (agent-shell-viewport--shell-buffer
+                              (or viewport-buffer (current-buffer))))
+                           (if (and (not switched)
+                                    (derived-mode-p 'agent-shell-mode))
                                (current-buffer)
                              (seq-first (agent-shell-project-buffers
-                                         (setq cwd (agent-shell-cwd))))))))
+                                         (setq cwd (if switched
+                                                       (agent-shell--new-shell-cwd)
+                                                     (agent-shell-cwd)))))))))
     (if shell-buffer
         shell-buffer
       (if no-create
