@@ -1596,7 +1596,7 @@ handles viewport mode detection, existing shell reuse, and project context."
     (error ":new-shell and :switch-to-shell are mutually exclusive"))
   (if agent-shell-prefer-viewport-interaction
       (if (and (not new-shell)
-               (not (bound-and-true-p project-current-directory-override))
+               (not project-current-directory-override)
                (or (derived-mode-p 'agent-shell-viewport-view-mode)
                    (derived-mode-p 'agent-shell-viewport-edit-mode)))
           (agent-shell-toggle)
@@ -1640,7 +1640,7 @@ handles viewport mode detection, existing shell reuse, and project context."
            (if (and (derived-mode-p 'agent-shell-mode)
                     ;; A project chosen with `project-switch-project'
                     ;; outranks the shell it was chosen from.
-                    (not (bound-and-true-p project-current-directory-override)))
+                    (not project-current-directory-override))
                (let* ((shell-buffer (agent-shell--shell-buffer :no-create t))
                       (text (agent-shell--context :shell-buffer shell-buffer)))
                  (agent-shell-toggle)
@@ -5381,8 +5381,7 @@ variable (see makunbound)"))
                                           ;; A project chosen with
                                           ;; `project-switch-project' outranks
                                           ;; the shell it was chosen from.
-                                          (if (bound-and-true-p
-                                               project-current-directory-override)
+                                          (if project-current-directory-override
                                               (agent-shell--new-shell-cwd)
                                             (agent-shell-cwd)))))
                               ;; `shell-maker-start-v2' would otherwise quietly
@@ -9882,15 +9881,15 @@ Returns a buffer object or nil."
          (cwd nil)
          ;; A project chosen with `project-switch-project' outranks the
          ;; shell or viewport it was chosen from.
-         (switched (bound-and-true-p project-current-directory-override))
-         (shell-buffer (or (when (or viewport-buffer (not switched))
+         (shell-buffer (or (when (or viewport-buffer
+                                     (not project-current-directory-override))
                              (agent-shell-viewport--shell-buffer
                               (or viewport-buffer (current-buffer))))
-                           (if (and (not switched)
+                           (if (and (not project-current-directory-override)
                                     (derived-mode-p 'agent-shell-mode))
                                (current-buffer)
                              (seq-first (agent-shell-project-buffers
-                                         (setq cwd (if switched
+                                         (setq cwd (if project-current-directory-override
                                                        (agent-shell--new-shell-cwd)
                                                      (agent-shell-cwd)))))))))
     (if shell-buffer
