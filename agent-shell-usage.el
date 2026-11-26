@@ -152,6 +152,7 @@ Checks if any token counts or context size are non-zero."
   "Display current session usage information in the minibuffer.
 This is a stub UI function for testing usage tracking before implementing
 a more polished presentation method."
+  (declare (modes agent-shell-mode))
   (interactive)
   (unless (derived-mode-p 'agent-shell-mode)
     (error "Not in an agent-shell buffer"))
