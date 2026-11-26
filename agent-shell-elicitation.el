@@ -69,6 +69,7 @@
 (declare-function acp-send-response "acp")
 (declare-function agent-shell--append-transcript "agent-shell")
 (declare-function agent-shell--cancel-idle-timer "agent-shell")
+(declare-function agent-shell--cancel-idle-timer-for "agent-shell")
 (declare-function agent-shell--start-idle-timer "agent-shell")
 (declare-function agent-shell--active-requests-p "agent-shell")
 (declare-function agent-shell--delete-fragment "agent-shell")
@@ -1200,12 +1201,17 @@ settled form stays as the only record of what was asked."
     (with-current-buffer viewport-buffer
       (agent-shell-elicitation-jump-to-latest-form))))
 
-(cl-defun agent-shell-elicitation--respond (&key state id action)
+(cl-defun agent-shell-elicitation--respond (&key state id action reminder-scope)
   "Answer elicitation ID in STATE with ACTION and settle its form.
 
 ACTION is one of `accept', `decline' or `cancel'.  Answering an
 elicitation that already settled is a no-op, so a racing interrupt
-cannot respond to one request twice."
+cannot respond to one request twice.
+
+REMINDER-SCOPE is `request' when the answer is cleanup rather than a
+decision (the user's or a configured responder's), so the idle reminder
+is cancelled only if it's for this form.  By default it's cancelled, as
+any answer is activity."
   (when-let* ((elicitation (agent-shell-elicitation--get state id))
               ((eq (map-elt elicitation :status) 'pending)))
     (acp-send-response
@@ -1232,7 +1238,9 @@ cannot respond to one request twice."
     ;; event subscriptions), and answering can be driven from the
     ;; viewport buffer, so resolve them against the shell.
     (with-current-buffer (map-elt state :buffer)
-      (agent-shell--cancel-idle-timer)
+      (if (eq reminder-scope 'request)
+          (agent-shell--cancel-idle-timer-for id)
+        (agent-shell--cancel-idle-timer))
       (agent-shell--append-transcript
        :text (format "\n## Question (%s)\n\n%s\n"
                      (format-time-string "%F %T")

@@ -1198,6 +1198,9 @@ When the agent is waiting for user input (after `permission-request'
 or `turn-complete'), an `idle' event is emitted after this many
 seconds of inactivity.  Activity events (`permission-response',
 `tool-call-update', `input-submitted', `clean-up') cancel the timer.
+Answers from the user or a configured responder cancel it too.  A
+request answered or withdrawn by cleanup instead, because it no longer
+applies, cancels it only if it was armed for that request.
 
 Can be a number (same timeout for all events) or an alist mapping
 event symbols to timeouts:
@@ -1415,6 +1418,7 @@ OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
         (cons :prompt-capabilities nil)
         (cons :event-subscriptions nil)
         (cons :idle-timer nil)
+        (cons :idle-timer-request-id nil)
         (cons :stream-render-pending nil)
         (cons :stream-render-timer nil)
         (cons :sleep-token nil)
@@ -7489,6 +7493,11 @@ variable `agent-shell-idle-timeout' seconds, emits an `idle' event with
 the original EVENT as :idle-event."
   (agent-shell--cancel-idle-timer)
   (when-let* ((buffer (map-elt (agent-shell--state) :buffer)))
+    ;; Migrate state for shells created before the key existed.
+    (unless (assq :idle-timer-request-id (agent-shell--state))
+      (nconc (agent-shell--state) (list (cons :idle-timer-request-id nil))))
+    ;; See `agent-shell--cancel-idle-timer-for'.
+    (map-put! (agent-shell--state) :idle-timer-request-id (map-elt data :request-id))
     (map-put! (agent-shell--state) :idle-timer
               (run-at-time (agent-shell-idle-timeout :event event) nil
                            (lambda ()
@@ -7507,6 +7516,18 @@ the original EVENT as :idle-event."
               ((timerp timer)))
     (cancel-timer timer))
   (map-put! (agent-shell--state) :idle-timer nil))
+
+(defun agent-shell--cancel-idle-timer-for (request-id)
+  "Cancel the idle timer, if armed for request REQUEST-ID.
+
+For a request answered or withdrawn, whose reminder no longer applies,
+while leaving any other request's reminder be.  A timer armed before
+the shell's state recorded its request (by code loaded earlier in the
+session) can't be told apart, so it's cancelled as before."
+  (when (or (not (assq :idle-timer-request-id (agent-shell--state)))
+            (and request-id
+                 (equal request-id (map-elt (agent-shell--state) :idle-timer-request-id))))
+    (agent-shell--cancel-idle-timer)))
 
 ;;; Initialization
 
@@ -10683,7 +10704,7 @@ For example:
                        actions
                        " "))))
 
-(cl-defun agent-shell--send-permission-response (&key client request-id option-id cancelled state tool-call-id message-text)
+(cl-defun agent-shell--send-permission-response (&key client request-id option-id cancelled state tool-call-id message-text reminder-scope)
   "Send a response to a permission request and clean up related dialog UI.
 
 Choose OPTION-ID or CANCELLED (never both).
@@ -10694,7 +10715,11 @@ OPTION-ID: The ID of the selected permission option.
 CANCELLED: Non-nil if the request was cancelled instead of selecting an option.
 STATE: The buffer-local agent-shell session state.
 TOOL-CALL-ID: The tool call identifier.
-MESSAGE-TEXT: Optional message to display after sending the response."
+MESSAGE-TEXT: Optional message to display after sending the response.
+REMINDER-SCOPE: `request' when the answer is cleanup rather than a
+  decision (the user's or a configured responder's), so the idle
+  reminder is cancelled only if it's for this request.  By default it's
+  cancelled, as any answer is activity."
   (acp-send-response
    :client client
    :response (acp-make-session-request-permission-response
@@ -10722,7 +10747,9 @@ MESSAGE-TEXT: Optional message to display after sending the response."
                 (tool-call (map-elt tool-calls tool-call-id)))
       (map-put! tool-calls tool-call-id
                 (map-delete tool-call :permission-request-id)))
-    (agent-shell--cancel-idle-timer)
+    (if (eq reminder-scope 'request)
+        (agent-shell--cancel-idle-timer-for request-id)
+      (agent-shell--cancel-idle-timer))
     (agent-shell--emit-event
      :event 'permission-response
      :data (list (cons :request-id request-id)

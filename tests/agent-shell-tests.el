@@ -4174,6 +4174,36 @@ requires interactive authorization."
         (sit-for 0.05)
         (should-not fired)))))
 
+(ert-deftest agent-shell-permission-response-reminder-scope-test ()
+  "Answering any permission cancels the idle reminder, and cleanup only its own."
+  (dolist (case '((nil . nil) (request . t)))
+    (with-temp-buffer
+      (let ((agent-shell--state (list (cons :buffer (current-buffer))
+                                      (cons :event-subscriptions nil)
+                                      (cons :tool-calls
+                                            (list (cons "tool-a" (list (cons :permission-request-id "a")))
+                                                  (cons "tool-b" (list (cons :permission-request-id "b")))))
+                                      (cons :idle-timer nil)
+                                      (cons :idle-timer-request-id nil)))
+            (agent-shell-idle-timeout 999))
+        (cl-letf (((symbol-function 'agent-shell--state) (lambda () agent-shell--state))
+                  ((symbol-function 'acp-send-response) #'ignore)
+                  ((symbol-function 'acp-make-session-request-permission-response) #'ignore)
+                  ((symbol-function 'agent-shell--delete-fragment) #'ignore)
+                  ((symbol-function 'agent-shell--emit-event) #'ignore)
+                  ((symbol-function 'agent-shell-jump-to-latest-permission-button-row) #'ignore)
+                  ((symbol-function 'agent-shell-viewport--buffer) (lambda (&rest _) nil)))
+          (agent-shell--start-idle-timer :event 'permission-request
+                                         :data '((:request-id . "b")))
+          (agent-shell--send-permission-response
+           :request-id "a"
+           :option-id "allow"
+           :state agent-shell--state
+           :tool-call-id "tool-a"
+           :reminder-scope (car case))
+          (should (equal (timerp (map-elt agent-shell--state :idle-timer)) (cdr case)))
+          (agent-shell--cancel-idle-timer))))))
+
 (ert-deftest agent-shell-idle-event-rearms-on-new-trigger-test ()
   "Test that re-firing a trigger event restarts the idle timer."
   (with-temp-buffer
