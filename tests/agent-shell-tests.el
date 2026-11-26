@@ -1052,6 +1052,56 @@ block -- covering the dispatch path, not just the helper in isolation."
         (should-not (map-elt state :stream-render-pending))
         (should-not (map-elt state :stream-render-timer))))))
 
+(ert-deftest agent-shell--render-pending-restore-keeps-skipped-turn-state-test ()
+  "Commands sent in a turn left out of the replay still reach STATE."
+  (dolist (verbosity '(last first-last))
+    (with-temp-buffer
+      (comint-mode)
+      (let ((agent-shell--stream-render-interval nil)
+            (agent-shell-persistent-prompt-enabled nil)
+            (state (agent-shell--make-state
+                    :buffer (current-buffer)
+                    :agent-config '((:shell-prompt . "Agent> "))))
+            (rendered nil))
+        (map-put! state :pending-restore (agent-shell--make-pending-restore))
+        (dolist (entry '(("user_message_chunk" . "first prompt")
+                         ("agent_message_chunk" . "first answer")
+                         ("user_message_chunk" . "second prompt")
+                         ("agent_message_chunk" . "second answer")
+                         ("user_message_chunk" . "third prompt")
+                         ("agent_message_chunk" . "third answer")))
+          (agent-shell--append-restore-notification
+           state (agent-shell-tests--make-session-update (car entry) (cdr entry)))
+          ;; Sent mid-history, inside the second (skipped) turn.
+          (when (equal (cdr entry) "second prompt")
+            (agent-shell--append-restore-notification
+             state '((method . "session/update")
+                     (params . ((update . ((sessionUpdate . "available_commands_update")
+                                           (availableCommands
+                                            . [((name . "review")
+                                                (description . "Review"))])))))))))
+        (cl-letf (((symbol-function 'agent-shell--create-bootstrapping-placeholders) #'ignore)
+                  ((symbol-function 'agent-shell--append-transcript) #'ignore)
+                  ((symbol-function 'agent-shell--emit-event) #'ignore)
+                  ((symbol-function 'agent-shell--render-deferred-markup) #'ignore)
+                  ((symbol-function 'agent-shell--reset-undo-history) #'ignore)
+                  ((symbol-function 'shell-maker-insert-end-of-prompt-marker) #'ignore)
+                  ((symbol-function 'agent-shell--effective-restore-verbosity)
+                   (lambda (_) verbosity))
+                  ((symbol-function 'agent-shell-viewport--buffer) (lambda (&rest _) nil))
+                  ((symbol-function 'derived-mode-p) (lambda (&rest _) t))
+                  ((symbol-function 'agent-shell-ui-update-text)
+                   (lambda (&rest args) (push (plist-get args :text) rendered)))
+                  ((symbol-function 'agent-shell-ui-update-fragment)
+                   (lambda (model &rest _) (push (map-elt model :body) rendered) nil)))
+          (agent-shell--render-pending-restore state)
+          (should (equal (map-elt state :available-commands)
+                         [((name . "review") (description . "Review"))]))
+          (should-not (member "Agent> second prompt" rendered))
+          (should-not (member "second answer" rendered))
+          (should (member "Agent> third prompt" rendered))
+          (should (member "third answer" rendered)))))))
+
 (ert-deftest agent-shell--stream-render-flushes-on-session-push-end-test ()
   "A pushed turn's pending text renders before the next turn starts.
 
@@ -6848,12 +6898,15 @@ Returns the resulting buffer string, with the live prompt trailing."
                       ((symbol-function 'agent-shell--effective-restore-verbosity)
                        (lambda (_state) 'last))
                       ((symbol-function 'agent-shell--replay-turn)
-                       (lambda (state _turn)
-                         (should-not (shell-maker--should-auto-scroll-p))
-                         (let ((inhibit-read-only t))
-                           (goto-char (point-max))
-                           (insert "Claude> replayed"))
-                         (map-put! state :last-entry-type last-entry-type))))
+                       (lambda (state turn)
+                         ;; An empty turn dispatches nothing, as the real
+                         ;; replay of a skipped turn's session state may.
+                         (when turn
+                           (should-not (shell-maker--should-auto-scroll-p))
+                           (let ((inhibit-read-only t))
+                             (goto-char (point-max))
+                             (insert "Claude> replayed"))
+                           (map-put! state :last-entry-type last-entry-type)))))
               ;; A live prompt awaiting input, emitted the way shell-maker
               ;; emits it before the load completes, so `comint-last-prompt'
               ;; and the process mark start out where a real shell leaves
