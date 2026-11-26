@@ -100,6 +100,7 @@
 (require 'agent-shell-qoder)
 (require 'agent-shell-qwen)
 (require 'agent-shell-styles)
+(require 'agent-shell-subagent)
 (require 'agent-shell-usage)
 (require 'agent-shell-worktree)
 (require 'agent-shell-ui)
@@ -223,7 +224,9 @@ Called with an alist containing:
                :permission-request-id, and optionally :diff
   :options   - enriched actions, each with :kind, :option-id,
                :label, :option, :char
-  :respond   - function taking an option-id to respond programmatically
+  :respond   - function taking an option-id to respond programmatically.
+               Returns non-nil if it sent the response, nil if the
+               request was already answered (or withdrawn).
 
 See `agent-shell-permission-allow-always' for a built-in handler
 that auto-approves all requests.
@@ -1200,7 +1203,8 @@ seconds of inactivity.  Activity events (`permission-response',
 `tool-call-update', `input-submitted', `clean-up') cancel the timer.
 Answers from the user or a configured responder cancel it too.  A
 request answered or withdrawn by cleanup instead, because it no longer
-applies, cancels it only if it was armed for that request.
+applies (a sub-agent's, once its tool call ends), cancels it only if
+it was armed for that request.
 
 Can be a number (same timeout for all events) or an alist mapping
 event symbols to timeouts:
@@ -1404,6 +1408,10 @@ OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
         (cons :last-activity-time nil)
         (cons :tool-calls nil)
         (cons :elicitations nil)
+        (cons :subagents nil)
+        (cons :subagent-messages nil)
+        (cons :subagent-root-buffer nil)
+        (cons :subagent-parent-session-id nil)
         (cons :available-commands nil)
         (cons :available-modes nil)
         (cons :supports-session-list nil)
@@ -1514,6 +1522,8 @@ per-start aliasing is disabled (see the `:alias-commands nil' call in
   (interactive "P")
   (unless (derived-mode-p 'agent-shell-mode)
     (user-error "Not in an agent shell"))
+  (when (agent-shell-subagent-p)
+    (user-error "Sub-agents can't be prompted, prompt their parent instead"))
   (unless (or (map-nested-elt agent-shell--state '(:session :id))
               (eq agent-shell-session-strategy 'new-deferred))
     (user-error "Starting agent, please wait"))
@@ -1742,6 +1752,7 @@ Works from both shell and viewport buffers."
                   agent-shell-viewport-view-mode
                   agent-shell-viewport-edit-mode))
   (interactive)
+  (agent-shell-subagent--ensure-not-subagent (agent-shell--current-shell))
   (let* ((from-viewport (or (derived-mode-p 'agent-shell-viewport-view-mode)
                             (derived-mode-p 'agent-shell-viewport-edit-mode)))
          (shell-buffer (or (agent-shell--current-shell)
@@ -1799,6 +1810,9 @@ Works from both shell and viewport buffers."
 (defun agent-shell-reload ()
   "Reload the current session by restarting with the same session ID.
 
+A sub-agent's conversation is instead rebuilt from what its main shell
+kept, since sub-agent sessions can't be loaded.
+
 Works from both shell and viewport buffers."
   (declare (modes agent-shell-mode
                   agent-shell-viewport-view-mode
@@ -1810,7 +1824,9 @@ Works from both shell and viewport buffers."
                                      '(:session :id))))
     (unless session-id
       (user-error "No active session to reload"))
-    (agent-shell-restart :session-id session-id)))
+    (if (agent-shell-subagent-p shell-buffer)
+        (agent-shell-subagent--reload shell-buffer)
+      (agent-shell-restart :session-id session-id))))
 
 ;;;###autoload
 (defun agent-shell-fork ()
@@ -1825,6 +1841,7 @@ Works from both shell and viewport buffers."
                   agent-shell-viewport-view-mode
                   agent-shell-viewport-edit-mode))
   (interactive)
+  (agent-shell-subagent--ensure-not-subagent (agent-shell--current-shell))
   (let* ((from-viewport (or (derived-mode-p 'agent-shell-viewport-view-mode)
                             (derived-mode-p 'agent-shell-viewport-edit-mode)))
          (shell-buffer (or (agent-shell--current-shell)
@@ -1988,7 +2005,9 @@ listed first and offered as the default selection."
 
 (defun agent-shell-buffers ()
   "Return all shell buffers ordered by recent access.
-Includes shells accessed via viewport buffers, preserving visited order."
+Includes shells accessed via viewport buffers, preserving visited order.
+Excludes sub-agent buffers, which belong to their main shell (see
+`agent-shell-open-subagent')."
   (let (shell-buffers seen)
     (dolist (buffer (buffer-list))
       (with-current-buffer buffer
@@ -1998,7 +2017,8 @@ Includes shells accessed via viewport buffers, preserving visited order."
                            ((or (derived-mode-p 'agent-shell-viewport-view-mode)
                                 (derived-mode-p 'agent-shell-viewport-edit-mode))
                             (agent-shell-viewport--shell-buffer buffer))))
-                    ((buffer-local-value 'shell-maker--config shell-buffer)))
+                    ((buffer-local-value 'shell-maker--config shell-buffer))
+                    ((not (agent-shell-subagent-p shell-buffer))))
           (unless (memq shell-buffer seen)
             (push shell-buffer seen)
             (push shell-buffer shell-buffers)))))
@@ -2626,12 +2646,18 @@ See also `agent-shell-confirm-interrupt'."
   (interactive)
   (unless (derived-mode-p 'agent-shell-mode)
     (error "Not in a shell"))
+  ;; Sub-agents advertise whether (and when) they can be cancelled.
+  (unless (agent-shell-subagent--cancellable-p (agent-shell--state))
+    (user-error "This sub-agent can't be interrupted right now"))
   (cond ((map-nested-elt (agent-shell--state) '(:session :id))
          (when (or force (agent-shell-interrupt-confirmed-p))
-           ;; First cancel all pending permission requests
+           ;; First cancel all pending permission requests.  As per
+           ;; spec, a sub-agent's are left answerable: cancelling this
+           ;; session doesn't resolve its descendants' requests.
            (map-do
             (lambda (tool-call-id tool-call-data)
-              (when (map-elt tool-call-data :permission-request-id)
+              (when (and (map-elt tool-call-data :permission-request-id)
+                         (not (map-elt tool-call-data :subagent-session-id)))
                 (agent-shell--send-permission-response
                  :client (map-elt (agent-shell--state) :client)
                  :request-id (map-elt tool-call-data :permission-request-id)
@@ -2642,6 +2668,11 @@ See also `agent-shell-confirm-interrupt'."
            ;; Then cancel any form still waiting on an answer, or the
            ;; agent keeps waiting for one that is never coming.
            (agent-shell-elicitation--cancel-pending :state (agent-shell--state))
+           ;; A sub-agent's requests are shown in the main shell instead.
+           (when (agent-shell-subagent-p)
+             (agent-shell-subagent--cancel-requests
+              :state (agent-shell--state)
+              :session-id (map-nested-elt (agent-shell--state) '(:session :id))))
            ;; Then send the cancel notification
            (acp-send-notification
             :client (map-elt (agent-shell--state) :client)
@@ -2787,6 +2818,7 @@ mouse selection or a kill where mark > point) is normalized."
   "C-c C-t" #'agent-shell-set-session-thought-level
   "C-c C-o" #'agent-shell-other-buffer
   "C-c C-s" #'agent-shell-set-session-config-option
+  "C-c ^" #'agent-shell-subagent-parent
   "<remap> <yank>" #'agent-shell-yank-dwim
   "<remap> <comint-send-input>" #'agent-shell-submit
   ;; No equivalent in comint, bind explicitly.
@@ -2816,6 +2848,8 @@ Flow:
   (with-current-buffer shell-buffer
     (unless (derived-mode-p 'agent-shell-mode)
       (error "Not in a shell"))
+    (when (and command (agent-shell-subagent-p))
+      (user-error "Sub-agents can't be prompted, prompt their parent instead"))
     (when (and command
                (not (eq agent-shell-session-strategy 'new-deferred))
                (not (map-nested-elt (agent-shell--state) '(:session :id))))
@@ -3601,6 +3635,12 @@ Clears STATE's `:expanded-activity-group'."
               :group-id group-id
               :group-label agent-shell--activity-group-label
               :group-expanded (agent-shell--activity-group-initial-expanded-p)
+              ;; Only sub-agent session references, which no later
+              ;; update need repeat.
+              :body (when-let* ((references (agent-shell--tool-call-session-references
+                                             (map-nested-elt acp-notification '(params update content)))))
+                      (agent-shell--tool-call-update-output-markdown
+                       (list (cons 'content references)) state))
               :expanded agent-shell-tool-use-expand-by-default
               :above-last-prompt (not (agent-shell--active-requests-p state)))
              (agent-shell--refresh-activity-group-header state group-id)
@@ -3775,50 +3815,15 @@ Clears STATE's `:expanded-activity-group'."
            (agent-shell--save-tool-call
             state
             (map-nested-elt acp-notification '(params update toolCallId))
-            (append (list (cons :status (map-nested-elt acp-notification '(params update status)))
-                          (cons :content (map-nested-elt acp-notification '(params update content))))
-                    ;; The initial tool_call notification often has a
-                    ;; generic title (eg. "grep", "bash", "Read").
-                    ;; The tool_call_update may have a more descriptive
-                    ;; title (eg. 'grep -i -n "tool" /path/to/file').
-                    ;; Upgrade to the more descriptive title when available.
-                    ;; See https://github.com/xenodium/agent-shell/issues/182
-                    ;; See https://github.com/xenodium/agent-shell/issues/309
-                    (when-let* ((new-title (map-nested-elt acp-notification '(params update title)))
-                                ((not (string-empty-p new-title))))
-                      (list (cons :title new-title)))
-                    (when-let* ((description (agent-shell--tool-call-command-to-string
-                                              (map-nested-elt acp-notification '(params update rawInput description)))))
-                      (list (cons :description description)))
-                    (when-let* ((command (agent-shell--raw-input-command
-                                          (map-nested-elt acp-notification '(params update rawInput)))))
-                      (list (cons :command command)))
-                    (when-let* ((raw-input (map-nested-elt acp-notification '(params update rawInput))))
-                      (list (cons :raw-input raw-input)))
-                    (when-let* ((locations (map-nested-elt acp-notification '(params update locations))))
-                      (list (cons :locations locations)))
-                    (when-let* ((diffs (agent-shell--make-diff-infos
-                                        :acp-tool-call (map-nested-elt acp-notification '(params update)))))
-                      (list (cons :diffs diffs)))))
+            (append (list (cons :status (map-nested-elt acp-notification '(params update status))))
+                    (agent-shell--tool-call-update-details
+                     (map-nested-elt acp-notification '(params update)))))
            ;; OpenCode sends tool_call_update with the populated rawInput
            ;; after session/request_permission, so an open permission
            ;; dialog needs a re-render to surface the arguments.
            ;; See https://github.com/xenodium/agent-shell/issues/617
-           (when-let* ((tool-call-id (map-nested-elt acp-notification '(params update toolCallId)))
-                       (tool-call (map-nested-elt state (list :tool-calls tool-call-id)))
-                       ((map-elt tool-call :permission-request-id)))
-             (agent-shell--update-fragment
-              :state state
-              :block-id (format "permission-%s" tool-call-id)
-              :body (with-current-buffer (map-elt state :buffer)
-                      (agent-shell--make-tool-call-permission-text
-                       :tool-call tool-call
-                       :tool-call-id tool-call-id
-                       :client (map-elt state :client)
-                       :state state))
-              :expanded t
-              :navigation 'never
-              :above-last-prompt (not (agent-shell--active-requests-p state))))
+           (agent-shell--refresh-permission-dialog
+            state (map-nested-elt acp-notification '(params update toolCallId)))
            (agent-shell--cancel-idle-timer)
            (agent-shell--emit-event
             :event 'tool-call-update
@@ -3829,7 +3834,10 @@ Clears STATE's `:expanded-activity-group'."
                   (output (concat
                            "\n\n"
                            (agent-shell--tool-call-update-output-markdown
-                            (map-nested-elt acp-notification '(params update)))
+                            (agent-shell--tool-call-update-with-references
+                             (map-nested-elt acp-notification '(params update))
+                             (map-nested-elt state `(:tool-calls ,(map-nested-elt acp-notification '(params update toolCallId)) :content)))
+                            state)
                            "\n\n"))
                   (diff-text (agent-shell--format-diffs-as-text diffs))
                   (body-text (agent-shell--truncate-tool-output-lines
@@ -3864,7 +3872,13 @@ Clears STATE's `:expanded-activity-group'."
                            '("completed" "failed"))
                ;; block-id must be the same as the one used as
                ;; agent-shell--update-fragment param by "session/request_permission".
-               (agent-shell--delete-fragment :state state :block-id (format "permission-%s" (map-nested-elt acp-notification '(params update toolCallId)))))
+               (agent-shell--delete-fragment
+                :state state
+                :namespace-id (map-nested-elt state (list :tool-calls
+                                                          (map-nested-elt acp-notification '(params update toolCallId))
+                                                          :permission-namespace-id))
+                :block-id (agent-shell--permission-block-id
+                           (map-nested-elt acp-notification '(params update toolCallId)))))
              (let* ((tool-call-labels (agent-shell-make-tool-call-label state (map-nested-elt acp-notification '(params update toolCallId))))
                     (group-id (agent-shell--activity-group-id
                                state (map-nested-elt acp-notification '(params update toolCallId))))
@@ -3970,6 +3984,12 @@ Clears STATE's `:expanded-activity-group'."
                         (cons :meta (map-nested-elt acp-notification '(params update _meta)))))
            ;; Note: This is session-level state, no need to set :last-entry-type
            nil)
+          ((member (map-nested-elt acp-notification '(params update sessionUpdate))
+                   '("subagent_update" "session_message" "session_message_chunk"))
+           (agent-shell-subagent--on-notification
+            :state state
+            :acp-notification acp-notification)
+           (map-put! state :last-entry-type nil))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "session_push_end")
            ;; Before the turn ends, or a queued prompt dispatched by
            ;; `on-finished' takes over the pending chunk's namespace.
@@ -4010,6 +4030,13 @@ Clears STATE's `:expanded-activity-group'."
                         (cons :status (map-nested-elt acp-request '(params toolCall status)))
                         (cons :kind (map-nested-elt acp-request '(params toolCall kind)))
                         (cons :permission-request-id (map-elt acp-request 'id))
+                        ;; Answering may come in a later turn, so delete
+                        ;; the dialog from wherever it's rendered now.
+                        (cons :permission-namespace-id
+                              (or (map-nested-elt state (list :tool-calls
+                                                              (map-nested-elt acp-request '(params toolCall toolCallId))
+                                                              :permission-namespace-id))
+                                  (map-elt state :request-count)))
                         (cons :permission-actions (agent-shell--make-permission-actions
                                                    (map-nested-elt acp-request '(params options)))))
                   (when-let* ((raw-input (map-nested-elt acp-request '(params toolCall rawInput))))
@@ -4022,6 +4049,8 @@ Clears STATE's `:expanded-activity-group'."
                                       :acp-tool-call (map-nested-elt acp-request '(params toolCall)))))
                     (list (cons :diffs diffs)))))
          (let* ((tool-call-id (map-nested-elt acp-request '(params toolCall toolCallId)))
+                (namespace-id (map-nested-elt state (list :tool-calls tool-call-id
+                                                          :permission-namespace-id)))
                 (permission-handled
                  (and (functionp agent-shell-permission-responder-function)
                       (funcall agent-shell-permission-responder-function
@@ -4034,13 +4063,20 @@ Clears STATE's `:expanded-activity-group'."
                                                        :request-id (map-elt acp-request 'id)
                                                        :option-id option-id
                                                        :state state
-                                                       :tool-call-id tool-call-id)
-                                                      t)))))))
+                                                       :tool-call-id tool-call-id))))))))
+           ;; Claimed, so later details (see
+           ;; `agent-shell--refresh-permission-dialog') don't draw a
+           ;; dialog the responder already answers.
+           (when permission-handled
+             (agent-shell--save-tool-call
+              state tool-call-id
+              (list (cons :responder-request-id (map-elt acp-request 'id)))))
            (unless permission-handled
              (when (map-nested-elt acp-request '(params toolCall rawInput plan))
                (agent-shell--update-fragment
                 :state state
-                :block-id (concat tool-call-id "-plan")
+                :namespace-id namespace-id
+                :block-id (format "%s-plan" (agent-shell--tool-call-id-text tool-call-id))
                 :label-left (propertize "Proposed plan" 'font-lock-face 'agent-shell-section-heading)
                 :body (agent-shell--format-plan (map-nested-elt acp-request '(params toolCall rawInput plan)))
                 :expanded t
@@ -4049,7 +4085,8 @@ Clears STATE's `:expanded-activity-group'."
              ;; in agent-shell--delete-fragment param.
              (agent-shell--update-fragment
               :state state
-              :block-id (format "permission-%s" tool-call-id)
+              :namespace-id namespace-id
+              :block-id (agent-shell--permission-block-id tool-call-id)
               :body (with-current-buffer (map-elt state :buffer)
                       (agent-shell--make-tool-call-permission-text
                        :tool-call (map-nested-elt state (list :tool-calls tool-call-id))
@@ -4741,6 +4778,81 @@ DIFFS is a list of diff infos as returned by
             tool-call-overrides))
     (map-put! state :tool-calls updated-tools)))
 
+(defun agent-shell--tool-call-update-details (acp-update)
+  "Return the tool call details ACP-UPDATE carries, as kept in `:tool-calls'.
+
+ACP-UPDATE is a `tool_call_update' update.  For example:
+
+  ((toolCallId . \"t1\") (title . \"make test\")
+   (rawInput (command . \"make test\")))
+  => ((:title . \"make test\") (:command . \"make test\")
+      (:raw-input (command . \"make test\")))"
+  (append
+   ;; The initial tool_call notification often has a
+   ;; generic title (eg. "grep", "bash", "Read").
+   ;; The tool_call_update may have a more descriptive
+   ;; title (eg. 'grep -i -n "tool" /path/to/file').
+   ;; Upgrade to the more descriptive title when available.
+   ;; See https://github.com/xenodium/agent-shell/issues/182
+   ;; See https://github.com/xenodium/agent-shell/issues/309
+   (when-let* ((new-title (map-elt acp-update 'title))
+               ((not (string-empty-p new-title))))
+     (list (cons :title new-title)))
+   (when-let* ((description (agent-shell--tool-call-command-to-string
+                             (map-nested-elt acp-update '(rawInput description)))))
+     (list (cons :description description)))
+   (when-let* ((command (agent-shell--raw-input-command
+                         (map-elt acp-update 'rawInput))))
+     (list (cons :command command)))
+   (when-let* ((raw-input (map-elt acp-update 'rawInput)))
+     (list (cons :raw-input raw-input)))
+   (when-let* ((content (map-elt acp-update 'content)))
+     (list (cons :content content)))
+   (when-let* ((locations (map-elt acp-update 'locations)))
+     (list (cons :locations locations)))
+   (when-let* ((diffs (agent-shell--make-diff-infos :acp-tool-call acp-update)))
+     (list (cons :diffs diffs)))))
+
+(defun agent-shell--tool-call-id-text (tool-call-id)
+  "Return TOOL-CALL-ID as text, for use in fragment block ids.
+
+A sub-agent's TOOL-CALL-ID is a pair (see
+`agent-shell-subagent--tool-call-id'), printed readably so that
+distinct pairs never print alike.
+
+  \"t1\"           => \"t1\"
+  (\"a\" . \"b . c\") => \"(\\\"a\\\" . \\\"b . c\\\")\""
+  (if (stringp tool-call-id)
+      tool-call-id
+    (prin1-to-string tool-call-id)))
+
+(defun agent-shell--permission-block-id (tool-call-id)
+  "Return the block id of TOOL-CALL-ID's permission dialog."
+  (concat "permission-" (agent-shell--tool-call-id-text tool-call-id)))
+
+(defun agent-shell--refresh-permission-dialog (state tool-call-id)
+  "Redraw TOOL-CALL-ID's permission dialog in STATE, if still pending.
+
+For details reported after the request, so the dialog shows what's
+being approved.  A request `agent-shell-permission-responder-function'
+claimed has no dialog to redraw."
+  (when-let* ((tool-call (map-nested-elt state (list :tool-calls tool-call-id)))
+              (request-id (map-elt tool-call :permission-request-id))
+              ((not (equal request-id (map-elt tool-call :responder-request-id)))))
+    (agent-shell--update-fragment
+     :state state
+     :namespace-id (map-elt tool-call :permission-namespace-id)
+     :block-id (agent-shell--permission-block-id tool-call-id)
+     :body (with-current-buffer (map-elt state :buffer)
+             (agent-shell--make-tool-call-permission-text
+              :tool-call tool-call
+              :tool-call-id tool-call-id
+              :client (map-elt state :client)
+              :state state))
+     :expanded t
+     :navigation 'never
+     :above-last-prompt (not (agent-shell--active-requests-p state)))))
+
 (cl-defun agent-shell--unfinished-tool-calls (&key tool-calls)
   "Return TOOL-CALLS whose activity group still has an unfinished member.
 
@@ -4859,8 +4971,12 @@ For example, shut down ACP client."
   "Shut down shell activity."
   (unless (derived-mode-p 'agent-shell-mode)
     (error "Not in a shell"))
+  (agent-shell-subagent--clean-up (agent-shell--state))
   (when (map-elt (agent-shell--state) :client)
-    (acp-shutdown :client (map-elt (agent-shell--state) :client))
+    ;; A sub-agent borrows its main shell's client, which isn't its
+    ;; to shut down.
+    (unless (agent-shell-subagent-p)
+      (acp-shutdown :client (map-elt (agent-shell--state) :client)))
     (map-put! (agent-shell--state) :client nil)
     (map-put! (agent-shell--state) :initialized nil)
     (map-put! (agent-shell--state) :authenticated nil)
@@ -5336,7 +5452,7 @@ own banner, passing along their shell-maker config."
                                    (message "Thank you!")))
    "✨ (or ask your employer to).\n\n"))
 
-(cl-defun agent-shell--start (&key config no-focus new-session session-strategy session-id fork-session-id outgoing-request-decorator cwd)
+(cl-defun agent-shell--start (&key config no-focus new-session session-strategy session-id fork-session-id outgoing-request-decorator cwd subagent)
   "Programmatically start shell with CONFIG.
 
 See `agent-shell-make-agent-config' for config format.
@@ -5351,7 +5467,10 @@ Set NEW-SESSION to start a separate new session.
 SESSION-STRATEGY overrides `agent-shell-session-strategy' buffer-locally.
 SESSION-ID resumes an existing session by its id string.
 FORK-SESSION-ID forks an existing session by its id string.
-OUTGOING-REQUEST-DECORATOR is passed through to `acp-make-client'."
+OUTGOING-REQUEST-DECORATOR is passed through to `acp-make-client'.
+SUBAGENT makes a read-only shell for a sub-agent session, reusing its
+main shell's client rather than bootstrapping one.  See
+`agent-shell-subagent--ensure-buffer'."
   (unless (version<= agent-shell--shell-maker-minimum-version shell-maker-version)
     (error "Please update shell-maker to version %s or newer"
            agent-shell--shell-maker-minimum-version))
@@ -5404,7 +5523,8 @@ variable (see makunbound)"))
              :no-focus t  ;; Always use no-focus, handle display below
              :welcome-function nil ;; Defer showing welcome text
              :new-session new-session
-             :buffer-name (agent-shell--format-buffer-name (map-elt config :buffer-name) (agent-shell--project-name))
+             :buffer-name (or (map-elt subagent :buffer-name)
+                              (agent-shell--format-buffer-name (map-elt config :buffer-name) (agent-shell--project-name)))
              :mode-line-name (map-elt config :mode-line-name)
              ;; Skip shell-maker's per-start command aliasing so it does not
              ;; alias `agent-shell-submit' internally.  We alias
@@ -5421,16 +5541,19 @@ variable (see makunbound)"))
       (hack-dir-local-variables-non-file-buffer)
       ;; Set minimal buffer-local state initialization so `agent-shell-get-config' is available.
       (setq-local agent-shell--state (agent-shell--make-state :agent-config config))
-      (unless (and (map-elt config :client-maker)
-                   (funcall (map-elt config :client-maker) (current-buffer)))
-        (kill-buffer shell-buffer)
-        (error "No way to create a new client"))
-      (let ((command (map-elt (funcall (map-elt config :client-maker) (current-buffer)) :command)))
-        (unless (executable-find command t)
+      ;; A sub-agent adopts its main shell's running client, so has no
+      ;; new one to validate.
+      (unless subagent
+        (unless (and (map-elt config :client-maker)
+                     (funcall (map-elt config :client-maker) (current-buffer)))
           (kill-buffer shell-buffer)
-          (error "%s" (agent-shell--make-missing-executable-error
-                       :executable command
-                       :install-instructions (map-elt config :install-instructions)))))
+          (error "No way to create a new client"))
+        (let ((command (map-elt (funcall (map-elt config :client-maker) (current-buffer)) :command)))
+          (unless (executable-find command t)
+            (kill-buffer shell-buffer)
+            (error "%s" (agent-shell--make-missing-executable-error
+                         :executable command
+                         :install-instructions (map-elt config :install-instructions))))))
       ;; Initialize full buffer-local state (replaces the minimal one above).
       (setq-local agent-shell--state (agent-shell--make-state
                                       :buffer shell-buffer
@@ -5443,6 +5566,8 @@ variable (see makunbound)"))
                                       :outgoing-request-decorator (or outgoing-request-decorator
                                                                       agent-shell-outgoing-request-decorator)
                                       :agent-config config))
+      (when subagent
+        (agent-shell-subagent--adopt agent-shell--state subagent))
       ;; Initialize buffer-local shell-maker-config
       (setq-local agent-shell--shell-maker-config shell-maker-config)
       (setq-local filter-buffer-substring-function #'agent-shell--filter-buffer-substring)
@@ -5464,7 +5589,9 @@ variable (see makunbound)"))
       (agent-shell--enable-dnd)
       (yank-media-handler "image/.*" #'agent-shell--yank-media-image)
       (agent-shell--setup-modeline)
-      (setq-local agent-shell--transcript-file (agent-shell--transcript-file-path))
+      ;; Sub-agent traffic is the main shell's to transcribe, if anyone's.
+      (setq-local agent-shell--transcript-file (unless subagent
+                                                 (agent-shell--transcript-file-path)))
       ;; We disabled aliasing comint/shell-maker commands
       ;; See `shell-maker-start-v2' above with :alias-commands nil
       ;; Manually alias as needed.
@@ -5481,6 +5608,10 @@ variable (see makunbound)"))
           (setq-local shell-maker-prompt-before-killing-buffer nil)
         ;; Fall back to shell-maker's transcript.
         (defalias 'agent-shell-save-session-transcript #'shell-maker-save-session-transcript))
+      ;; Sub-agent buffers come and go with their main shell (and can be
+      ;; reopened), so don't prompt to save on kill either.
+      (when subagent
+        (setq-local shell-maker-prompt-before-killing-buffer nil))
       (when session-id
         (map-put! agent-shell--state :resume-session-id session-id))
       (when fork-session-id
@@ -5494,6 +5625,7 @@ variable (see makunbound)"))
         (erase-buffer))
       (set-marker (process-mark (shell-maker--process)) (point-max))
       (when (and agent-shell-show-welcome-message
+                 (not subagent)
                  (map-elt config :welcome-function))
         (shell-maker-write-output
          :config shell-maker--config
@@ -5520,7 +5652,8 @@ variable (see makunbound)"))
       (goto-char (point-max))
       ;; Kick off ACP session bootstrapping.  `new-deferred' (deprecated)
       ;; defers this until the first prompt is sent.
-      (unless (eq agent-shell-session-strategy 'new-deferred)
+      (unless (or subagent
+                  (eq agent-shell-session-strategy 'new-deferred))
         (agent-shell--handle :shell-buffer shell-buffer))
       (when (and agent-shell-chat-mode-enabled (not agent-shell-chat-mode))
         (agent-shell-chat-mode 1))
@@ -5595,11 +5728,12 @@ variable (see makunbound)"))
           (agent-shell--display-buffer shell-buffer))))
     shell-buffer))
 
-(cl-defun agent-shell--delete-fragment (&key state block-id)
+(cl-defun agent-shell--delete-fragment (&key state namespace-id block-id)
   "Delete fragment with STATE and BLOCK-ID.
 
-Return the position the fragment started at in the shell buffer, if it
-was found there."
+NAMESPACE-ID defaults to STATE's request count, as in
+`agent-shell--update-fragment'.  Return the position the fragment
+started at in the shell buffer, if it was found there."
   (when-let* (((map-elt state :buffer))
               (viewport-buffer (agent-shell-viewport--buffer
                                 :shell-buffer (map-elt state :buffer)
@@ -5609,14 +5743,14 @@ was found there."
               ((with-current-buffer viewport-buffer
                  (derived-mode-p 'agent-shell-viewport-view-mode))))
     (with-current-buffer viewport-buffer
-      (agent-shell-ui-delete-fragment :namespace-id (map-elt state :request-count) :block-id block-id :no-undo t)))
+      (agent-shell-ui-delete-fragment :namespace-id (or namespace-id (map-elt state :request-count)) :block-id block-id :no-undo t)))
   (with-current-buffer (map-elt state :buffer)
     (unless (and (derived-mode-p 'agent-shell-mode)
                  (equal (current-buffer)
                         (map-elt state :buffer)))
       (error "Editing the wrong buffer: %s" (current-buffer)))
     (let ((input-start (agent-shell--prompt-input-start))
-          (position (agent-shell-ui-delete-fragment :namespace-id (map-elt state :request-count) :block-id block-id :no-undo t)))
+          (position (agent-shell-ui-delete-fragment :namespace-id (or namespace-id (map-elt state :request-count)) :block-id block-id :no-undo t)))
       ;; A deletion above the prompt pulled any unsubmitted input up, so the
       ;; undo entries recorded for it point at the shifted text.
       (unless (equal input-start (agent-shell--prompt-input-start))
@@ -6532,6 +6666,7 @@ defaulting to the frame width."
     (:background-mode . ,(frame-parameter nil 'background-mode))
     (:context-indicator . ,(agent-shell--context-usage-indicator))
     (:cost-indicator . ,(agent-shell--cost-indicator))
+    (:subagents-indicator . ,(agent-shell-subagent--indicator state))
     (:busy-indicator-frame . ,(agent-shell--busy-indicator-frame))
     (:position . ,position)
     (:status . ,status)
@@ -6662,7 +6797,7 @@ keeps entries fresh."
                                            'face 'agent-shell-key-binding)
                                " "
                                (map-elt help-hint :description))))
-         (text-header (format " %s%s%s%s%s%s ➤ %s%s%s%s%s%s"
+         (text-header (format " %s%s%s%s%s%s ➤ %s%s%s%s%s%s%s"
                               (cond
                                ((and (map-elt header-model :position)
                                      (map-elt header-model :status))
@@ -6739,6 +6874,9 @@ keeps entries fresh."
                                 "")
                               (if (map-elt header-model :cost-indicator)
                                   (concat " ➤ " (map-elt header-model :cost-indicator))
+                                "")
+                              (if (map-elt header-model :subagents-indicator)
+                                  (concat " ➤ " (map-elt header-model :subagents-indicator))
                                 "")
                               (if (and (map-elt header-model :status)
                                        (not (map-elt header-model :position)))
@@ -6865,6 +7003,20 @@ keeps entries fresh."
                                                                               'default)))
                                                                 (dx . "8"))
                                                               (substring-no-properties (map-elt header-model :cost-indicator)))))
+                                ;; Sub-agents (optional)
+                                (when (map-elt header-model :subagents-indicator)
+                                  (dom-append-child text-node
+                                                    (dom-node 'tspan
+                                                              `((fill . ,(agent-shell--svg-fill-color 'default))
+                                                                (dx . "8"))
+                                                              "➤"))
+                                  (dom-append-child text-node
+                                                    (dom-node 'tspan
+                                                              `((fill . ,(agent-shell--svg-fill-color
+                                                                          (or (get-text-property 0 'face (map-elt header-model :subagents-indicator))
+                                                                              'default)))
+                                                                (dx . "8"))
+                                                              (substring-no-properties (map-elt header-model :subagents-indicator)))))
                                 text-node))
              ;; Bottom text line
              (svg--append svg (let ((text-node (dom-node 'text
@@ -7304,7 +7456,15 @@ Session events:
   `file-write'            - File written via fs/write_text_file
     :data contains :path, :content and :meta
   `permission-request'    - Permission prompt displayed to user
-    :data contains :request-id, :tool-call-id, :tool-call and :meta
+    :data contains :request-id, :tool-call-id, :tool-call and :meta.
+    A sub-agent's request is shown in the main shell, with its
+    :tool-call carrying the sub-agent's :subagent-session-id, and its
+    :tool-call-id the pair (SUBAGENT-SESSION-ID . TOOL-CALL-ID).
+  `subagent-update'       - Sub-agent session announced or updated, or
+    its buffer opened or killed.  :data contains :subagent (as
+    described by `agent-shell-subagents'), :count, :running-count,
+    :removed (non-nil once a failed restore discards the sub-agent)
+    and :meta
   `permission-response'   - Permission response sent
     :data contains :request-id, :tool-call-id, :option-id, :cancelled
   `agent-message-chunk'   - Agent streamed a chunk of message text
@@ -7623,7 +7783,12 @@ Wraps `acp-send-request' so that REQUEST is pushed to
 :active-requests while in-flight and removed on success or failure.
 
 CLIENT, REQUEST, BUFFER, ON-SUCCESS, ON-FAILURE, and SYNC are passed
-through to `acp-send-request'."
+through to `acp-send-request'.
+
+A sub-agent's STATE refuses every request, as per spec.  See
+`agent-shell-subagent--ensure-not-subagent'."
+  (when (map-elt state :subagent-root-buffer)
+    (agent-shell-subagent--ensure-not-subagent (map-elt state :buffer)))
   ;; Migrate state for sessions created before :active-requests existed.
   ;; Without this, map-put! fails on mid-session package updates.
   (unless (assq :active-requests state)
@@ -7665,14 +7830,15 @@ Must provide ON-INITIATED (lambda ())."
   (agent-shell--send-request
    :state agent-shell--state
    :client (map-elt agent-shell--state :client)
-   :request (acp-make-initialize-request
-             :protocol-version 1
-             :client-info `((name . "agent-shell")
-                            (title . "Emacs Agent Shell")
-                            (version . ,agent-shell--version))
-             :read-text-file-capability agent-shell-text-file-capabilities
-             :write-text-file-capability agent-shell-text-file-capabilities
-             :elicitation-form-capability agent-shell-elicitation--experimental-feature-enabled)
+   :request (agent-shell-subagent--add-client-capability
+             (acp-make-initialize-request
+              :protocol-version 1
+              :client-info `((name . "agent-shell")
+                             (title . "Emacs Agent Shell")
+                             (version . ,agent-shell--version))
+              :read-text-file-capability agent-shell-text-file-capabilities
+              :write-text-file-capability agent-shell-text-file-capabilities
+              :elicitation-form-capability agent-shell-elicitation--experimental-feature-enabled))
    :on-success (lambda (acp-response)
                  (with-current-buffer shell-buffer
                    (let ((acp-session-capabilities (or (map-elt acp-response 'sessionCapabilities)
@@ -8926,6 +9092,7 @@ listing sessions to pick one to load."
                    (agent-shell--set-session-from-response
                     :acp-response acp-load-response
                     :acp-session-id session-id)
+                   (agent-shell-subagent--on-restore-success (agent-shell--state))
                    (agent-shell--update-bootstrapping-fragment
                     :state (agent-shell--state)
                     :block-id "resumed_session"
@@ -8942,6 +9109,9 @@ listing sessions to pick one to load."
                                        (funcall on-session-init))))
      :on-failure (lambda (_acp-error _raw-message)
                    (map-put! (agent-shell--state) :pending-restore nil)
+                   ;; Contained, so the fallback session starts regardless.
+                   (with-demoted-errors "Sub-agent cleanup failed: %S"
+                     (agent-shell-subagent--discard-restore (agent-shell--state)))
                    (if on-failure
                        (funcall on-failure)
                      (let ((text (agent-shell--resume-failure-message :session-id session-id)))
@@ -9163,6 +9333,7 @@ For example, with a function returning (session-id . \"abc\"):
                                                   (agent-shell--set-session-from-response
                                                    :acp-response acp-load-response
                                                    :acp-session-id acp-session-id)
+                                                  (agent-shell-subagent--on-restore-success (agent-shell--state))
                                                   (agent-shell--update-bootstrapping-fragment
                                                    :state (agent-shell--state)
                                                    :block-id "resumed_session"
@@ -9180,6 +9351,9 @@ For example, with a function returning (session-id . \"abc\"):
                                                                       (funcall on-session-init))))
                                     :on-failure (lambda (_acp-error _raw-message)
                                                   (map-put! (agent-shell--state) :pending-restore nil)
+                                                  ;; Contained, so the fallback session starts regardless.
+                                                  (with-demoted-errors "Sub-agent cleanup failed: %S"
+                                                    (agent-shell-subagent--discard-restore (agent-shell--state)))
                                                   (agent-shell--update-bootstrapping-fragment
                                                    :state (agent-shell--state)
                                                    :block-id "restore_fallback"
@@ -9329,22 +9503,39 @@ the text:
   (acp-subscribe-to-notifications
    :client (map-elt state :client)
    :on-notification (lambda (acp-notification)
-                      (let ((adapted-notification
-                             (agent-shell--adapt-notification
-                              :state state
-                              :acp-notification acp-notification)))
-                        (if-let* ((handler (map-nested-elt state '(:agent-config :notification-handler)))
-                                  ((functionp handler))
-                                  ((funcall handler `((:state . ,state)
-                                                      (:acp-notification . ,adapted-notification)))))
-                            (map-put! state :last-activity-time (current-time))
-                          (agent-shell--on-notification
-                           :state state
-                           :acp-notification adapted-notification)))))
+                      ;; Sub-agent sessions share this client, so their
+                      ;; traffic arrives here too.
+                      (unless (agent-shell-subagent--route-notification
+                               :state state
+                               :acp-notification acp-notification)
+                        (agent-shell--dispatch-notification
+                         :state state
+                         :acp-notification acp-notification))))
   (acp-subscribe-to-requests
    :client (map-elt state :client)
    :on-request (lambda (acp-request)
-                 (agent-shell--on-request :state state :acp-request acp-request))))
+                 (unless (agent-shell-subagent--route-request
+                          :state state
+                          :acp-request acp-request)
+                   (agent-shell--on-request :state state :acp-request acp-request)))))
+
+(cl-defun agent-shell--dispatch-notification (&key state acp-notification)
+  "Adapt ACP-NOTIFICATION and hand it over to STATE's handlers.
+
+The agent config's `:notification-handler' gets first dibs, falling
+back to `agent-shell--on-notification'."
+  (let ((adapted-notification
+         (agent-shell--adapt-notification
+          :state state
+          :acp-notification acp-notification)))
+    (if-let* ((handler (map-nested-elt state '(:agent-config :notification-handler)))
+              ((functionp handler))
+              ((funcall handler `((:state . ,state)
+                                  (:acp-notification . ,adapted-notification)))))
+        (map-put! state :last-activity-time (current-time))
+      (agent-shell--on-notification
+       :state state
+       :acp-notification adapted-notification))))
 
 (defun agent-shell--parse-file-mentions (prompt)
   "Parse @ file mentions from PROMPT string.
@@ -9568,12 +9759,17 @@ end, with an omitted-character count between them.  For example, a
                (split-string output "\n")
                "\n")))
 
-(defun agent-shell--tool-call-update-output-markdown (acp-update)
+(defun agent-shell--tool-call-update-output-markdown (acp-update &optional state)
   "Return markdown output for ACP-UPDATE, a `tool_call_update' update.
 
 Renders the update's `content' blocks (where the ACP spec carries tool
 output) via `agent-shell--content-block-to-markdown'.  Falls back to
 `rawOutput.formatted_output' when there are no content blocks.
+
+A `session' item, referring to a sub-agent's session, is named as per
+`agent-shell-subagent--session-reference-text', using STATE, in its
+place among the blocks.  It isn't output, so the fallback output still
+follows it.
 
 Returns an empty string when neither carries output.
 
@@ -9587,20 +9783,53 @@ Examples:
   (agent-shell--tool-call-update-output-markdown
    \\='((rawOutput . ((formatted_output . \"total 0\\n\")))))
   => \"total 0\\n\""
-  (let ((content (mapconcat #'agent-shell--content-block-to-markdown
-                            (seq-keep (lambda (item) (map-elt item 'content))
-                                      (map-elt acp-update 'content))
-                            "\n\n"))
-        ;; Codex reports terminal output via rawOutput.formatted_output
-        ;; and leaves content empty, so completed shell command blocks
-        ;; render blank without this fallback.
-        ;; See https://github.com/xenodium/agent-shell/pull/763
-        (raw-output (map-nested-elt acp-update '(rawOutput formatted_output))))
-    (cond ((not (string-empty-p content)) content)
-          ;; `rawOutput' is agent-defined free-form JSON, so only
-          ;; render formatted_output when it's actually a string.
-          ((stringp raw-output) raw-output)
-          (t ""))))
+  (let* ((output-p nil)
+         (rendered (seq-keep (lambda (item)
+                               (cond ((map-elt item 'content)
+                                      (let ((text (agent-shell--content-block-to-markdown
+                                                   (map-elt item 'content))))
+                                        (unless (string-empty-p text)
+                                          (setq output-p t)
+                                          text)))
+                                     ((equal (map-elt item 'type) "session")
+                                      (agent-shell-subagent--session-reference-text
+                                       state (map-elt item 'sessionId)))))
+                             (map-elt acp-update 'content)))
+         ;; Codex reports terminal output via rawOutput.formatted_output
+         ;; and leaves content empty, so completed shell command blocks
+         ;; render blank without this fallback.
+         ;; See https://github.com/xenodium/agent-shell/pull/763
+         (raw-output (map-nested-elt acp-update '(rawOutput formatted_output))))
+    (string-join (append rendered
+                         ;; `rawOutput' is agent-defined free-form JSON, so only
+                         ;; render formatted_output when it's actually a string.
+                         (when (and (not output-p)
+                                    (stringp raw-output)
+                                    (not (string-empty-p raw-output)))
+                           (list raw-output)))
+                 "\n\n")))
+
+(defun agent-shell--tool-call-session-references (content)
+  "Return the items of tool call CONTENT that refer to a sub-agent session.
+
+  (agent-shell--tool-call-session-references
+   \\='[((type . \"session\") (sessionId . \"c1\"))
+     ((type . \"content\") (content (type . \"text\") (text . \"hi\")))])
+  => (((type . \"session\") (sessionId . \"c1\")))"
+  (seq-filter (lambda (item)
+                (equal (map-elt item 'type) "session"))
+              content))
+
+(defun agent-shell--tool-call-update-with-references (acp-update content)
+  "Return ACP-UPDATE, carrying CONTENT's session references if it has no content.
+
+CONTENT is the tool call's content so far.  As per spec, an update
+leaving out `content' leaves it unchanged, so sub-agent session
+references sent earlier (say, in the `tool_call') still show."
+  (if-let* (((not (assq 'content acp-update)))
+            (references (agent-shell--tool-call-session-references content)))
+      (cons (cons 'content references) acp-update)
+    acp-update))
 
 (defun agent-shell--content-block-to-markdown (acp-content-block)
   "Return markdown for a `session/update' ACP-CONTENT-BLOCK.
@@ -10600,7 +10829,12 @@ For example:
        [ View (v) ] [ Allow (y) ] [ Reject (n) ] [ Always Allow (!) ]
 
 
-   ╰─"
+   ╰─
+
+A sub-agent's TOOL-CALL (see `agent-shell-subagent--route-request')
+also gets a line linking to its conversation:
+
+       From sub-agent: Test investigator [ Open (o) ]"
   (let* ((actions (map-elt tool-call :permission-actions))
          (shell-buffer (map-elt state :buffer))
          (keymap (let ((map (make-sparse-keymap)))
@@ -10617,12 +10851,9 @@ For example:
                                       :tool-call-id tool-call-id
                                       :message-text (map-elt action :option))
                                      (when (equal (map-elt action :kind) "reject_once")
-                                       ;; No point in rejecting the change but letting
-                                       ;; the agent continue (it doesn't know why you
-                                       ;; have rejected the change).
-                                       ;; May as well interrupt so you can course-correct.
-                                       (with-current-buffer shell-buffer
-                                         (agent-shell-interrupt t)))))))
+                                       (agent-shell--interrupt-after-reject
+                                        :shell-buffer shell-buffer
+                                        :tool-call tool-call))))))
                    ;; Add diff keybinding if diff info is available
                    (when (map-elt tool-call :diffs)
                      (define-key map "v" (agent-shell--make-diff-viewing-function
@@ -10632,13 +10863,21 @@ For example:
                                           :request-id (map-elt tool-call :permission-request-id)
                                           :state state
                                           :tool-call-id tool-call-id)))
-                   ;; Add interrupt keybinding
-                   (define-key map (kbd "C-c C-c")
-                               (lambda ()
-                                 (interactive)
-                                 (with-current-buffer shell-buffer
-                                   (agent-shell-interrupt t))))
+                   ;; Add interrupt keybinding.  A sub-agent's dialog keeps
+                   ;; its reject binding instead (on the same key), since
+                   ;; interrupting the main turn leaves its request be.
+                   (unless (map-elt tool-call :subagent-session-id)
+                     (define-key map (kbd "C-c C-c")
+                                 (lambda ()
+                                   (interactive)
+                                   (with-current-buffer shell-buffer
+                                     (agent-shell-interrupt t)))))
+                   (when-let* ((open (agent-shell-subagent--permission-open-command
+                                      :state state :tool-call tool-call)))
+                     (define-key map "o" open))
                    map))
+         (subagent-text (agent-shell-subagent--permission-text
+                         :state state :tool-call tool-call :keymap keymap))
          (title (agent-shell--permission-title :tool-call tool-call))
          (diff-button (when (map-elt tool-call :diffs)
                         (agent-shell--make-permission-button
@@ -10657,7 +10896,7 @@ For example:
                          :option "view diff"))))
     (format "╭─
 
-    %s %s %s%s
+    %s %s %s%s%s
 
 
     %s%s
@@ -10669,6 +10908,9 @@ For example:
             (propertize "Tool Permission" 'font-lock-face 'agent-shell-permission-title)
             (propertize agent-shell-permission-icon
                         'font-lock-face 'agent-shell-warning)
+            (if subagent-text
+                (format "\n\n\n    %s" subagent-text)
+              "")
             (if title
                 (propertize
                  (format "\n\n\n    %s" title)
@@ -10691,18 +10933,29 @@ For example:
                                      :tool-call-id tool-call-id
                                      :message-text (format "Selected: %s" (map-elt action :option)))
                                     (when (equal (map-elt action :kind) "reject_once")
-                                      ;; No point in rejecting the change but letting
-                                      ;; the agent continue (it doesn't know why you
-                                      ;; have rejected the change).
-                                      ;; May as well interrupt so you can course-correct.
-                                      (with-current-buffer shell-buffer
-                                        (agent-shell-interrupt t))))
+                                      (agent-shell--interrupt-after-reject
+                                       :shell-buffer shell-buffer
+                                       :tool-call tool-call)))
                           :keymap keymap
                           :char (map-elt action :char)
                           :option (map-elt action :option)
                           :navigatable t))
                        actions
                        " "))))
+
+(cl-defun agent-shell--interrupt-after-reject (&key shell-buffer tool-call)
+  "Interrupt SHELL-BUFFER's turn, as TOOL-CALL's permission was rejected.
+
+No point in rejecting the change but letting the agent continue (it
+doesn't know why you have rejected the change).  May as well interrupt
+so you can course-correct.
+
+A sub-agent's TOOL-CALL is the exception: interrupting the main turn
+would stop unrelated work (other sub-agents included), so the agent is
+left to handle the rejection."
+  (unless (map-elt tool-call :subagent-session-id)
+    (with-current-buffer shell-buffer
+      (agent-shell-interrupt t))))
 
 (cl-defun agent-shell--send-permission-response (&key client request-id option-id cancelled state tool-call-id message-text reminder-scope)
   "Send a response to a permission request and clean up related dialog UI.
@@ -10719,55 +10972,68 @@ MESSAGE-TEXT: Optional message to display after sending the response.
 REMINDER-SCOPE: `request' when the answer is cleanup rather than a
   decision (the user's or a configured responder's), so the idle
   reminder is cancelled only if it's for this request.  By default it's
-  cancelled, as any answer is activity."
-  (acp-send-response
-   :client client
-   :response (acp-make-session-request-permission-response
-              :request-id request-id
-              :cancelled cancelled
-              :option-id option-id))
-  ;; Kill any diff buffer opened for this tool call, suppressing the
-  ;; on-exit callback since the permission is already being resolved.
-  (when-let* ((diff-buf (map-nested-elt state (list :tool-calls tool-call-id :diff-buffer))))
-    (agent-shell-diff-kill-buffer diff-buf))
-  ;; Ensure in the shell buffer for state operations, as this
-  ;; function may be invoked from a viewport buffer.
-  (with-current-buffer (map-elt state :buffer)
-    ;; Hide permission after sending response.
-    ;; block-id must be the same as the one used as
-    ;; agent-shell--update-fragment param by "session/request_permission".
-    (agent-shell--delete-fragment :state state :block-id (format "permission-%s" tool-call-id))
-    ;; Note: Tool call data is no longer deleted here intentionally.
-    ;; Subsequent tool_call_update notifications still need the data.
-    ;; It gets cleared at end of turn once its group finishes.
-    ;;
-    ;; Do clear :permission-request-id so consumers can distinguish
-    ;; between a pending permission request and one already answered.
-    (when-let* ((tool-calls (map-elt state :tool-calls))
-                (tool-call (map-elt tool-calls tool-call-id)))
-      (map-put! tool-calls tool-call-id
-                (map-delete tool-call :permission-request-id)))
-    (if (eq reminder-scope 'request)
-        (agent-shell--cancel-idle-timer-for request-id)
-      (agent-shell--cancel-idle-timer))
-    (agent-shell--emit-event
-     :event 'permission-response
-     :data (list (cons :request-id request-id)
-                 (cons :tool-call-id tool-call-id)
-                 (cons :option-id option-id)
-                 (cons :cancelled cancelled)))
-    (when message-text
-      (message "%s" message-text))
-    ;; Jump to any remaining permission buttons, or go to end of buffer.
-    (or (agent-shell-jump-to-latest-permission-button-row)
-        (goto-char (point-max)))
-    (when-let* (((map-elt state :buffer))
-                (viewport-buffer (agent-shell-viewport--buffer
-                                  :shell-buffer (map-elt state :buffer)
-                                  :existing-only t)))
-      (with-current-buffer viewport-buffer
-        (or (agent-shell-jump-to-latest-permission-button-row)
-            (goto-char (point-max)))))))
+  cancelled, as any answer is activity.
+
+Nothing is sent unless REQUEST-ID is still TOOL-CALL-ID's pending
+request, so a late answer (from a saved responder, say) can't answer
+it twice.  Return non-nil if a response was sent."
+  (unless (and state tool-call-id
+               (or (not request-id)
+                   (not (equal request-id
+                               (map-nested-elt state (list :tool-calls tool-call-id
+                                                           :permission-request-id))))))
+    (acp-send-response
+     :client client
+     :response (acp-make-session-request-permission-response
+                :request-id request-id
+                :cancelled cancelled
+                :option-id option-id))
+    ;; Kill any diff buffer opened for this tool call, suppressing the
+    ;; on-exit callback since the permission is already being resolved.
+    (when-let* ((diff-buf (map-nested-elt state (list :tool-calls tool-call-id :diff-buffer))))
+      (agent-shell-diff-kill-buffer diff-buf))
+    ;; Ensure in the shell buffer for state operations, as this
+    ;; function may be invoked from a viewport buffer.
+    (with-current-buffer (map-elt state :buffer)
+      ;; Hide permission after sending response.
+      ;; block-id must be the same as the one used as
+      ;; agent-shell--update-fragment param by "session/request_permission".
+      (agent-shell--delete-fragment
+       :state state
+       :namespace-id (map-nested-elt state (list :tool-calls tool-call-id :permission-namespace-id))
+       :block-id (agent-shell--permission-block-id tool-call-id))
+      ;; Note: Tool call data is no longer deleted here intentionally.
+      ;; Subsequent tool_call_update notifications still need the data.
+      ;; It gets cleared at end of turn once its group finishes.
+      ;;
+      ;; Do clear :permission-request-id so consumers can distinguish
+      ;; between a pending permission request and one already answered.
+      (when-let* ((tool-calls (map-elt state :tool-calls))
+                  (tool-call (map-elt tool-calls tool-call-id)))
+        (map-put! tool-calls tool-call-id
+                  (map-delete tool-call :permission-request-id)))
+      (if (eq reminder-scope 'request)
+          (agent-shell--cancel-idle-timer-for request-id)
+        (agent-shell--cancel-idle-timer))
+      (agent-shell--emit-event
+       :event 'permission-response
+       :data (list (cons :request-id request-id)
+                   (cons :tool-call-id tool-call-id)
+                   (cons :option-id option-id)
+                   (cons :cancelled cancelled)))
+      (when message-text
+        (message "%s" message-text))
+      ;; Jump to any remaining permission buttons, or go to end of buffer.
+      (or (agent-shell-jump-to-latest-permission-button-row)
+          (goto-char (point-max)))
+      (when-let* (((map-elt state :buffer))
+                  (viewport-buffer (agent-shell-viewport--buffer
+                                    :shell-buffer (map-elt state :buffer)
+                                    :existing-only t)))
+        (with-current-buffer viewport-buffer
+          (or (agent-shell-jump-to-latest-permission-button-row)
+              (goto-char (point-max))))))
+    t))
 
 (cl-defun agent-shell--resolve-permission-choice-to-action (&key choice actions)
   "Resolve `agent-shell-diff' CHOICE to permission action from ACTIONS.
@@ -10803,7 +11069,8 @@ DIFFS as per `agent-shell--make-diff-infos'.
 ACTIONS as per `agent-shell--make-permission-action'."
   (unless (derived-mode-p 'agent-shell-mode)
     (error "Not in a shell"))
-  (let ((shell-buffer (current-buffer)))
+  (let ((shell-buffer (current-buffer))
+        (tool-call (map-nested-elt state (list :tool-calls tool-call-id))))
     (lambda ()
       (interactive)
       (if-let* ((existing (map-nested-elt state (list :tool-calls tool-call-id :diff-buffer)))
@@ -10830,9 +11097,23 @@ ACTIONS as per `agent-shell--make-permission-action'."
                                   :message-text (map-elt action :option)))))
                 :on-reject (lambda ()
                              (interactive)
-                             (when (agent-shell-interrupt-confirmed-p)
-                               (with-current-buffer shell-buffer
-                                 (agent-shell-interrupt t))))
+                             (if (map-elt tool-call :subagent-session-id)
+                                 ;; Interrupting would stop the main turn,
+                                 ;; so only this request is rejected.
+                                 (when-let* ((action (agent-shell--resolve-permission-choice-to-action
+                                                      :choice 'reject
+                                                      :actions actions)))
+                                   (with-current-buffer shell-buffer
+                                     (agent-shell--send-permission-response
+                                      :client client
+                                      :request-id request-id
+                                      :option-id (map-elt action :option-id)
+                                      :state state
+                                      :tool-call-id tool-call-id
+                                      :message-text (map-elt action :option))))
+                               (when (agent-shell-interrupt-confirmed-p)
+                                 (with-current-buffer shell-buffer
+                                   (agent-shell-interrupt t)))))
                 :on-exit (lambda ()
                            (if-let* ((choice (condition-case nil
                                                  (if (y-or-n-p "Accept changes?")
@@ -10851,12 +11132,9 @@ ACTIONS as per `agent-shell--make-permission-action'."
                                   :tool-call-id tool-call-id
                                   :message-text (map-elt action :option))
                                  (when (eq choice 'reject)
-                                   ;; No point in rejecting the change but letting
-                                   ;; the agent continue (it doesn't know why you
-                                   ;; have rejected the change).
-                                   ;; May as well interrupt so you can course-correct.
-                                   (with-current-buffer shell-buffer
-                                     (agent-shell-interrupt t))))
+                                   (agent-shell--interrupt-after-reject
+                                    :shell-buffer shell-buffer
+                                    :tool-call tool-call)))
                              (message "Ignored"))))))
           ;; Track the diff buffer in tool-call state so it can be
           ;; cleaned up when the permission is resolved externally.
@@ -11886,6 +12164,8 @@ Shows \" ⧉\" when a command prefix is used."
                                                      map))))
             (when-let* ((indicator (agent-shell--context-usage-indicator)))
               (concat " ➤ " indicator))
+            (when-let* ((indicator (agent-shell-subagent--indicator (agent-shell--state))))
+              (concat " ➤ " indicator))
             (agent-shell--busy-indicator-frame))))
 
 (defun agent-shell--setup-modeline ()
@@ -12181,6 +12461,9 @@ with ON-SUCCESS function."
     ("t" "Set thought level" agent-shell-set-session-thought-level :transient t)
     ("o" "Set option" agent-shell-set-session-config-option :transient t)
     ("C" "Interrupt" agent-shell-interrupt :transient t)]
+   ["Sub-agents"
+    ("a" "Open sub-agent" agent-shell-open-subagent)
+    ("^" "Parent" agent-shell-subagent-parent)]
    ["Shell"
     ("b" "Toggle" agent-shell-toggle :transient t)
     ("N" "New shell" agent-shell-new-shell)]])

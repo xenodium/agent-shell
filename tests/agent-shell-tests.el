@@ -4195,12 +4195,12 @@ requires interactive authorization."
                   ((symbol-function 'agent-shell-viewport--buffer) (lambda (&rest _) nil)))
           (agent-shell--start-idle-timer :event 'permission-request
                                          :data '((:request-id . "b")))
-          (agent-shell--send-permission-response
-           :request-id "a"
-           :option-id "allow"
-           :state agent-shell--state
-           :tool-call-id "tool-a"
-           :reminder-scope (car case))
+          (should (agent-shell--send-permission-response
+                   :request-id "a"
+                   :option-id "allow"
+                   :state agent-shell--state
+                   :tool-call-id "tool-a"
+                   :reminder-scope (car case)))
           (should (equal (timerp (map-elt agent-shell--state :idle-timer)) (cdr case)))
           (agent-shell--cancel-idle-timer))))))
 
