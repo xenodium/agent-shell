@@ -5592,7 +5592,10 @@ variable (see makunbound)"))
     shell-buffer))
 
 (cl-defun agent-shell--delete-fragment (&key state block-id)
-  "Delete fragment with STATE and BLOCK-ID."
+  "Delete fragment with STATE and BLOCK-ID.
+
+Return the position the fragment started at in the shell buffer, if it
+was found there."
   (when-let* (((map-elt state :buffer))
               (viewport-buffer (agent-shell-viewport--buffer
                                 :shell-buffer (map-elt state :buffer)
@@ -5608,12 +5611,13 @@ variable (see makunbound)"))
                  (equal (current-buffer)
                         (map-elt state :buffer)))
       (error "Editing the wrong buffer: %s" (current-buffer)))
-    (let ((input-start (agent-shell--prompt-input-start)))
-      (agent-shell-ui-delete-fragment :namespace-id (map-elt state :request-count) :block-id block-id :no-undo t)
+    (let ((input-start (agent-shell--prompt-input-start))
+          (position (agent-shell-ui-delete-fragment :namespace-id (map-elt state :request-count) :block-id block-id :no-undo t)))
       ;; A deletion above the prompt pulled any unsubmitted input up, so the
       ;; undo entries recorded for it point at the shifted text.
       (unless (equal input-start (agent-shell--prompt-input-start))
-        (agent-shell--reset-undo-history)))))
+        (agent-shell--reset-undo-history))
+      position)))
 
 (cl-defun agent-shell--collapse-fragment-group (&key state namespace-id block-id)
   "Collapse group header BLOCK-ID under NAMESPACE-ID in STATE's buffers.
@@ -5787,7 +5791,8 @@ different fragment or CREATE-NEW flushes the previous batch first."
 (cl-defun agent-shell--update-fragment (&key state namespace-id block-id label-left label-right
                                              body append create-new navigation expanded
                                              render-body-images above-last-prompt
-                                             group-id group-label (group-expanded t))
+                                             group-id group-label (group-expanded t)
+                                             position)
   "Update fragment in the shell buffer.
 
 Creates or updates existing dialog using STATE's request count as namespace
@@ -5808,7 +5813,13 @@ Programmatic fragment updates do not enter undo history.
 
 GROUP-ID nests this block under a collapsible group header, materialized
 from GROUP-LABEL on first use (see `agent-shell-ui-make-fragment-model'),
-with GROUP-EXPANDED as the group's initial fold state."
+with GROUP-EXPANDED as the group's initial fold state.
+
+POSITION, a position in the shell buffer, is where a new block goes
+instead of the end (where `agent-shell--delete-fragment' removed it,
+say).  The viewport can't place it the same way, so it's refreshed
+instead, if it's showing that interaction.  Otherwise it shows the
+block when it next shows that interaction."
   ;; Streamed text lands before this fragment, never after it.
   (agent-shell--flush-stream-render state)
   ;; A persistent prompt is live for the whole turn, so there is always one
@@ -5837,7 +5848,8 @@ with GROUP-EXPANDED as the group's initial fold state."
                "`")
            "Snippet\n\n```\n\\1\n```\n"
            label-right)))
-  (when-let* (((map-elt state :buffer))
+  (when-let* (((not position))
+              ((map-elt state :buffer))
               (viewport-buffer (agent-shell-viewport--buffer
                                 :shell-buffer (map-elt state :buffer)
                                 :existing-only t))
@@ -5932,7 +5944,8 @@ with GROUP-EXPANDED as the group's initial fold state."
                              :append append
                              :create-new create-new
                              :expanded expanded
-                             :no-undo t))
+                             :no-undo t
+                             :position position))
                    (padding-start (map-nested-elt range '(:padding :start)))
                    (padding-end (map-nested-elt range '(:padding :end)))
                    (block-start (map-nested-elt range '(:block :start)))
@@ -6003,7 +6016,36 @@ with GROUP-EXPANDED as the group's initial fold state."
     ;; Runs outside the `buffer-undo-list' binding above, which would
     ;; otherwise swallow the reset.
     (when above-last-prompt
-      (agent-shell--reset-undo-history))))
+      (agent-shell--reset-undo-history))
+    (when position
+      (agent-shell--refresh-viewport-showing :state state :position position))))
+
+(cl-defun agent-shell--refresh-viewport-showing (&key state position)
+  "Refresh STATE's viewport if it shows the interaction at POSITION.
+
+POSITION is in the shell buffer, whose point the viewport follows (see
+`agent-shell-interaction-at-point').  The viewport keeps its point and
+scroll position."
+  (when-let* ((viewport-buffer (agent-shell-viewport--buffer
+                                :shell-buffer (map-elt state :buffer)
+                                :existing-only t))
+              ((with-current-buffer viewport-buffer
+                 (derived-mode-p 'agent-shell-viewport-view-mode)))
+              ((with-current-buffer (map-elt state :buffer)
+                 (equal (ignore-errors
+                          (save-excursion
+                            (goto-char position)
+                            (shell-maker--prompt-begin-position)))
+                        (ignore-errors
+                          (shell-maker--prompt-begin-position))))))
+    (with-current-buffer viewport-buffer
+      (let* ((window (get-buffer-window viewport-buffer))
+             (saved-point (point))
+             (saved-window-start (and window (window-start window))))
+        (agent-shell-viewport-refresh)
+        (goto-char (min saved-point (point-max)))
+        (when window
+          (set-window-start window (min saved-window-start (point-max)) t))))))
 
 (cl-defun agent-shell--update-text (&key state namespace-id block-id text append create-new)
   "Update plain text entry in the shell buffer.
