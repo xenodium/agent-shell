@@ -8807,6 +8807,65 @@ and its value returned."
         (delete-process fake-process))
       (kill-buffer buffer))))
 
+(cl-defun agent-shell-tests--window-start-after-growing-above (&key follow-output)
+  "Return the window start before and after output grows above it.
+
+Shows two blocks, starts the window at the second, then appends to the
+first, with `shell-maker--should-auto-scroll-p' returning FOLLOW-OUTPUT.
+Returns an alist like:
+
+  ((:before . 3021) (:after . 3033))"
+  (save-window-excursion
+    (agent-shell-tests--with-persistent-prompt-shell
+     (lambda ()
+       (switch-to-buffer (current-buffer))
+       (agent-shell--update-fragment
+        :state agent-shell--state
+        :block-id "history"
+        :body "history"
+        :expanded t)
+       (agent-shell--update-fragment
+        :state agent-shell--state
+        :block-id "tail"
+        :body (mapconcat (lambda (line)
+                           (format "tail line %03d" line))
+                         (number-sequence 0 100)
+                         "\n")
+        :expanded t)
+       (goto-char (point-max))
+       (set-window-start (selected-window)
+                         (save-excursion
+                           (goto-char (point-min))
+                           (search-forward "tail line 000")
+                           (line-beginning-position))
+                         t)
+       (let ((before (window-start)))
+         (cl-letf (((symbol-function 'shell-maker--should-auto-scroll-p)
+                    (lambda () follow-output)))
+           (agent-shell--update-fragment
+            :state agent-shell--state
+            :block-id "history"
+            :body " grows"
+            :append t))
+         (list (cons :before before)
+               (cons :after (window-start)))))
+     :busy t)))
+
+(ert-deftest agent-shell-update-fragment-followed-window-keeps-shifted-start-test ()
+  "Output growing above a followed window does not pull it back.
+Restoring the old numeric `window-start' would fight shell-maker's tail
+following and make the window jump."
+  (let ((starts (agent-shell-tests--window-start-after-growing-above
+                 :follow-output t)))
+    (should (> (map-elt starts :after) (map-elt starts :before)))))
+
+(ert-deftest agent-shell-update-fragment-scrolled-window-restores-start-test ()
+  "Output growing above a scrolled-back window leaves it where it was.
+Point can remain at end while wheel scrolling moves the live end out of
+view, so `eobp' alone must not decide."
+  (let ((starts (agent-shell-tests--window-start-after-growing-above)))
+    (should (= (map-elt starts :after) (map-elt starts :before)))))
+
 (ert-deftest agent-shell--prompt-queue-process-next-merges-test ()
   "All queued prompts are submitted together as one prompt."
   (should (equal

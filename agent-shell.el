@@ -5844,9 +5844,11 @@ with GROUP-EXPANDED as the group's initial fold state."
               ((with-current-buffer viewport-buffer
                  (derived-mode-p 'agent-shell-viewport-view-mode))))
     (with-current-buffer viewport-buffer
-      (let ((buffer-undo-list t)
-            (inhibit-read-only t)
-            (auto-scroll (shell-maker--should-auto-scroll-p)))
+      (let* ((buffer-undo-list t)
+             (inhibit-read-only t)
+             (auto-scroll (shell-maker--should-auto-scroll-p))
+             (window (get-buffer-window (current-buffer)))
+             (saved-window-start (and window (window-start window))))
         (when-let* ((range (agent-shell-ui-update-fragment
                             (agent-shell-ui-make-fragment-model
                              :namespace-id (or namespace-id
@@ -5894,7 +5896,13 @@ with GROUP-EXPANDED as the group's initial fold state."
                                               :external-renderers nil
                                               :complete t))))
           (when auto-scroll
-            (goto-char (point-max)))))))
+            (goto-char (point-max))))
+        ;; Rerendering displaces the window's start marker, so restore it
+        ;; for a reader scrolled back.  While following, output growing
+        ;; above it legitimately moves it, and restoring would make the
+        ;; window jump (see #964).
+        (when (and window (not auto-scroll))
+          (set-window-start window saved-window-start t)))))
   (with-current-buffer (map-elt state :buffer)
     (unless (and (derived-mode-p 'agent-shell-mode)
                  (equal (current-buffer)
@@ -5903,6 +5911,9 @@ with GROUP-EXPANDED as the group's initial fold state."
     (let* ((buffer-undo-list t)
            (window (get-buffer-window (current-buffer)))
            (auto-scroll (eobp))
+           ;; Unlike `auto-scroll', also nil when the user scrolled the
+           ;; window back while leaving point at the end.
+           (follow-output (shell-maker--should-auto-scroll-p))
            ;; Use a marker to ensure point restoration
            ;; lands point after the inserted text.
            (saved-point (copy-marker (point)))
@@ -5994,9 +6005,11 @@ with GROUP-EXPANDED as the group's initial fold state."
         (goto-char saved-point)
         (when saved-mark
           (set-marker (mark-marker) saved-mark))
-        (setq mark-active saved-mark-active)
-        (when window
-          (set-window-start window saved-window-start t)))
+        (setq mark-active saved-mark-active))
+      ;; Same as the viewport above: restore for a reader scrolled
+      ;; back, never while following (see #964).
+      (when (and window (not follow-output))
+        (set-window-start window saved-window-start t))
       (set-marker saved-point nil))
     ;; Rendering above the prompt pushed any unsubmitted input down, so the
     ;; undo entries recorded for it now point at the shifted-down text.

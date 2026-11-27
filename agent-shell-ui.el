@@ -171,11 +171,9 @@ inserts the new chunk at the end of the body region without disturbing
 already-rendered content, so `agent-shell-markdown' frozen ranges
 stay intact and streaming append is O(new-chunk) rather than
 O(accumulated-body).  Label-only updates leave the body untouched."
-  (let* ((window (get-buffer-window (current-buffer)))
-         (saved-window-start (and window (window-start window)))
-         ;; Marker so it survives the edits made while updating the block.
-         ;; Bound out here so the unwind form below can release it.
-         (block-end nil))
+  (let (;; Marker so it survives the edits made while updating the block.
+        ;; Bound out here so the unwind form below can release it.
+        (block-end nil))
     (unwind-protect
         (save-mark-and-excursion
           (let* ((inhibit-read-only t)
@@ -416,9 +414,7 @@ O(accumulated-body).  Label-only updates leave the body untouched."
                                            (cons :end padding-end))))
                     (cons :group-header (map-elt group-header :range))))))
       (when (markerp block-end)
-        (set-marker block-end nil))
-      (when window
-        (set-window-start window saved-window-start t)))))
+        (set-marker block-end nil)))))
 
 (defun agent-shell-ui--read-fragment-labels (block-start block-end)
   "Return alist with :label-left and :label-right strings (no properties).
