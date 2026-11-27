@@ -65,6 +65,7 @@ Derives from `diff-mode'.  Provides `agent-shell-diff-accept-all'
 and `agent-shell-diff-reject-all' commands that can be rebound
 via `agent-shell-diff-mode-map'."
   :group 'agent-shell
+  :interactive nil
   ;; Don't inherit diff-mode-map (some bindings can be destructive).
   (set-keymap-parent agent-shell-diff-mode-map nil)
   (setq buffer-read-only t))
@@ -79,6 +80,7 @@ If BUFFER is not live, do nothing."
 
 (defun agent-shell-diff-accept-all ()
   "Accept all changes in the current diff buffer."
+  (declare (modes agent-shell-diff-mode))
   (interactive)
   (if agent-shell-diff--accept-all-command
       (let ((buf (current-buffer)))
@@ -90,6 +92,7 @@ If BUFFER is not live, do nothing."
 
 (defun agent-shell-diff-reject-all ()
   "Reject all changes in the current diff buffer."
+  (declare (modes agent-shell-diff-mode))
   (interactive)
   (if agent-shell-diff--reject-all-command
       (let ((buf (current-buffer)))
@@ -246,6 +249,7 @@ the old-side text first (the change has usually not been applied yet),
 then the new-side text.
 
 See https://github.com/xenodium/agent-shell/issues/347"
+  (declare (modes agent-shell-diff-mode))
   (interactive)
   (let ((target (agent-shell-diff--target-at-point)))
     (unless (map-elt target :file)

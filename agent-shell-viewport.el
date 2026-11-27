@@ -1468,7 +1468,9 @@ VIEWPORT-BUFFER is the viewport buffer to check."
                          (:description . "Narrow images"))
                         ((:function . agent-shell-markdown-image-scale-reset)
                          (:description . "Reset image size")))))
-              )))])
+              )))]
+  (interactive nil agent-shell-viewport-view-mode)
+  (transient-setup 'agent-shell-viewport--help-menu))
 
 (defun agent-shell-viewport-help-menu ()
   "Show viewport and display the transient help menu (bound to ? in view mode)."
@@ -1517,7 +1519,9 @@ VIEWPORT-BUFFER is the viewport buffer to check."
                          (:description . "Cycle mode"))
                         ((:function . agent-shell-other-buffer)
                          (:description . "Switch to shell")
-                         (:transient . nil))))))))])
+                         (:transient . nil))))))))]
+  (interactive nil agent-shell-viewport-edit-mode)
+  (transient-setup 'agent-shell-viewport--compose-help-menu))
 
 (defun agent-shell-viewport-compose-help-menu ()
   "Show the transient help menu for compose (edit) mode."
@@ -1685,6 +1689,7 @@ For example, offer to kill associated shell session."
   "Major mode for composing agent shell prompts.
 
 \\{agent-shell-viewport-edit-mode-map}"
+  :interactive nil
   (cursor-intangible-mode +1)
   (setq buffer-read-only nil)
   ;; Indent composed text to match the response body's base `line-prefix'
@@ -1710,6 +1715,7 @@ For example, offer to kill associated shell session."
   "Major mode for viewing agent shell prompts (read-only).
 
 \\{agent-shell-viewport-view-mode-map}"
+  :interactive nil
   (cursor-intangible-mode +1)
   (agent-shell-ui-mode +1)
   (add-hook 'agent-shell-ui-post-expand-fragment-at-point-hook

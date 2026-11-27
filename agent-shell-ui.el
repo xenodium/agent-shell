@@ -1497,6 +1497,7 @@ After toggling, point returns to its starting position, except when the
 action collapsed the fragment from inside the body — that position is
 now invisible, so point moves to the start of the title line instead.
 Silent no-op when no fragment exists at or after point."
+  (declare (modes agent-shell-ui-mode))
   (interactive "P")
   (when-let* ((origin (point))
               (target (agent-shell-ui--enclosing-fragment-position)))
@@ -1574,6 +1575,7 @@ see,\" regardless of any manual folds in place.
 
 Fragments whose `:navigatable' flag is nil (e.g. inline message chunks)
 are skipped — they have no fold indicator to act on."
+  (declare (modes agent-shell-ui-mode))
   (interactive)
   (let* ((target-collapsed
           (pcase agent-shell-ui--fold-toggle-state
@@ -1668,6 +1670,7 @@ Skips blocks hidden inside a collapsed group (see
 
 (defun agent-shell-ui-forward-block ()
   "Jump to the next block."
+  (declare (modes agent-shell-ui-mode))
   (interactive)
   (when-let* ((start-point (point))
               (found (save-mark-and-excursion
@@ -1687,6 +1690,7 @@ Skips blocks hidden inside a collapsed group (see
 
 When point is strictly inside a navigatable block, jump to that
 block's beginning instead of the previous block."
+  (declare (modes agent-shell-ui-mode))
   (interactive)
   (when-let* ((start-point (point))
               (found (save-mark-and-excursion
@@ -1861,6 +1865,7 @@ every fragment isearch opened folds back."
 (define-minor-mode agent-shell-ui-mode
   "Minor mode for SUI block navigation."
   :lighter " SUI"
+  :interactive (agent-shell-mode agent-shell-viewport-view-mode)
   :keymap agent-shell-ui-mode-map
   (if agent-shell-ui-mode
       (progn

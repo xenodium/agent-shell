@@ -89,6 +89,7 @@ And \"1. step\" returns:
 
 On an empty list item, remove the whole prefix (indent + marker) and
 break out of the list."
+  (declare (modes agent-shell-list-edit-mode))
   (interactive)
   (let ((item (agent-shell-list-edit--at-item)))
     (cond
@@ -116,6 +117,7 @@ break out of the list."
 Adds `agent-shell-list-edit--indent-step' spaces at the start of the
 line.  When point is not on a list item, falls back to
 `indent-for-tab-command'."
+  (declare (modes agent-shell-list-edit-mode))
   (interactive)
   (if (agent-shell-list-edit--at-item)
       (save-excursion
@@ -128,6 +130,7 @@ line.  When point is not on a list item, falls back to
 
 Removes `agent-shell-list-edit--indent-step' spaces from the start of
 the line.  When point is not on an indented list item, does nothing."
+  (declare (modes agent-shell-list-edit-mode))
   (interactive)
   (when-let* ((indent (map-elt (agent-shell-list-edit--at-item) :indent))
               ((>= (length indent) agent-shell-list-edit--indent-step)))
@@ -151,6 +154,7 @@ on RET.  Pressing RET on an empty list item removes the marker and
 breaks out of the list.  TAB and \\`<backtab>' indent and de-indent
 the current item."
   :lighter " ListEdit"
+  :interactive (agent-shell-viewport-edit-mode)
   :keymap agent-shell-list-edit-mode-map)
 
 (provide 'agent-shell-list-edit)

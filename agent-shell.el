@@ -1507,6 +1507,7 @@ offers to steer the most recently queued prompt.
 This owns the `agent-shell-submit' name because shell-maker's
 per-start aliasing is disabled (see the `:alias-commands nil' call in
 `agent-shell--start')."
+  (declare (modes agent-shell-mode))
   (interactive "P")
   (unless (derived-mode-p 'agent-shell-mode)
     (user-error "Not in an agent shell"))
@@ -2543,6 +2544,7 @@ Structure the shell draws as chrome becomes headings: a turn opens
 underneath.  See `agent-shell--buffer-markdown-substring'.
 
 Interactively, operates on the active region."
+  (declare (modes agent-shell-mode))
   (interactive "r")
   (kill-new (agent-shell--buffer-markdown-substring beg end))
   (setq deactivate-mark t)
@@ -2554,6 +2556,8 @@ Interactively, operates on the active region."
 Rendered links show only their title; this recovers the target URL
 from the `agent-shell-markdown-url' text property the renderer leaves
 behind.  Signals a `user-error' when point is not on a link."
+  (declare (modes agent-shell-mode
+                  agent-shell-viewport-view-mode))
   (interactive)
   (if-let* ((url (agent-shell-markdown-link-url-at-point pos)))
       (progn
@@ -2566,6 +2570,8 @@ behind.  Signals a `user-error' when point is not on a link."
 
 Copies the code without its fences or language label.  Signals a
 `user-error' when point is not on a rendered code block body."
+  (declare (modes agent-shell-mode
+                  agent-shell-viewport-view-mode))
   (interactive)
   (if-let* ((body (agent-shell-markdown-source-block-at-point pos)))
       (progn
@@ -6232,6 +6238,8 @@ In a rendered markdown table that's its first cell, whichever cell
 `backward-up-list' is to a list.  Anywhere else it runs
 `backward-up-list' itself, leaving the key its usual meaning while
 composing a prompt."
+  (declare (modes agent-shell-mode
+                  agent-shell-viewport-view-mode))
   (interactive)
   (if-let* ((position (agent-shell-markdown-table--first-cell (point))))
       (goto-char position)
@@ -7195,7 +7203,6 @@ FUNCTION."
 
 (defun agent-shell--display-buffer (shell-buffer)
   "Toggle agent SHELL-BUFFER display."
-  (interactive)
   (if (get-buffer-window shell-buffer)
       (select-window (get-buffer-window shell-buffer))
     (select-window (display-buffer shell-buffer agent-shell-display-action))))
@@ -10358,6 +10365,7 @@ Otherwise, invoke `yank' with ARG as usual.
 
 Needs external utilities.  See `agent-shell-clipboard-image-handlers'
 for details."
+  (declare (modes agent-shell-mode))
   (interactive "*P")
   (if-let* (((window-system))
             (screenshots-dir (agent-shell--dot-subdir "screenshots"))
@@ -12114,7 +12122,9 @@ with ON-SUCCESS function."
     ("C" "Interrupt" agent-shell-interrupt :transient t)]
    ["Shell"
     ("b" "Toggle" agent-shell-toggle :transient t)
-    ("N" "New shell" agent-shell-new-shell)]])
+    ("N" "New shell" agent-shell-new-shell)]]
+  (interactive nil agent-shell-mode)
+  (transient-setup 'agent-shell-help-menu))
 
 ;;; Transcript
 
@@ -12388,6 +12398,7 @@ ephemeral status such as the pending prompt queue."
   "Narrow to the last COUNT navigatable blocks in the current buffer.
 The buffer must be an `agent-shell-mode' buffer.  Narrow from the
 start of the COUNTth-from-last navigatable block to `point-max'."
+  (declare (modes agent-shell-mode))
   (interactive "P")
   (unless (derived-mode-p 'agent-shell-mode)
     (error "Not in an agent-shell buffer"))

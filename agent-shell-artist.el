@@ -104,6 +104,7 @@ Each entry's value alist holds :key, :label, :command.")
 
 Adds commit/cancel bindings on top of `artist-mode'."
   :lighter " AS-Art"
+  :interactive (artist-mode)
   :keymap agent-shell-artist-mode-map)
 
 (defun agent-shell-artist-insert-text-drawing ()
@@ -225,7 +226,9 @@ Each result is (KEY DESC-FN COMMAND :transient t)."
          (agent-shell-artist--ops-in-column 'erase))]
      ["Clipboard"
       ,@(agent-shell-artist--op-suffix
-         (agent-shell-artist--ops-in-column 'clip))]]))
+         (agent-shell-artist--ops-in-column 'clip))]]
+    (interactive nil agent-shell-artist-mode)
+    (transient-setup 'agent-shell-artist-help)))
 
 (defun agent-shell-artist--show-history-at (pos)
   "Replace buffer contents with history ring entry at POS."
@@ -237,6 +240,7 @@ Each result is (KEY DESC-FN COMMAND :transient t)."
 
 (defun agent-shell-artist-previous-history ()
   "Show older art from `agent-shell-artist-history-ring'."
+  (declare (modes agent-shell-artist-mode))
   (interactive)
   (let ((len (ring-length agent-shell-artist-history-ring))
         (next (if agent-shell-artist--history-pos
@@ -252,6 +256,7 @@ Each result is (KEY DESC-FN COMMAND :transient t)."
 
 (defun agent-shell-artist-next-history ()
   "Show newer art from `agent-shell-artist-history-ring'."
+  (declare (modes agent-shell-artist-mode))
   (interactive)
   (let ((len (ring-length agent-shell-artist-history-ring))
         (next (and agent-shell-artist--history-pos
@@ -266,6 +271,7 @@ Each result is (KEY DESC-FN COMMAND :transient t)."
 
 (defun agent-shell-artist-commit ()
   "Insert scratch art into the calling buffer wrapped in a fence."
+  (declare (modes agent-shell-artist-mode))
   (interactive)
   (unless (buffer-live-p agent-shell-artist--target-buffer)
     (user-error "Calling buffer is gone"))
@@ -299,6 +305,7 @@ Each result is (KEY DESC-FN COMMAND :transient t)."
 
 (defun agent-shell-artist-cancel ()
   "Discard the scratch art and close the buffer."
+  (declare (modes agent-shell-artist-mode))
   (interactive)
   (quit-window t))
 
