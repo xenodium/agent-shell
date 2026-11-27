@@ -152,11 +152,13 @@ initial fold state.  v1 is two-level: a group may not itself be nested."
                        text)
   (insert text))
 
-(cl-defun agent-shell-ui-update-fragment (model &key append create-new on-post-process navigation expanded no-undo)
+(cl-defun agent-shell-ui-update-fragment (model &key append create-new on-post-process navigation expanded no-undo position)
   "Update or add a fragment using MODEL.
 
 When APPEND is non-nil, append to body instead of replacing.
 When CREATE-NEW is non-nil, create new block.
+When POSITION is non-nil, a new block is inserted there instead of at
+the end (where `agent-shell-ui-delete-fragment' removed it, say).
 When ON-POST-PROCESS is non-nil, call this function after updating.
 When NAVIGATION is `never', block won't be TAB navigatable.
 When NAVIGATION is `auto', block is navigatable if non-empty body.
@@ -353,7 +355,7 @@ O(accumulated-body).  Label-only updates leave the body untouched."
                 (setq padding-end (point)))
                ;; New block.
                (t
-                (goto-char (point-max))
+                (goto-char (or position (point-max)))
                 (setq padding-start (point))
                 (agent-shell-ui--insert-read-only (agent-shell-ui--required-newlines 2))
                 (setq block-start (point))
@@ -658,7 +660,8 @@ be handed in."
 (cl-defun agent-shell-ui-delete-fragment (&key namespace-id block-id no-undo)
   "Delete fragment with NAMESPACE-ID and BLOCK-ID.
 
-When NO-UNDO is non-nil, disable undo recording for this operation."
+When NO-UNDO is non-nil, disable undo recording for this operation.
+Return the position the fragment started at, if it was found."
   (save-mark-and-excursion
     (let* ((inhibit-read-only t)
            (buffer-undo-list (if no-undo t buffer-undo-list))
@@ -685,7 +688,8 @@ When NO-UNDO is non-nil, disable undo recording for this operation."
                       (not (get-text-property (point) 'agent-shell-ui-state)))
             (forward-char 1))
           (setq block-end (point))
-          (delete-region block-start block-end))))))
+          (delete-region block-start block-end)
+          block-start)))))
 
 (cl-defun agent-shell-ui--block-range (&key position)
   "Get block range at POSITION if found.  Nil otherwise.

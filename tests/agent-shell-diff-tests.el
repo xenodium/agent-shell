@@ -378,6 +378,7 @@ point."
                                        (cons :file "test.el")))))
          (shell-buf (generate-new-buffer " *test-shell*"))
          (tool-data (list (cons :status "pending")
+                          (cons :permission-request-id "req-1")
                           (cons :diff-buffer diff-buf)))
          (state (list (cons :buffer shell-buf)
                       (cons :tool-calls

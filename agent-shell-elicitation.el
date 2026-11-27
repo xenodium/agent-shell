@@ -69,6 +69,7 @@
 (declare-function acp-send-response "acp")
 (declare-function agent-shell--append-transcript "agent-shell")
 (declare-function agent-shell--cancel-idle-timer "agent-shell")
+(declare-function agent-shell--cancel-idle-timer-for "agent-shell")
 (declare-function agent-shell--start-idle-timer "agent-shell")
 (declare-function agent-shell--active-requests-p "agent-shell")
 (declare-function agent-shell--delete-fragment "agent-shell")
@@ -76,6 +77,10 @@
 (declare-function agent-shell--state "agent-shell")
 (declare-function agent-shell--update-fragment "agent-shell")
 (declare-function agent-shell-interrupt "agent-shell")
+(declare-function agent-shell-subagent--open "agent-shell-subagent")
+(declare-function agent-shell-subagent--request-session-id "agent-shell-subagent")
+(declare-function agent-shell-subagent--tool-call-id "agent-shell-subagent")
+(declare-function agent-shell-subagent--source-text "agent-shell-subagent")
 (declare-function agent-shell-viewport--buffer "agent-shell-viewport")
 (declare-function agent-shell-viewport--shell-buffer "agent-shell-viewport")
 
@@ -553,6 +558,14 @@ Without this, `map-put!' fails on a mid-session package update."
       (nconc state (list (cons key nil)))))
   state)
 
+(defun agent-shell-elicitation--outlives-turn-p (elicitation)
+  "Return non-nil if ELICITATION still awaits an answer past the turn.
+
+A sub-agent's form (see `agent-shell-subagent--route-request') isn't
+tied to the main shell's turn."
+  (and (map-elt elicitation :subagent-session-id)
+       (eq (map-elt elicitation :status) 'pending)))
+
 (cl-defun agent-shell-elicitation--clear (&key state)
   "Drop STATE's forms at the end of a turn.
 
@@ -560,13 +573,20 @@ A form settles within the turn that raised it -- the agent is blocked
 on the answer until it does -- so nothing here is still awaiting one.
 Settled entries are cleared alongside `:tool-calls' rather than kept:
 the rendered text is already correct and the transcript already has the
-answer, so there is nothing left to look up."
+answer, so there is nothing left to look up.
+
+A sub-agent's pending form is kept, since its sub-agent may still be
+waiting on it."
   (agent-shell-elicitation--ensure-state state)
-  (map-put! state :elicitations nil)
-  (map-put! state :active-requests
-            (seq-remove (lambda (request)
-                          (equal (map-elt request :method) "elicitation/create"))
-                        (map-elt state :active-requests))))
+  (let ((kept (seq-filter (lambda (entry)
+                            (agent-shell-elicitation--outlives-turn-p (cdr entry)))
+                          (map-elt state :elicitations))))
+    (map-put! state :elicitations kept)
+    (map-put! state :active-requests
+              (seq-remove (lambda (request)
+                            (and (equal (map-elt request :method) "elicitation/create")
+                                 (not (assoc (map-elt request :id) kept))))
+                          (map-elt state :active-requests)))))
 
 (defun agent-shell-elicitation--preview-open-p (elicitation key value)
   "Return non-nil when the preview for KEY's VALUE option is open in ELICITATION.
@@ -620,6 +640,7 @@ control resolves back to it either way."
     (define-key map [mouse-1] #'agent-shell-elicitation-act)
     (define-key map [remap self-insert-command] #'ignore)
     (define-key map (kbd "C-c C-c") #'agent-shell-elicitation-interrupt)
+    (define-key map (kbd "o") #'agent-shell-elicitation-open-source)
     map)
   "Keymap active on an elicitation form's controls.
 
@@ -1047,8 +1068,10 @@ cannot drift out of step with the layout."
       (put-text-property 0 1 'agent-shell-elicitation-form-start t marked)
       marked)))
 
-(defun agent-shell-elicitation--make-text (elicitation)
+(defun agent-shell-elicitation--make-text (elicitation &optional source)
   "Create text to render the form for ELICITATION.
+
+SOURCE, if any, is a line naming who's asking, shown under the title.
 
 ELICITATION is the entry the variable `agent-shell--state' holds under
 `:elicitations'.  Pure: every interaction mutates that entry and calls
@@ -1077,7 +1100,10 @@ For example:
                        (append (agent-shell-elicitation--make-field-texts elicitation)
                                (list (agent-shell-elicitation--make-buttons elicitation)))
                      (list (agent-shell-elicitation--make-settled-text elicitation))))
-         (body (delq nil (cons question sections))))
+         (body (delq nil (cons question sections)))
+         (body (if source
+                   (cons (concat agent-shell-elicitation--indent source) body)
+                 body)))
     (format "╭─
 
     %s %s %s
@@ -1112,15 +1138,27 @@ would claim a capability we do not have."
                              :message (format "Unsupported elicitation mode: %s"
                                               (map-nested-elt acp-request '(params mode)))))))
     (cl-return-from agent-shell-elicitation--on-create-request))
-  (let ((request-id (map-elt acp-request 'id))
-        (tool-call-id (map-nested-elt acp-request '(params toolCallId)))
-        (question (map-nested-elt acp-request '(params message)))
+  (let* ((request-id (map-elt acp-request 'id))
+         (subagent-session-id (agent-shell-subagent--request-session-id state acp-request))
+         ;; A sub-agent's tool call is keyed as the main shell keys it,
+         ;; so it can't be mistaken for one of the main shell's own.
+         (tool-call-id (when-let* ((id (map-nested-elt acp-request '(params toolCallId))))
+                         (if subagent-session-id
+                             (agent-shell-subagent--tool-call-id subagent-session-id id)
+                           id)))
+         (question (map-nested-elt acp-request '(params message)))
         (fields (agent-shell-elicitation--parse-schema
                  :requested-schema (map-nested-elt acp-request '(params requestedSchema)))))
     (agent-shell-elicitation--put
      state request-id
      (list (cons :id request-id)
            (cons :tool-call-id tool-call-id)
+           ;; Tagged before rendering, so the form and any subscriber see
+           ;; where it came from.
+           (cons :subagent-session-id subagent-session-id)
+           ;; A sub-agent's form can be answered in a later turn, so
+           ;; it's redrawn wherever it first landed.
+           (cons :namespace-id (map-elt state :request-count))
            ;; The adapter emits the `tool_call' before the elicitation
            ;; referencing it, so a question already showing as that
            ;; call's title would otherwise be rendered twice.
@@ -1146,6 +1184,7 @@ would claim a capability we do not have."
     ;; path arms.  Cancelled in `agent-shell-elicitation--respond'.
     (let ((data (list (cons :request-id request-id)
                       (cons :tool-call-id tool-call-id)
+                      (cons :subagent-session-id subagent-session-id)
                       (cons :message question)
                       (cons :meta (map-nested-elt acp-request '(params _meta))))))
       (agent-shell--emit-event :event 'elicitation-request :data data)
@@ -1160,9 +1199,14 @@ so every interaction mutates state and pushes a freshly built body."
   (when-let* ((elicitation (agent-shell-elicitation--get state id)))
     (agent-shell--update-fragment
      :state state
+     :namespace-id (map-elt elicitation :namespace-id)
      :block-id (format "elicitation-%s" id)
      :body (with-current-buffer (map-elt state :buffer)
-             (agent-shell-elicitation--make-text elicitation))
+             (agent-shell-elicitation--make-text
+              elicitation
+              (agent-shell-subagent--source-text
+               :state state
+               :session-id (map-elt elicitation :subagent-session-id))))
      :expanded t
      :navigation 'never
      :above-last-prompt (not (agent-shell--active-requests-p state)))))
@@ -1181,12 +1225,18 @@ request rather than a session -- has no tool call behind it, so the
 settled form stays as the only record of what was asked."
   (if (agent-shell-elicitation--tool-call-records-p :state state :id id)
       (agent-shell--delete-fragment
-       :state state :block-id (format "elicitation-%s" id))
+       :state state
+       :namespace-id (map-nested-elt state (list :elicitations id :namespace-id))
+       :block-id (format "elicitation-%s" id))
     (agent-shell-elicitation--render :state state :id id)))
 
 (cl-defun agent-shell-elicitation--tool-call-records-p (&key state id)
-  "Return non-nil when elicitation ID's tool call in STATE stands in for its form."
-  (when-let* ((tool-call-id (map-nested-elt state (list :elicitations id :tool-call-id))))
+  "Return non-nil when elicitation ID's tool call in STATE stands in for its form.
+
+A sub-agent's tool call isn't shown in the main shell, where its form
+is, so the settled form stays."
+  (when-let* (((not (map-nested-elt state (list :elicitations id :subagent-session-id))))
+              (tool-call-id (map-nested-elt state (list :elicitations id :tool-call-id))))
     (agent-shell-elicitation--questionnaire-p
      (map-nested-elt state (list :tool-calls tool-call-id :raw-input)))))
 
@@ -1200,12 +1250,17 @@ settled form stays as the only record of what was asked."
     (with-current-buffer viewport-buffer
       (agent-shell-elicitation-jump-to-latest-form))))
 
-(cl-defun agent-shell-elicitation--respond (&key state id action)
+(cl-defun agent-shell-elicitation--respond (&key state id action reminder-scope)
   "Answer elicitation ID in STATE with ACTION and settle its form.
 
 ACTION is one of `accept', `decline' or `cancel'.  Answering an
 elicitation that already settled is a no-op, so a racing interrupt
-cannot respond to one request twice."
+cannot respond to one request twice.
+
+REMINDER-SCOPE is `request' when the answer is cleanup rather than a
+decision (the user's or a configured responder's), so the idle reminder
+is cancelled only if it's for this form.  By default it's cancelled, as
+any answer is activity."
   (when-let* ((elicitation (agent-shell-elicitation--get state id))
               ((eq (map-elt elicitation :status) 'pending)))
     (acp-send-response
@@ -1232,7 +1287,9 @@ cannot respond to one request twice."
     ;; event subscriptions), and answering can be driven from the
     ;; viewport buffer, so resolve them against the shell.
     (with-current-buffer (map-elt state :buffer)
-      (agent-shell--cancel-idle-timer)
+      (if (eq reminder-scope 'request)
+          (agent-shell--cancel-idle-timer-for id)
+        (agent-shell--cancel-idle-timer))
       (agent-shell--append-transcript
        :text (format "\n## Question (%s)\n\n%s\n"
                      (format-time-string "%F %T")
@@ -1252,16 +1309,39 @@ cannot respond to one request twice."
 
 Called from `agent-shell-interrupt': without it, interrupting a shell
 that is sitting on a form leaves the agent waiting for an answer that
-is never coming."
+is never coming.
+
+A sub-agent's form is left answerable: as per spec, cancelling a
+session doesn't resolve its descendants' requests."
   (seq-reduce (lambda (cancelled entry)
                 ;; `or' with the answer first, so every form is visited
                 ;; rather than stopping at the first one cancelled.
-                (or (agent-shell-elicitation--respond
-                     :state state :id (car entry) :action 'cancel)
+                (or (and (not (map-elt (cdr entry) :subagent-session-id))
+                         (agent-shell-elicitation--respond
+                          :state state :id (car entry) :action 'cancel))
                     cancelled))
               ;; Copied, since responding rewrites `:elicitations'.
               (copy-sequence (map-elt state :elicitations))
               nil))
+
+(cl-defun agent-shell-elicitation--retire (&key state id)
+  "Settle elicitation ID in STATE as cancelled, without answering it.
+
+For a form nothing can answer any more, such as one whose agent
+connection is gone.  Return non-nil if it was pending."
+  (when-let* ((elicitation (agent-shell-elicitation--get state id))
+              ((eq (map-elt elicitation :status) 'pending)))
+    (agent-shell-elicitation--put
+     state id (agent-shell-elicitation--assoc-put elicitation :status 'cancelled))
+    (map-put! state :active-requests
+              (seq-remove (lambda (request)
+                            (and (equal (map-elt request :method) "elicitation/create")
+                                 (equal (map-elt request :id) id)))
+                          (map-elt state :active-requests)))
+    (agent-shell-elicitation--settle :state state :id id)
+    (with-current-buffer (map-elt state :buffer)
+      (agent-shell--cancel-idle-timer-for id))
+    t))
 
 
 ;;; Commands
@@ -1538,6 +1618,20 @@ there, where `agent-shell-mode-map' is shadowed by the form's keymap."
   (interactive)
   (with-current-buffer (agent-shell-elicitation--shell-buffer)
     (agent-shell-interrupt t)))
+
+(defun agent-shell-elicitation-open-source ()
+  "Open the sub-agent conversation that asked the form's question at point.
+
+Does nothing on a form the main agent asked."
+  (declare (modes agent-shell-mode))
+  (interactive)
+  (when-let* ((control (agent-shell-elicitation--control-at-point))
+              (shell-buffer (agent-shell-elicitation--shell-buffer))
+              (session-id (with-current-buffer shell-buffer
+                            (map-nested-elt (agent-shell--state)
+                                            (list :elicitations (map-elt control :id)
+                                                  :subagent-session-id)))))
+    (agent-shell-subagent--open :root-buffer shell-buffer :session-id session-id)))
 
 
 ;;; Navigation

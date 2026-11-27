@@ -869,6 +869,37 @@ What the agent does with the steered prompt is up to the agent: Claude interrupt
 
 Steering is not additive.  An agent that interrupts may drop the instruction it was working on, so a steer can replace what the agent was already doing rather than adding to it.  Queue instead when the agent should finish first.
 
+*** Sub-agent conversations
+
+Agents implementing ACP's [[https://agentclientprotocol.com/protocol/v1/subagents][subagents]] spec (for example, recent Claude Agent and Codex ACP packages) can report each sub-agent as its own session.  This is off by default, so enable it with:
+
+#+begin_src emacs-lisp
+  (setq agent-shell-subagent-sessions-enabled t)
+#+end_src
+
+It takes effect on new shells.  Once enabled, rather than interleaving sub-agent activity with the main conversation, the shell shows a card per sub-agent (status, task, and result), while the sub-agent's own activity is kept aside until you open it.
+
+- =M-x agent-shell-open-subagent= (=a= in =agent-shell-help-menu=) opens the sub-agent card at point, or picks from all sub-agents in the session (nested ones included).  The card's =Open= button does the same.
+- Sub-agent conversations open in regular (read-only) shell buffers, replaying everything so far and following along live.  =C-c C-c= cancels a sub-agent, when the agent allows it.
+- =C-c ^= (=agent-shell-subagent-parent=) switches back to the parent conversation (=C-u C-c ^= to the main one).
+- Permission requests (and questions) from a sub-agent show up in the main shell, so you can answer them without opening the sub-agent.  Opening or killing its buffer doesn't affect them.  Each names its sub-agent, and =o= (or its =Open= button) opens the sub-agent's conversation, to see what led to the request.  Rejecting a sub-agent's request rejects only that request, and interrupting the main shell leaves sub-agent requests open.  A request is withdrawn once the tool call behind it finishes, or its sub-agent is cancelled.
+- If the agent's process ends, sub-agents that were working show as =disconnected=, and their pending requests are withdrawn.
+- Tool calls that refer to a sub-agent (Codex's =wait=, for example) name it, and the name opens its conversation.
+- Sub-agent buffers are read-only: prompting, changing modes or options, restarting and forking aren't available there.  =agent-shell-reload= rebuilds the buffer from what the main shell kept.
+
+The header shows how many sub-agents the session has, and how many are running.  The same numbers are available in the main shell buffer as =agent-shell-subagent-count= and =agent-shell-subagent-running-count=, for use in your own mode line, and as a =subagent-update= event (see [[*Monitoring events][Monitoring events]]).
+
+Sub-agent buffers are left out of =agent-shell-buffers=.  To list them in your own UI (a sidebar, say), =agent-shell-subagents= returns a shell's sub-agents (parent first, with status, nesting depth, pending requests, and buffer if opened), and =agent-shell-subagent-buffer= opens one without displaying it.  The =subagent-update= event fires when a sub-agent is announced or changes, or its buffer is opened or killed.  If restoring a session fails, the sub-agents it reported are discarded, each with a last event whose =:removed= is non-nil.  Its requests come with the main shell's usual =permission-request= and =permission-response= (or =elicitation-request= and =elicitation-response=) events.
+
+#+begin_src emacs-lisp
+  (dolist (subagent (agent-shell-subagents :shell-buffer shell))
+    (message "%s%s [%s]"
+             (make-string (* 2 (map-elt subagent :depth)) ?\s)
+             (map-elt subagent :title)
+             (map-elt subagent :status)))
+#+end_src
+
+
 *** Specific Agent Commands
 
 Start a specific agent shell session directly:

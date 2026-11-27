@@ -938,6 +938,23 @@ does, so subscribers watching for `idle' must hear about it."
         (agent-shell-elicitation--respond :state state :id 5 :action 'decline)
         (should cancelled)))))
 
+(ert-deftest agent-shell-elicitation-answer-reminder-scope-test ()
+  "Answering any form cancels the idle reminder, and cleanup only its own."
+  (dolist (case '((nil . nil) (request . t)))
+    (agent-shell-elicitation-tests--with-shell (state sent)
+      (let ((agent-shell-idle-timeout 999))
+        (dolist (id '(5 6))
+          (agent-shell--on-request
+           :state state
+           :acp-request (agent-shell-elicitation-tests--request
+                         :id id :schema '((type . "object")
+                                          (properties . ((note . ((type . "string")))))))))
+        (should (equal (map-elt state :idle-timer-request-id) 6))
+        (agent-shell-elicitation--respond :state state :id 5 :action 'cancel
+                                          :reminder-scope (car case))
+        (should (equal (timerp (map-elt state :idle-timer)) (cdr case)))
+        (agent-shell--cancel-idle-timer)))))
+
 (ert-deftest agent-shell-elicitation-keys-drive-the-whole-form-test ()
   "Pressing RET on each control does what the control says.
 
