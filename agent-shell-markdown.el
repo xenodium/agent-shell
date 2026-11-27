@@ -1139,6 +1139,8 @@ POS is not on a link.
 For example, on the `docs' of a rendered \"[docs](https://gnu.org)\"
 this browses to https://gnu.org, and on a rendered \"foo.el:12:5\" it
 visits foo.el at line 12, column 5."
+  (declare (modes agent-shell-mode
+                  agent-shell-viewport-view-mode))
   (interactive)
   (setq pos (or pos (point)))
   (let ((url (or (agent-shell-markdown-link-url-at-point pos)
@@ -1967,6 +1969,8 @@ returns \"Use **this**:\\n> nested\"."
   "Copy the markdown quoted by the blockquote at POS (or point) to the kill ring.
 Copies it as `agent-shell-markdown-blockquote-at-point' returns it.
 Signals a `user-error' when point is not in a rendered blockquote."
+  (declare (modes agent-shell-mode
+                  agent-shell-viewport-view-mode))
   (interactive)
   (if-let* ((text (agent-shell-markdown-blockquote-at-point pos)))
       (progn
@@ -4327,6 +4331,8 @@ setting, not another buffer's images.
 
 The step is 50 pixels for a pixel width or 0.1 of the window for a
 ratio, so 300 becomes 350 and 0.4 becomes 0.5."
+  (declare (modes agent-shell-mode
+                  agent-shell-viewport-view-mode))
   (interactive)
   (agent-shell-markdown--scale-images :direction 1))
 
@@ -4335,6 +4341,8 @@ ratio, so 300 becomes 350 and 0.4 becomes 0.5."
 
 Inverse of `agent-shell-markdown-image-scale-increase', stopping at
 50 pixels or a 0.1 ratio."
+  (declare (modes agent-shell-mode
+                  agent-shell-viewport-view-mode))
   (interactive)
   (agent-shell-markdown--scale-images :direction -1))
 
@@ -4354,6 +4362,8 @@ Undoes `agent-shell-markdown-image-scale-increase' and
 `agent-shell-markdown-image-scale-decrease'.  Signals an error in a
 buffer holding no image and carrying no scaling of its own, there
 being nothing to reset."
+  (declare (modes agent-shell-mode
+                  agent-shell-viewport-view-mode))
   (interactive)
   (unless (or (agent-shell-markdown--reset-image-at-point)
               (agent-shell-markdown--reset-images))
@@ -5045,6 +5055,8 @@ For example, with point inside cell `A' of:
 
 a single call lands point on `B', another lands on `1', another
 on `2', and a fourth signals `No more cells left'."
+  (declare (modes agent-shell-mode
+                  agent-shell-viewport-view-mode))
   (interactive)
   (agent-shell-markdown-table--move-cell :forward))
 
@@ -5055,6 +5067,8 @@ row.  Skips the separator row.  Signals `No more cells left'
 when point is at or before the first cell of the table at point.
 
 Inverse of `agent-shell-markdown-table-next-cell'."
+  (declare (modes agent-shell-mode
+                  agent-shell-viewport-view-mode))
   (interactive)
   (agent-shell-markdown-table--move-cell :backward))
 

@@ -1405,6 +1405,7 @@ through the bar instead.
 Enable it for new shells by default with `agent-shell-chat-mode-enabled'."
   :lighter nil
   :group 'agent-shell
+  :interactive (agent-shell-mode)
   (cond
    ((not agent-shell-chat-mode)
     (agent-shell-chat--disable))
