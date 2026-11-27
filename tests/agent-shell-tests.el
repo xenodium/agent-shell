@@ -8807,6 +8807,67 @@ and its value returned."
         (delete-process fake-process))
       (kill-buffer buffer))))
 
+(ert-deftest agent-shell-update-fragment-followed-window-skips-window-start-restore-test ()
+  "A followed fragment update leaves scrolling to shell-maker.
+Restoring the old numeric `window-start' before redisplay competes with
+tail following when visible output above it grows."
+  (save-window-excursion
+    (agent-shell-tests--with-persistent-prompt-shell
+     (lambda ()
+       (switch-to-buffer (current-buffer))
+       (let ((set-window-start-calls 0)
+             (original-set-window-start (symbol-function 'set-window-start)))
+         (cl-letf (((symbol-function 'shell-maker--should-auto-scroll-p)
+                    (lambda () t))
+                   ((symbol-function 'set-window-start)
+                    (lambda (&rest args)
+                      (setq set-window-start-calls
+                            (1+ set-window-start-calls))
+                      (apply original-set-window-start args))))
+           (agent-shell--update-fragment
+            :state agent-shell--state
+            :block-id "stream"
+            :body "streamed output"))
+         (should (= set-window-start-calls 0))))
+     :busy t)))
+
+(ert-deftest agent-shell-update-fragment-scrolled-window-restores-window-start-test ()
+  "A fragment update preserves a reader's scrolled-back window.
+Point can remain at end while wheel scrolling moves the live end out of
+view, so `eobp' alone must not disable `window-start' preservation."
+  (save-window-excursion
+    (agent-shell-tests--with-persistent-prompt-shell
+     (lambda ()
+       (switch-to-buffer (current-buffer))
+       (agent-shell--update-fragment
+        :state agent-shell--state
+        :block-id "history"
+        :body (mapconcat (lambda (line)
+                           (format "history line %03d" line))
+                         (number-sequence 0 100)
+                         "\n")
+        :expanded t)
+       (goto-char (point-max))
+       (set-window-start (selected-window) (point-min) t)
+       (let ((saved-window-start (window-start))
+             (set-window-start-calls 0)
+             (original-set-window-start (symbol-function 'set-window-start)))
+         (cl-letf (((symbol-function 'shell-maker--should-auto-scroll-p)
+                    (lambda () nil))
+                   ((symbol-function 'set-window-start)
+                    (lambda (&rest args)
+                      (setq set-window-start-calls
+                            (1+ set-window-start-calls))
+                      (apply original-set-window-start args))))
+           (agent-shell--update-fragment
+            :state agent-shell--state
+            :block-id "history"
+            :body "\nmore output"
+            :append t))
+         (should (= set-window-start-calls 1))
+         (should (= (window-start) saved-window-start))))
+     :busy t)))
+
 (ert-deftest agent-shell--prompt-queue-process-next-merges-test ()
   "All queued prompts are submitted together as one prompt."
   (should (equal

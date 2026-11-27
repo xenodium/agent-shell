@@ -5862,6 +5862,7 @@ with GROUP-EXPANDED as the group's initial fold state."
                             :append append
                             :create-new create-new
                             :expanded expanded
+                            :preserve-window-start (not auto-scroll)
                             :no-undo t))
                     (padding-start (map-nested-elt range '(:padding :start)))
                     (padding-end (map-nested-elt range '(:padding :end)))
@@ -5903,6 +5904,7 @@ with GROUP-EXPANDED as the group's initial fold state."
     (let* ((buffer-undo-list t)
            (window (get-buffer-window (current-buffer)))
            (auto-scroll (eobp))
+           (follow-output (shell-maker--should-auto-scroll-p))
            ;; Use a marker to ensure point restoration
            ;; lands point after the inserted text.
            (saved-point (copy-marker (point)))
@@ -5932,6 +5934,7 @@ with GROUP-EXPANDED as the group's initial fold state."
                              :append append
                              :create-new create-new
                              :expanded expanded
+                             :preserve-window-start (not follow-output)
                              :no-undo t))
                    (padding-start (map-nested-elt range '(:padding :start)))
                    (padding-end (map-nested-elt range '(:padding :end)))

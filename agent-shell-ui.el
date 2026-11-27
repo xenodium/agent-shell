@@ -152,7 +152,7 @@ initial fold state.  v1 is two-level: a group may not itself be nested."
                        text)
   (insert text))
 
-(cl-defun agent-shell-ui-update-fragment (model &key append create-new on-post-process navigation expanded no-undo)
+(cl-defun agent-shell-ui-update-fragment (model &key append create-new on-post-process navigation expanded no-undo (preserve-window-start t))
   "Update or add a fragment using MODEL.
 
 When APPEND is non-nil, append to body instead of replacing.
@@ -163,6 +163,8 @@ When NAVIGATION is `auto', block is navigatable if non-empty body.
 When NAVIGATION is `always', block is always TAB navigatable.
 When EXPANDED is non-nil, body will be expanded by default.
 When NO-UNDO is non-nil, disable undo recording for this operation.
+When PRESERVE-WINDOW-START is non-nil, keep the window at its current
+buffer position after updating.
 
 For existing blocks, the current expansion state is preserved unless overridden.
 
@@ -172,7 +174,9 @@ already-rendered content, so `agent-shell-markdown' frozen ranges
 stay intact and streaming append is O(new-chunk) rather than
 O(accumulated-body).  Label-only updates leave the body untouched."
   (let* ((window (get-buffer-window (current-buffer)))
-         (saved-window-start (and window (window-start window)))
+         (saved-window-start (and preserve-window-start
+                                  window
+                                  (window-start window)))
          ;; Marker so it survives the edits made while updating the block.
          ;; Bound out here so the unwind form below can release it.
          (block-end nil))
@@ -417,7 +421,7 @@ O(accumulated-body).  Label-only updates leave the body untouched."
                     (cons :group-header (map-elt group-header :range))))))
       (when (markerp block-end)
         (set-marker block-end nil))
-      (when window
+      (when saved-window-start
         (set-window-start window saved-window-start t)))))
 
 (defun agent-shell-ui--read-fragment-labels (block-start block-end)
