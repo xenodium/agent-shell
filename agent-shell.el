@@ -5914,18 +5914,21 @@ with GROUP-EXPANDED as the group's initial fold state."
            ;; Unlike `auto-scroll', also nil when the user scrolled the
            ;; window back while leaving point at the end.
            (follow-output (shell-maker--should-auto-scroll-p))
-           ;; Use a marker to ensure point restoration
-           ;; lands point after the inserted text.
-           (saved-point (copy-marker (point)))
-           (saved-mark (mark t))
-           (saved-mark-active mark-active)
-           (saved-window-start (and window (window-start window)))
            ;; Land the content above the active prompt.  Falls back to the
            ;; normal in-line path when no live prompt sits at the buffer
            ;; end, which only happens with the persistent prompt off: with
            ;; it on, `agent-shell--live-prompt-start' signals instead.
            (late-prompt-start (and above-last-prompt
-                                   (agent-shell--live-prompt-start))))
+                                   (agent-shell--live-prompt-start)))
+           (saved-point (agent-shell--position-for-restore
+                         :position (point)
+                         :prompt-start late-prompt-start))
+           (saved-mark (and (mark t)
+                            (agent-shell--position-for-restore
+                             :position (mark t)
+                             :prompt-start late-prompt-start)))
+           (saved-mark-active mark-active)
+           (saved-window-start (and window (window-start window))))
       (agent-shell--with-buffer-narrowed-to late-prompt-start
         (shell-maker-with-auto-scroll-edit
          (when-let* ((range (agent-shell-ui-update-fragment
@@ -6010,7 +6013,10 @@ with GROUP-EXPANDED as the group's initial fold state."
       ;; back, never while following (see #964).
       (when (and window (not follow-output))
         (set-window-start window saved-window-start t))
-      (set-marker saved-point nil))
+      (when (markerp saved-point)
+        (set-marker saved-point nil))
+      (when (markerp saved-mark)
+        (set-marker saved-mark nil)))
     ;; Rendering above the prompt pushed any unsubmitted input down, so the
     ;; undo entries recorded for it now point at the shifted-down text.
     ;; Runs outside the `buffer-undo-list' binding above, which would

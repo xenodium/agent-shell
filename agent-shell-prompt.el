@@ -166,6 +166,22 @@ PROMPT-START at the `C', a BODY inserting `more' leaves
            (goto-char ,saved-point)
            (set-marker ,saved-point nil))))))
 
+(cl-defun agent-shell--position-for-restore (&key position prompt-start)
+  "Return POSITION saved so it survives rendering above PROMPT-START.
+
+Returns a marker when POSITION is at or after PROMPT-START, and POSITION
+itself otherwise.  Rendering above the prompt pushes the prompt and any
+typed input down, which a marker follows.  Re-rendering a block deletes
+and reinserts its text, which collapses a marker inside it to the
+block's start, so positions in output stay numbers.  Release a returned
+marker with `set-marker' once restored.
+
+For example, with PROMPT-START at 100 and 10 characters rendered above
+it, 120 comes back as a marker now at 130, while 40 stays 40."
+  (if (and prompt-start (>= position prompt-start))
+      (copy-marker position t)
+    position))
+
 (defun agent-shell--prompt-face-p (value)
   "Return non-nil when a `font-lock-face' VALUE marks a shell prompt.
 A live prompt carries `comint-highlight-prompt'; a restored or echoed

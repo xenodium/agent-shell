@@ -8866,6 +8866,87 @@ view, so `eobp' alone must not decide."
   (let ((starts (agent-shell-tests--window-start-after-growing-above)))
     (should (= (map-elt starts :after) (map-elt starts :before)))))
 
+(cl-defun agent-shell-tests--point-and-mark-after-update (&key point-at mark-at update)
+  "Return the text at point and mark after a fragment update.
+
+Shows a \"history\" block of numbered lines with \"typed input\" at the
+prompt, puts point and mark at the starts of the POINT-AT and MARK-AT
+strings, then calls UPDATE with no arguments in the shell buffer.
+Returns the eight characters at each, like:
+
+  ((:point . \"line 025\") (:mark . \"typed in\"))"
+  (save-window-excursion
+    (agent-shell-tests--with-persistent-prompt-shell
+     (lambda ()
+       (switch-to-buffer (current-buffer))
+       (agent-shell--update-fragment
+        :state agent-shell--state
+        :block-id "history"
+        :body (mapconcat (lambda (line)
+                           (format "line %03d" line))
+                         (number-sequence 0 50)
+                         "\n")
+        :expanded t)
+       (goto-char (point-max))
+       (insert "typed input")
+       (set-mark (save-excursion
+                   (goto-char (point-min))
+                   (search-forward mark-at)
+                   (match-beginning 0)))
+       (goto-char (point-min))
+       (search-forward point-at)
+       (goto-char (match-beginning 0))
+       (funcall update)
+       (list (cons :point (buffer-substring-no-properties
+                           (point) (min (point-max) (+ (point) 8))))
+             (cons :mark (buffer-substring-no-properties
+                          (mark t) (min (point-max) (+ (mark t) 8)))))))))
+
+(ert-deftest agent-shell-update-fragment-keeps-point-and-mark-in-typed-input-test ()
+  "Output landing above the prompt carries point and mark down with input."
+  (should (equal (agent-shell-tests--point-and-mark-after-update
+                  :point-at "input"
+                  :mark-at "typed"
+                  :update (lambda ()
+                            (agent-shell--update-fragment
+                             :state agent-shell--state
+                             :block-id "more"
+                             :body "new output"
+                             :expanded t)))
+                 '((:point . "input")
+                   (:mark . "typed in")))))
+
+(ert-deftest agent-shell-update-fragment-keeps-point-and-mark-in-replaced-block-test ()
+  "Replacing a block's body leaves point and mark on the text they were on."
+  (should (equal (agent-shell-tests--point-and-mark-after-update
+                  :point-at "line 025"
+                  :mark-at "line 030"
+                  :update (lambda ()
+                            (agent-shell--update-fragment
+                             :state agent-shell--state
+                             :block-id "history"
+                             :body (mapconcat (lambda (line)
+                                                (format "line %03d" line))
+                                              (number-sequence 0 50)
+                                              "\n")
+                             :expanded t)))
+                 '((:point . "line 025")
+                   (:mark . "line 030")))))
+
+(ert-deftest agent-shell-update-fragment-keeps-point-and-mark-in-appended-block-test ()
+  "Appending to a block leaves point and mark on the text they were on."
+  (should (equal (agent-shell-tests--point-and-mark-after-update
+                  :point-at "line 025"
+                  :mark-at "line 030"
+                  :update (lambda ()
+                            (agent-shell--update-fragment
+                             :state agent-shell--state
+                             :block-id "history"
+                             :body "\nline 051"
+                             :append t)))
+                 '((:point . "line 025")
+                   (:mark . "line 030")))))
+
 (ert-deftest agent-shell--prompt-queue-process-next-merges-test ()
   "All queued prompts are submitted together as one prompt."
   (should (equal
