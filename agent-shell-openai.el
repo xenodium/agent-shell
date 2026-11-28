@@ -233,7 +233,7 @@ Return ACP-NOTIFICATION after adaptation."
             (append (map-elt update 'content)
                     (list `((type . "content")
                             (content (type . "text")
-                                     (text . ,(format "```\n%s\n```" text)))))))))
+                                     (text . ,(concat "```\n" text "\n```")))))))))
   acp-notification)
 
 (defun agent-shell-openai-make-codex-config ()

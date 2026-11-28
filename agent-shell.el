@@ -9512,6 +9512,10 @@ https://github.com/xenodium/agent-shell/issues/839).")
 (defconst agent-shell--tool-output-truncation-context-length 200
   "Number of characters kept at each end of a truncated tool output line.")
 
+(defconst agent-shell--tool-output-long-line-prefix
+  (format "^[^\n]\\{%d\\}" (1+ agent-shell--tool-output-max-line-length))
+  "Regexp matching just enough of a line to require truncation.")
+
 (defun agent-shell--truncate-tool-output-lines (output)
   "Shorten long lines in tool OUTPUT while preserving line breaks.
 
@@ -9519,17 +9523,29 @@ Lines longer than `agent-shell--tool-output-max-line-length' keep
 `agent-shell--tool-output-truncation-context-length' characters at each
 end, with an omitted-character count between them.  For example, a
 33000-character line reports that 32600 characters were omitted."
-  (if (<= (length output) agent-shell--tool-output-max-line-length)
-      output
-    (mapconcat (lambda (line)
-                 (if (<= (length line) agent-shell--tool-output-max-line-length)
-                     line
-                   (format "%s ... [%d characters omitted] ... %s"
-                           (substring line 0 agent-shell--tool-output-truncation-context-length)
-                           (- (length line) (* 2 agent-shell--tool-output-truncation-context-length))
-                           (substring line (- agent-shell--tool-output-truncation-context-length)))))
-               (split-string output "\n")
-               "\n")))
+  (let ((limit agent-shell--tool-output-max-line-length)
+        (context agent-shell--tool-output-truncation-context-length)
+        (length (length output))
+        (search-from 0)
+        (copy-from 0)
+        parts)
+    (save-match-data
+      (while (and (> (- length search-from) limit)
+                  (string-match agent-shell--tool-output-long-line-prefix
+                                output search-from))
+        (let* ((line-start (match-beginning 0))
+               ;; The match proves the line is too long.  Find its end
+               ;; without asking the regexp engine to match the rest.
+               (line-end (or (string-search "\n" output (match-end 0)) length)))
+          (push (substring output copy-from (+ line-start context)) parts)
+          (push (format " ... [%d characters omitted] ... "
+                        (- line-end line-start (* 2 context)))
+                parts)
+          (setq copy-from (- line-end context))
+          (setq search-from (1+ line-end)))))
+    (if parts
+        (apply #'concat (nreverse (cons (substring output copy-from) parts)))
+      output)))
 
 (defun agent-shell--tool-call-update-output-markdown (acp-update)
   "Return markdown output for ACP-UPDATE, a `tool_call_update' update.
