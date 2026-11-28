@@ -74,6 +74,7 @@
 (require 'agent-shell-cursor)
 (require 'agent-shell-deepseek)
 (require 'agent-shell-devcontainer)
+(require 'agent-shell-devin)
 (require 'agent-shell-diff)
 (require 'agent-shell-dnd)
 (require 'agent-shell-elicitation)
@@ -880,6 +881,7 @@ example filtering them.  See `agent-shell-agent-configs'."
         #'agent-shell-openai-make-codex-config
         #'agent-shell-cursor-make-agent-config
         #'agent-shell-deepseek-make-agent-config
+        #'agent-shell-devin-make-agent-config
         #'agent-shell-droid-make-agent-config
         #'agent-shell-github-make-copilot-config
         #'agent-shell-google-make-gemini-config
@@ -972,6 +974,7 @@ behavior explicitly."
                  (const :tag "Copilot" copilot)
                  (const :tag "Cursor" cursor)
                  (const :tag "DeepSeek" deepseek)
+                 (const :tag "Devin" devin)
                  (const :tag "Droid" droid)
                  (const :tag "Gemini CLI" gemini-cli)
                  (const :tag "Goose" goose)
