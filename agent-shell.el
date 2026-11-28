@@ -9512,6 +9512,10 @@ https://github.com/xenodium/agent-shell/issues/839).")
 (defconst agent-shell--tool-output-truncation-context-length 200
   "Number of characters kept at each end of a truncated tool output line.")
 
+(defconst agent-shell--tool-output-long-line-prefix
+  (format "^[^\n]\\{%d\\}" (1+ agent-shell--tool-output-max-line-length))
+  "Regexp matching just enough of a line to require truncation.")
+
 (defun agent-shell--truncate-tool-output-lines (output)
   "Shorten long lines in tool OUTPUT while preserving line breaks.
 
@@ -9522,18 +9526,23 @@ end, with an omitted-character count between them.  For example, a
   (let ((limit agent-shell--tool-output-max-line-length)
         (context agent-shell--tool-output-truncation-context-length)
         (length (length output))
-        (line-start 0)
+        (search-from 0)
         (copy-from 0)
         parts)
-    (while (< (+ line-start limit) length)
-      (let* ((line-end (or (string-search "\n" output line-start) length))
-             (line-length (- line-end line-start)))
-        (when (> line-length limit)
+    (save-match-data
+      (while (and (> (- length search-from) limit)
+                  (string-match agent-shell--tool-output-long-line-prefix
+                                output search-from))
+        (let* ((line-start (match-beginning 0))
+               ;; The match proves the line is too long.  Find its end
+               ;; without asking the regexp engine to match the rest.
+               (line-end (or (string-search "\n" output (match-end 0)) length)))
           (push (substring output copy-from (+ line-start context)) parts)
           (push (format " ... [%d characters omitted] ... "
-                        (- line-length (* 2 context))) parts)
-          (setq copy-from (- line-end context)))
-        (setq line-start (1+ line-end))))
+                        (- line-end line-start (* 2 context)))
+                parts)
+          (setq copy-from (- line-end context))
+          (setq search-from (1+ line-end)))))
     (if parts
         (apply #'concat (nreverse (cons (substring output copy-from) parts)))
       output)))
