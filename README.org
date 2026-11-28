@@ -19,7 +19,7 @@ Thank you!
 
 =agent-shell= brings your favorite AI agents to [[https://www.gnu.org/software/emacs/][Emacs]], keeping you at home: familiar buffers and bindings, no terminal emulation. All powered by ACP, the [[https://agentclientprotocol.com][Agent Client Protocol]].
 
-Works with 24 agents today, and any other that speaks ACP:
+Works with 25 agents today, and any other that speaks ACP:
 
 - [[https://antigravity.google/docs/ide/extensions][Antigravity]] (Google)
 - [[https://docs.augmentcode.com/cli/overview][Auggie]]
@@ -29,6 +29,7 @@ Works with 24 agents today, and any other that speaks ACP:
 - [[https://github.com/agentclientprotocol/codex-acp][Codex]] (OpenAI)
 - [[https://cursor.com/docs/cli][Cursor]]
 - [[https://github.com/deepseek-ai/deepseek-harness][DeepSeek Harness]]
+- [[https://docs.devin.ai/cli][Devin]]
 - [[https://factory.ai][Factory Droid]]
 - [[https://github.com/google-gemini/gemini-cli][Gemini CLI]] (Google)
 - [[https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server][GitHub Copilot]]
@@ -228,6 +229,12 @@ cp -i ~/.dsh/profiles/web/cordis.patch.yml ~/.dsh/profiles/acp/cordis.patch.yml
 #+end_src
 
 See https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/acp/acp/README.md for details.
+
+*** Devin
+
+For Devin, install the [[https://docs.devin.ai/cli][Devin CLI]] and ensure the =devin= executable is in PATH. =agent-shell= uses its ACP server (=devin acp=).
+
+Authentication is handled externally by default: run =devin auth login= once outside Emacs. The ACP server also reads =WINDSURF_API_KEY= if set. To have =agent-shell= drive the browser sign-in flow instead (the =devin-browser= ACP authenticate method), or to pass an API key through =agent-shell-devin-authentication=, see the variable's documentation.
 
 *** Junie
 
@@ -883,6 +890,7 @@ Start a specific agent shell session directly:
 - =M-x agent-shell-xai-start-grok= - Start a Grok Build (xAI) agent session
 - =M-x agent-shell-cursor-start-agent= - Start a Cursor agent session
 - =M-x agent-shell-deepseek-start-agent= - Start a DeepSeek Harness agent session
+- =M-x agent-shell-devin-start-agent= - Start a Devin agent session
 - =M-x agent-shell-junie-start-agent= - Start a Junie agent session
 - =M-x agent-shell-kiro-start-agent= - Start a Kiro CLI agent session
 - =M-x agent-shell-qoder-start-agent= - Start a Qoder CLI agent session
@@ -1216,6 +1224,10 @@ always go to Evil modes if you need to with ~C-z~).
 | agent-shell-deepseek-authentication            | Configuration for DeepSeek Harness authentication.                              |
 | agent-shell-deepseek-default-config-options    | Default DeepSeek Harness config options, applied at session start.              |
 | agent-shell-deepseek-environment               | Environment variables for the DeepSeek Harness ACP server.                      |
+| agent-shell-devin-acp-command                  | Command and parameters for the Devin agent client.                              |
+| agent-shell-devin-authentication               | Configuration for Devin authentication.                                         |
+| agent-shell-devin-default-config-options       | Default Devin config options, applied at session start.                         |
+| agent-shell-devin-environment                  | Environment variables for the Devin agent client.                               |
 | agent-shell-display-action                     | Display action for agent shell buffers.                                         |
 | agent-shell-dot-subdir-function                | Function used by ‘agent-shell--dot-subdir’ to resolve subdirectory paths.       |
 | agent-shell-droid-acp-command                  | Command and parameters for the Factory Droid ACP client.                        |
@@ -1412,6 +1424,7 @@ always go to Evil modes if you need to with ~C-z~).
 |                                                       | agent-shell-cursor-start-agent                          | Start an interactive Cursor agent shell.                                       |
 | C-<tab>                                               | agent-shell-cycle-session-mode                          | Cycle through available session modes for the current `agent-shell' session.   |
 |                                                       | agent-shell-deepseek-start-agent                        | Start an interactive DeepSeek Harness agent shell.                             |
+|                                                       | agent-shell-devin-start-agent                           | Start an interactive Devin agent shell.                                        |
 |                                                       | agent-shell-diff-accept-all                             | Accept all changes in the current diff buffer.                                 |
 |                                                       | agent-shell-diff-mode                                   | Major mode for `agent-shell' diff buffers.                                     |
 |                                                       | agent-shell-diff-open-file                              | Open the file for the diff at point and jump to the change.                    |
